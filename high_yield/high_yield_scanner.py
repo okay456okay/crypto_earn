@@ -396,8 +396,10 @@ def main():
     # 企业微信群机器人webhook URL（请替换为您的实际webhook URL）
     buy_webhook_url = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=293071ec-9865-4e86-9e69-b48f1a12a83a"
     sell_webhook_url = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=38fd27ea-8569-4de2-9dee-4c4a4ffb77ed"
-    # 获取出口IP
-    get_proxy_ip(proxies)
+    # 尝试获取外网出口IP
+    proxy_ip = get_proxy_ip()
+    logger.info(f"当前外网出口IP: {proxy_ip}")
+    logger.info("请确保此IP已添加到Binance API白名单中")
 
     monitor = CryptoYieldMonitor(buy_webhook_url, sell_webhook_url)
 

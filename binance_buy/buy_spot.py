@@ -200,12 +200,12 @@ def main(target_time=target_time):
 if __name__ == "__main__":
     # 首先检查API连接与账户余额
     try:
-        logger.info("准备在今天18:00开始购买RED/USDT...")
-        logger.info("使用SOCKS5代理: 127.0.0.1:7890")
+        logger.info(f"准备在 {target_time} 开始购买RED/USDT...")
+        logger.info(f"使用代理: {proxies}")
 
-        # 尝试获取代理IP
+        # 尝试获取外网出口IP
         proxy_ip = get_proxy_ip()
-        logger.info(f"当前代理出口IP: {proxy_ip}")
+        logger.info(f"当前外网出口IP: {proxy_ip}")
         logger.info("请确保此IP已添加到Binance API白名单中")
 
         # 初始化Binance客户端 - 使用代理设置
