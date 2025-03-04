@@ -11,7 +11,6 @@ import schedule
 import logging
 from datetime import datetime
 
-from binance_buy.buy_spot import symbol
 from config import api_secret, api_key, proxies
 from high_yield.get_binance_yield import get_binance_flexible_savings
 
@@ -102,14 +101,15 @@ class ExchangeAPI:
                 products = []
                 for item in data["data"]['list']:
                     # 适配新的API返回结构
-                    product = {
-                        "exchange": "Binance",
-                        "token": item.get("asset", ""),
-                        "apy": float(item.get("highestApy", 0)) * 100,
-                        "min_purchase": float(item.get('productDetailList', [])[0].get("minPurchaseAmount", 0)),
-                        "max_purchase": float(item.get('productDetailList', [])[0].get("maxPurchaseAmountPerUser", 0))
-                    }
-                    products.append(product)
+                    if int(item['duration']) == 0:
+                        product = {
+                            "exchange": "Binance",
+                            "token": item.get("asset", ""),
+                            "apy": float(item.get("highestApy", 0)) * 100,
+                            "min_purchase": float(item.get('productDetailList', [])[0].get("minPurchaseAmount", 0)),
+                            "max_purchase": float(item.get('productDetailList', [])[0].get("maxPurchaseAmountPerUser", 0))
+                        }
+                        products.append(product)
                 return products
         except Exception as e:
             logger.error(f"获取Binance活期理财产品时出错: {str(e)}")
@@ -187,7 +187,7 @@ class ExchangeAPI:
                 }  # 转换为百分比
             return {}  # 未找到对应Token的合约资金费率
         except Exception as e:
-            logger.error(f"获取Binance合约资金费率时出错: {str(e)}")
+            logger.error(f"获取Binance {token}合约资金费率时出错: {str(e)}")
             return {}
 
     def get_bitget_futures_funding_rate(self, token):
@@ -278,7 +278,9 @@ class CryptoYieldMonitor:
             # 检查合约交易条件
             perp_token = f"{token}USDT"
             futures_results = self.get_futures_trading(perp_token)
-            positive_futures_results = [i for i in futures_results if i[1]['fundingRate'] >= 0]
+            logger.info(f"{perp_token} get future results: {futures_results}")
+            positive_futures_results = [i for i in futures_results if i[1]['fundingRate'] >= 0 and int(time.time()) - i[1]['fundingTime']/1000 < 24*60*60]
+            logger.info(f"{perp_token} positive future results: {futures_results}, current timestamp: {int(time.time())}")
 
             if positive_futures_results:
                 logger.info(f"Token {token} 满足合约交易条件: {futures_results}")
@@ -318,7 +320,6 @@ class CryptoYieldMonitor:
     def run(self):
         """运行监控任务"""
         logger.info("开始检查高收益加密货币...")
-
         try:
             # 获取所有交易所的活期理财产品
             binance_products = self.exchange_api.get_binance_flexible_products()
