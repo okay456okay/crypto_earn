@@ -16,8 +16,15 @@ import requests
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 import random
+import sys
+import os
 
-from config import api_key, api_secret, proxies
+# 获取当前脚本的目录
+current_dir = os.path.dirname(os.path.abspath(__file__))
+# 将 config.py 所在的目录添加到系统路径
+sys.path.append(os.path.join(current_dir, '..'))
+
+from config import api_key, api_secret, proxies, logger
 
 # 设置SOCKS5代理
 # socks.set_default_proxy(socks.SOCKS5, "127.0.0.1", 7890)
@@ -28,16 +35,16 @@ from config import api_key, api_secret, proxies
 # session = requests.Session()
 # session.proxies.update(proxies)
 # r = session.get('https://www.google.com/')
-# print(r.status_code, r.text)
+# logger.info(r.status_code, r.text)
 # r = session.get('https://api.binance.com/')
-# print(r.status_code, r.text)
+# logger.info(r.status_code, r.text)
 
 
 # 交易参数
 symbol = "REDUSDT"
 price = 1.0
 quantity = 4999
-target_time = datetime.datetime(2025, 3, 3, 23, 0, 0, 0)
+target_time = datetime.datetime(2025, 3, 4, 23, 0, 0, 0)
 order_type = Client.ORDER_TYPE_LIMIT
 time_in_force = Client.TIME_IN_FORCE_GTC  # 成交为止
 
@@ -53,14 +60,14 @@ def place_order():
             quantity=quantity,
             price=f"{price:.8f}"
         )
-        print(f"订单成功提交! 订单ID: {order['orderId']}")
-        print(f"订单详情: {order}")
+        logger.info(f"订单成功提交! 订单ID: {order['orderId']}")
+        logger.info(f"订单详情: {order}")
         return True
     except BinanceAPIException as e:
-        print(f"订单提交失败: {e}")
+        logger.info(f"订单提交失败: {e}")
         return False
     except Exception as e:
-        print(f"发生未知错误: {e}")
+        logger.info(f"发生未知错误: {e}")
         return False
 
 
@@ -70,10 +77,10 @@ def get_binance_server_time():
     try:
         server_time = client.get_server_time()
         timestamp = server_time['serverTime'] / 1000.0
-        print(f"已同步Binance服务器时间: {datetime.datetime.fromtimestamp(timestamp)}")
+        logger.info(f"已同步Binance服务器时间: {datetime.datetime.fromtimestamp(timestamp)}")
         return timestamp
     except Exception as e:
-        print(f"无法获取Binance服务器时间: {e}")
+        logger.info(f"无法获取Binance服务器时间: {e}")
         return None
 
 
@@ -97,7 +104,7 @@ def sync_time():
 
     for api_url in time_apis:
         try:
-            print(f"尝试从 {api_url} 同步时间...")
+            logger.info(f"尝试从 {api_url} 同步时间...")
             response = requests.get(api_url, timeout=5, proxies=proxies)
 
             if response.status_code == 200:
@@ -114,18 +121,18 @@ def sync_time():
                 elif "UnixTime" in data:  # twenty57
                     return int(data["UnixTime"]) / 1000.0
 
-                print(f"从 {api_url} 成功同步时间")
+                logger.info(f"从 {api_url} 成功同步时间")
                 return time.time()  # 如果无法解析数据，使用本地时间
 
         except Exception as e:
-            print(f"从 {api_url} 同步时间失败: {e}")
+            logger.info(f"从 {api_url} 同步时间失败: {e}")
 
     # 所有方法都失败，使用本地时间
-    print("所有时间同步方法都失败，使用本地时间")
+    logger.info("所有时间同步方法都失败，使用本地时间")
     return time.time()
 
 
-def get_proxy_ip():
+def get_proxy_ip(proxies=proxies):
     """获取代理的出口IP"""
     try:
         response = requests.get('https://api.ipify.org?format=json',
@@ -135,7 +142,7 @@ def get_proxy_ip():
             return proxy_ip
         return "无法获取"
     except Exception as e:
-        print(f"获取代理IP失败: {e}")
+        logger.info(f"获取代理IP失败: {e}")
         return "无法获取"
 
 
@@ -146,7 +153,7 @@ def main(target_time=target_time):
     # 提前50毫秒(0.05秒)
     execution_timestamp = target_timestamp - 0.05
 
-    print(f"目标执行时间: {target_time}")
+    logger.info(f"目标执行时间: {target_time}")
 
     # 最后一次同步时间
     last_sync_time = 0
@@ -165,20 +172,20 @@ def main(target_time=target_time):
         # 打印倒计时信息（每5秒一次）
         remaining = target_timestamp - current_time
         if remaining > 0 and remaining % 5 < 0.1:
-            print(f"距离执行还有 {remaining:.2f} 秒")
+            logger.info(f"距离执行还有 {remaining:.2f} 秒")
 
         # 当前时间到达或超过执行时间点
         if current_time >= execution_timestamp:
-            print("开始执行下单...")
+            logger.info("开始执行下单...")
 
             # 循环尝试下单，直到成功
             while True:
                 success = place_order()
                 if success:
-                    print("订单执行完成!")
+                    logger.info("订单执行完成!")
                     return
                 else:
-                    print("10ms后重试...")
+                    logger.info("10ms后重试...")
                     time.sleep(0.02)  # 等待20毫秒
 
         # 距离目标时间还较远时，睡眠时间更长
@@ -193,13 +200,13 @@ def main(target_time=target_time):
 if __name__ == "__main__":
     # 首先检查API连接与账户余额
     try:
-        print("准备在今天18:00开始购买RED/USDT...")
-        print("使用SOCKS5代理: 127.0.0.1:7890")
+        logger.info("准备在今天18:00开始购买RED/USDT...")
+        logger.info("使用SOCKS5代理: 127.0.0.1:7890")
 
         # 尝试获取代理IP
         proxy_ip = get_proxy_ip()
-        print(f"当前代理出口IP: {proxy_ip}")
-        print("请确保此IP已添加到Binance API白名单中")
+        logger.info(f"当前代理出口IP: {proxy_ip}")
+        logger.info("请确保此IP已添加到Binance API白名单中")
 
         # 初始化Binance客户端 - 使用代理设置
         if proxies:
@@ -209,28 +216,28 @@ if __name__ == "__main__":
         # 设置请求超时时间，考虑代理可能增加的延迟
         client.session.request_timeout = 20
 
-        print("正在通过代理连接Binance...")
+        logger.info("正在通过代理连接Binance...")
         # 检查API连接
         server_time = client.get_server_time()
-        print(f"Binance服务器连接成功! 服务器时间: {datetime.datetime.fromtimestamp(server_time['serverTime'] / 1000)}")
+        logger.info(f"Binance服务器连接成功! 服务器时间: {datetime.datetime.fromtimestamp(server_time['serverTime'] / 1000)}")
 
         # 检查USDT余额是否足够
         balance = client.get_asset_balance(asset='USDT')
         usdt_balance = float(balance['free'])
         required_usdt = price * quantity
 
-        print(f"当前USDT余额: {usdt_balance}")
-        print(f"本次交易需要: {required_usdt} USDT")
+        logger.info(f"当前USDT余额: {usdt_balance}")
+        logger.info(f"本次交易需要: {required_usdt} USDT")
 
         if usdt_balance < required_usdt:
-            print(f"警告: USDT余额不足! 需要至少 {required_usdt} USDT")
+            logger.info(f"警告: USDT余额不足! 需要至少 {required_usdt} USDT")
             decision = input("是否仍要继续? (y/n): ")
             if decision.lower() != 'y':
-                print("程序终止")
+                logger.info("程序终止")
                 exit()
 
         # 开始主程序
         main()
     except Exception as e:
-        print(f"初始化检查失败: {e}")
-        print("请检查代理连接、API密钥和网络连接状态")
+        logger.info(f"初始化检查失败: {e}")
+        logger.info("请检查代理连接、API密钥和网络连接状态")

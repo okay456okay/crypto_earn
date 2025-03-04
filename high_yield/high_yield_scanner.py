@@ -3,30 +3,25 @@
 通过套保策略，实现现货和空单合约对冲，然后用现货购买高收益率产品，赚取收益。
 该策略更适用于牛市，因为赚取的收益如果为非稳定币，随着价格下跌，则U本位的收益率会下跌
 """
-import json
 
 import requests
 import time
 import schedule
-import logging
 from datetime import datetime
+import sys
+import os
 
-from config import api_secret, api_key, proxies
+# 获取当前脚本的目录
+current_dir = os.path.dirname(os.path.abspath(__file__))
+# 将 config.py 所在的目录添加到系统路径
+sys.path.append(os.path.join(current_dir, '..'))
+
+from binance_buy.buy_spot import get_proxy_ip
+from config import api_secret, api_key, proxies, logger
 from high_yield.get_binance_yield import get_binance_flexible_savings
 
 # import json
 
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    # format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    format="[%(asctime)-15s] %(name)s %(levelname)s (%(funcName)s(), %(filename)s:%(lineno)d): %(message)s",
-    handlers=[
-        logging.FileHandler("crypto_yield_monitor.log"),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger("crypto_yield_monitor")
 
 
 # 企业微信群机器人类
@@ -68,10 +63,6 @@ class ExchangeAPI:
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         })
-        proxies = {
-            'http': 'http://127.0.0.1:7890',
-            'https': 'http://127.0.0.1:7890',
-        }
         self.session.proxies.update(proxies)
 
     def get_binance_flexible_products(self):
@@ -91,7 +82,7 @@ class ExchangeAPI:
             response = self.session.get(url, params=params)
 
             # 记录响应状态码和响应文本的前100个字符用于调试
-            logger.info(f"Binance API响应状态码: {response.status_code}")
+            logger.info(f"Binance API响应状态码: {response.status_code}, error: {response.text}")
             # logger.info(f"Binance API响应内容前100个字符: {response.text[:100] if response.text else 'Empty'}")
 
             data = response.json()
@@ -405,6 +396,8 @@ def main():
     # 企业微信群机器人webhook URL（请替换为您的实际webhook URL）
     buy_webhook_url = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=293071ec-9865-4e86-9e69-b48f1a12a83a"
     sell_webhook_url = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=38fd27ea-8569-4de2-9dee-4c4a4ffb77ed"
+    # 获取出口IP
+    get_proxy_ip(proxies)
 
     monitor = CryptoYieldMonitor(buy_webhook_url, sell_webhook_url)
 
