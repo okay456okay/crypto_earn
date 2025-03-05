@@ -11,6 +11,8 @@ from datetime import datetime
 import sys
 import os
 
+from high_yield.get_binance_price import get_binance_price
+
 # 获取当前脚本的目录
 current_dir = os.path.dirname(os.path.abspath(__file__))
 # 将 config.py 所在的目录添加到系统路径
@@ -82,7 +84,8 @@ class ExchangeAPI:
             response = self.session.get(url, params=params)
 
             # 记录响应状态码和响应文本的前100个字符用于调试
-            logger.info(f"Binance API响应状态码: {response.status_code}, error: {response.text}")
+            if response.status_code != 200:
+                logger.info(f"Binance API响应状态码: {response.status_code}, error: {response.text}")
             # logger.info(f"Binance API响应内容前100个字符: {response.text[:100] if response.text else 'Empty'}")
 
             data = response.json()
@@ -272,6 +275,7 @@ class CryptoYieldMonitor:
             logger.info(f"{perp_token} get future results: {futures_results}")
             positive_futures_results = [i for i in futures_results if i[1]['fundingRate'] >= 0 and int(time.time()) - i[1]['fundingTime']/1000 < 24*60*60]
             logger.info(f"{perp_token} positive future results: {futures_results}, current timestamp: {int(time.time())}")
+            current_price = get_binance_price(perp_token)
 
             if positive_futures_results:
                 logger.info(f"Token {token} 满足合约交易条件: {futures_results}")
@@ -283,10 +287,10 @@ class CryptoYieldMonitor:
                     # if notification_key in self.notified_tokens:
                     #     logger.info(f"Token {token} 在 {exchange_name} 已通知过，跳过")
                     #     continue
-
                     notification = {
                         "token": token,
                         "yield_exchange": product["exchange"],
+                        'price': current_price,
                         "apy": product["apy"],
                         "futures_exchange": exchange_name,
                         "funding_rate": funding_rate,
@@ -380,8 +384,8 @@ class CryptoYieldMonitor:
             message += (
                 f"{idx}. {notif['token']} 💰\n"
                 f"   • 年化收益率: {notif['apy']}% ({notif['yield_exchange']})\n"
+                f"   • 最新价格: {notif['price']:.4f} ({notif['futures_exchange']})\n"
                 f"   • 合约资金费率: {notif['funding_rate']['fundingRate']:.4f}% ({notif['futures_exchange']})\n"
-                f"   • 合约价格: {notif['funding_rate']['markPrice']:.2f} ({notif['futures_exchange']})\n"
                 f"   • 合约数据时间: {datetime.fromtimestamp(notif['funding_rate']['fundingTime'] / 1000)} ({notif['futures_exchange']})\n"
                 f"   • 最低购买量: {notif['min_purchase']}\n"
                 f"   • 最大购买量: {notif['max_purchase']}\n\n"
