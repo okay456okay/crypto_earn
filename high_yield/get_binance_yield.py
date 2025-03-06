@@ -4,7 +4,7 @@ import hashlib
 import requests
 from urllib.parse import urlencode
 from typing import List, Dict, Any, Optional
-from config import api_secret, api_key, proxies
+from config import api_secret, api_key, proxies, logger
 
 
 def get_binance_flexible_savings(api_key: str, api_secret: str, proxies) -> List[Dict[str, Any]]:
@@ -175,12 +175,12 @@ if __name__ == "__main__":
         savings_list = get_binance_flexible_savings(api_key, api_secret, proxies)
 
         if not savings_list:
-            print("您当前没有活期理财产品持仓。")
+            logger.info("您当前没有活期理财产品持仓。")
         else:
-            print("\n您的活期理财产品持仓清单：")
-            print("-" * 90)
-            print(f"{'资产':<8}{'产品名称':<20}{'总额':<15}{'年化收益率':<15}{'累计收益':<15}{'可赎回数量'}")
-            print("-" * 90)
+            logger.info("\n您的活期理财产品持仓清单：")
+            logger.info("-" * 90)
+            logger.info(f"{'资产':<8}{'产品名称':<20}{'总额':<15}{'年化收益率':<15}{'累计收益':<15}{'可赎回数量'}")
+            logger.info("-" * 90)
 
             for item in savings_list:
                 asset = item.get('asset', 'N/A')
@@ -190,10 +190,10 @@ if __name__ == "__main__":
                 earned_amount = item.get('totalInterest', item.get('interest', '0'))
                 free_amount = item.get('freeAmount', item.get('redeemableAmount', '0'))
 
-                print(
+                logger.info(
                     f"{asset:<8}{product_name:<20}{total_amount:<15}{annual_rate:.2f}%{earned_amount:<15}{free_amount}")
 
-            print("-" * 90)
+            logger.info("-" * 90)
 
     except Exception as e:
-        print(f"错误: {e}")
+        logger.info(f"错误: {e}")

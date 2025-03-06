@@ -313,6 +313,11 @@ class CryptoYieldMonitor:
             logger.info("未找到满足所有条件的产品")
 
     def run(self):
+        # 尝试获取外网出口IP
+        proxy_ip = get_proxy_ip()
+        logger.info(f"当前外网出口IP: {proxy_ip}")
+        logger.info("请确保此IP已添加到Binance API白名单中")
+
         """运行监控任务"""
         logger.info("开始检查高收益加密货币...")
         try:
@@ -343,6 +348,7 @@ class CryptoYieldMonitor:
             #     {'exchange': 'Binance', 'symbol': 'HIVE', 'totalAmount': 500.0},
             #     {'exchange': 'Binance', 'symbol': 'USDT', 'totalAmount': 200.0},
             # ]
+            logger.info(f"获取到的活期理财账户仓位如下：{purchased_tokens}")
             self.check_tokens(purchased_tokens, all_products)
         except Exception as e:
             logger.error(f"运行监控任务时发生错误: {str(e)}")
@@ -400,10 +406,6 @@ def main():
     # 企业微信群机器人webhook URL（请替换为您的实际webhook URL）
     buy_webhook_url = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=293071ec-9865-4e86-9e69-b48f1a12a83a"
     sell_webhook_url = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=38fd27ea-8569-4de2-9dee-4c4a4ffb77ed"
-    # 尝试获取外网出口IP
-    proxy_ip = get_proxy_ip()
-    logger.info(f"当前外网出口IP: {proxy_ip}")
-    logger.info("请确保此IP已添加到Binance API白名单中")
 
     monitor = CryptoYieldMonitor(buy_webhook_url, sell_webhook_url)
 
