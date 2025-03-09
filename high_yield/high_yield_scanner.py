@@ -20,7 +20,7 @@ sys.path.append(os.path.join(current_dir, '..'))
 
 from binance_buy.buy_spot import get_proxy_ip
 from config import binance_api_secret, binance_api_key, proxies, logger, bitget_api_key, bitget_api_secret, \
-    bitget_api_passphrase, leverage_ratio
+    bitget_api_passphrase, leverage_ratio, purchased_tokens
 from high_yield.get_binance_yield import get_binance_flexible_savings
 
 
@@ -413,6 +413,7 @@ class CryptoYieldMonitor:
         self.buy_wechat_bot.send_message(message)
         logger.info(f"已发送{len(notifications)}条高收益加密货币通知")
 
+    @staticmethod
     def get_estimate_apy(self, apy, fundingRate, leverage_ratio=leverage_ratio):
         return 1 * leverage_ratio / (leverage_ratio + 1) * (apy + fundingRate * 3 * 365)
 
@@ -511,15 +512,11 @@ class CryptoYieldMonitor:
         try:
             # 对所有已购买产品做检查
             # purchased_tokens = [('Binance', 'HIVE'), ]
-            purchased_tokens = []
             # binance_earn_positions = get_binance_flexible_savings(binance_api_key, binance_api_secret, proxies)
             # for p in binance_earn_positions:
             #     if float(p.get('totalAmount', 0)) > 1:
             #         purchased_tokens.append({"exchange": 'Binance', "token": p.get('asset'),
             #                                  "totalAmount": float(p.get('totalAmount', 0.0))})
-            purchased_tokens = [
-                {'spot_exchange': 'Bybit', 'future_exchange': 'Bitget', 'token': 'MOVE', 'totalAmount': 200.0},
-            ]
             logger.info(f"获取到的活期理财账户仓位如下：{purchased_tokens}")
             self.check_tokens(purchased_tokens, all_products)
         except Exception as e:
