@@ -11,7 +11,6 @@ import sys
 import os
 import ccxt
 
-from high_yield.get_binance_price import get_binance_price
 
 # 获取当前脚本的目录
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -413,7 +412,6 @@ class CryptoYieldMonitor:
         self.buy_wechat_bot.send_message(message)
         logger.info(f"已发送{len(notifications)}条高收益加密货币通知")
 
-    @staticmethod
     def get_estimate_apy(self, apy, fundingRate, leverage_ratio=leverage_ratio):
         return 1 * leverage_ratio / (leverage_ratio + 1) * (apy + fundingRate * 3 * 365)
 
