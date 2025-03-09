@@ -3,3 +3,4 @@ python-binance==1.0.28
 requests==2.32.3
 urllib3==1.26.15
 schedule==1.2.2
+ccxt==4.4.65

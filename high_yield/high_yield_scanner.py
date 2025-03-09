@@ -3,14 +3,13 @@
 通过套保策略，实现现货和空单合约对冲，然后用现货购买高收益率产品，赚取收益。
 该策略更适用于牛市，因为赚取的收益如果为非稳定币，随着价格下跌，则U本位的收益率会下跌
 """
-from readline import get_history_item
-
 import requests
 import time
 import schedule
 from datetime import datetime
 import sys
 import os
+import ccxt
 
 from high_yield.get_binance_price import get_binance_price
 
@@ -20,7 +19,8 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(current_dir, '..'))
 
 from binance_buy.buy_spot import get_proxy_ip
-from config import api_secret, api_key, proxies, logger
+from config import binance_api_secret, binance_api_key, proxies, logger, bitget_api_key, bitget_api_secret, \
+    bitget_api_passphrase, leverage_ratio
 from high_yield.get_binance_yield import get_binance_flexible_savings
 
 
@@ -69,7 +69,10 @@ class ExchangeAPI:
         self.session.proxies.update(proxies)
 
     def get_binance_flexible_products(self):
-        """获取币安活期理财产品 - 使用更新的API"""
+        """
+        获取币安活期理财产品 - 使用更新的API
+        :return [{'exchange': 'Binance', 'token': 'AUCTION', 'apy': 25.573329, 'min_purchase': 0.01, 'max_purchase': 50280.0}]
+        """
         try:
             # 新的Binance API接口
             url = "https://www.binance.com/bapi/earn/v1/friendly/finance-earn/simple-earn/homepage/details"
@@ -113,60 +116,117 @@ class ExchangeAPI:
             return []
 
     def get_bitget_flexible_products(self):
-        """获取Bitget活期理财产品"""
+        """
+        获取Bitget活期理财产品
+        [{'exchange': 'Binance', 'token': 'AUCTION', 'apy': 25.573329, 'min_purchase': 0.01, 'max_purchase': 50280.0}
+        """
+        products = []
         try:
-            url = "https://api.bitget.com/api/v2/finance/staking/list"
+            exchange = ccxt.bitget({
+                'apiKey': bitget_api_key,
+                'secret': bitget_api_secret,
+                'password': bitget_api_passphrase,
+            })
+            exchange.proxies = proxies
+            data = exchange.private_earn_get_v2_earn_savings_product()
+
+            if data["code"] == "00000" and "data" in data:
+                products = []
+                for item in data["data"]:
+                    if item['periodType'] == 'flexible' and item['status'] == 'in_progress':
+                        product = {
+                            "exchange": "Bitget",
+                            "token": item["coin"],
+                            "apy": float(item['apyList'][0]["currentApy"]),
+                            "min_purchase": int(float(item['apyList'][0]['minStepVal'])),
+                            "max_purchase": int(float(item['apyList'][0]['maxStepVal'])),
+                        }
+                        products.append(product)
+            else:
+                logger.error(f"Bitget API返回错误: {data}")
+        except Exception as e:
+            logger.error(f"获取Bitget活期理财产品时出错: {str(e)}")
+        return products
+
+    def get_bybit_flexible_products(self):
+        """
+        获取Bybit活期理财产品
+        https://bybit-exchange.github.io/docs/zh-TW/v5/earn/product-info
+        """
+        products = []
+        try:
+            # https://api.bybit.com/v5/earn/product?category=FlexibleSaving
+            url = "https://api.bybit.com/v5/earn/product"
             params = {
-                "pageSize": 100,
-                "productType": "FLEXIBLE"
+                "category": "FlexibleSaving",
             }
             response = self.session.get(url, params=params)
             data = response.json()
 
-            if data["code"] == "00000" and "data" in data and "list" in data["data"]:
-                products = []
-                for item in data["data"]["list"]:
-                    product = {
-                        "exchange": "Bitget",
-                        "token": item["coinName"],
-                        "apy": float(item["apy"]),
-                        "min_purchase": float(item.get("minAmount", 0))
-                    }
-                    products.append(product)
-                return products
-            else:
-                logger.error(f"Bitget API返回错误: {data}")
-                return []
-        except Exception as e:
-            logger.error(f"获取Bitget活期理财产品时出错: {str(e)}")
-            return []
-
-    def get_bybit_flexible_products(self):
-        """获取Bybit活期理财产品"""
-        try:
-            url = "https://api2.bybit.com/s1/byfi/get-saving-homepage-product-cards"
-            params = {"product_area": [0], "page": 1, "limit": 20, "product_type": 0, "coin_name": "", "sort_apr": 1,
-                      "match_user_asset": False, "show_available": False, "fixed_saving_version": 1}
-            response = self.session.post(url, json=params)
-            data = response.json()
-
             if data["retCode"] == 0 and "result" in data and "list" in data["result"]:
-                products = []
                 for item in data["result"]["list"]:
+                    if item['status'] != 'Available':
+                        continue
                     product = {
                         "exchange": "Bybit",
                         "token": item["coin"],
-                        "apy": float(item["apr"]),
-                        "min_purchase": float(item.get("minAmount", 0))
+                        "apy": float(item["estimateApr"].replace("%", "")),
+                        "min_purchase": float(item.get('minStakeAmount', 0)),
+                        "max_purchase": float(item.get('maxStakeAmount', 0))
                     }
                     products.append(product)
-                return products
             else:
                 logger.error(f"Bybit API返回错误: {data}")
-                return []
         except Exception as e:
             logger.error(f"获取Bybit活期理财产品时出错: {str(e)}")
-            return []
+        return products
+
+    def get_gateio_flexible_products(self):
+        """
+        获取GateIO活期理财产品
+        https://www.gate.io/docs/developers/apiv4/zh_CN/#earnuni
+        """
+        products = []
+        try:
+            # self.session.get("https://www.gate.io/zh/simple-earn")
+            # url = "https://www.gate.io/apiw/v2/uni-loan/earn/market/list?sort_type=3&available=false&limit=7&have_balance=0&have_award=0&is_subscribed=0&page=1"
+            url = "https://www.gate.io/apiw/v2/uni-loan/earn/market/list"
+            params = {
+                "sort_type": 3,
+                "available": True,
+                "limit": 50,
+                "page": 1,
+            }
+            headers = {
+                # 'User-Agent': "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0",
+                # "Content-Type": "application/json",
+                # "Accept": "application/json, text/plain, */*'",
+                "accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+                # "referer": "https://www.gate.io/zh/simple-earn",
+                'sec-fetch-site': 'same-origin',
+            }
+            cookies = {
+                'lang': 'cn',
+                'exchange_rate_switch': '1',
+            }
+            response = requests.get(url, params=params, headers=headers, cookies=cookies, proxies=proxies)
+            data = response.json()
+
+            if data["code"] == 0 and "data" in data and "list" in data["data"]:
+                for item in data["data"]["list"]:
+                    product = {
+                        "exchange": "GateIO",
+                        "token": item["asset"],
+                        "apy": float(item["year_rate"]) * 100,
+                        "min_purchase": float(item.get('total_lend_available', 0)),
+                        "max_purchase": float(item.get('total_lend_amount', 0))
+                    }
+                    products.append(product)
+            else:
+                logger.error(f"GateIO API返回错误: {data}")
+        except Exception as e:
+            logger.error(f"获取GateIO活期理财产品时出错: {str(e)}")
+        return products
 
     def get_binance_futures(self, token):
         """
@@ -292,7 +352,7 @@ class CryptoYieldMonitor:
         self.exchange_api = ExchangeAPI()
         self.buy_wechat_bot = WeChatWorkBot(buy_webhook_url)
         self.sell_wechat_bot = WeChatWorkBot(sell_webhook_url)
-        self.min_apy_threshold = 15  # 最低年化利率阈值 (%)
+        self.min_apy_threshold = 20  # 最低年化利率阈值 (%)
         self.notified_tokens = set()  # 已通知的Token集合，避免重复通知
 
     def get_futures_trading(self, token):
@@ -300,14 +360,25 @@ class CryptoYieldMonitor:
         results = []
 
         # 检查Binance
-        binance_rate = self.exchange_api.get_binance_futures(token)
-        logger.info(f"{token} Binance Perp info: {binance_rate}")
+        try:
+            binance_rate = self.exchange_api.get_binance_futures(token)
+            logger.info(f"{token} Binance Perp info: {binance_rate}")
+        except Exception as e:
+            binance_rate = None
+            logger.error(f"获取{token}的合约资金费率报错：: {str(e)}")
 
-        bitget_rate = self.exchange_api.get_bitget_futures_funding_rate(token)
-        logger.info(f"{token} Bitget Perp info: {bitget_rate}")
-
-        bybit_rate = self.exchange_api.get_bybit_futures_funding_rate(token)
-        logger.info(f"{token} Bybit Perp info: {bybit_rate}")
+        try:
+            bitget_rate = self.exchange_api.get_bitget_futures_funding_rate(token)
+            logger.info(f"{token} Bitget Perp info: {bitget_rate}")
+        except Exception as e:
+            bitget_rate = None
+            logger.error(f"获取Bitget {token}的合约资金费率报错：: {str(e)}")
+        try:
+            bybit_rate = self.exchange_api.get_bybit_futures_funding_rate(token)
+            logger.info(f"{token} Bybit Perp info: {bybit_rate}")
+        except Exception as e:
+            bybit_rate = None
+            logger.error(f"获取Bybit {token}的合约资金费率报错：: {str(e)}")
 
         if binance_rate:
             binance_rate['exchange'] = 'Binance'
@@ -342,6 +413,9 @@ class CryptoYieldMonitor:
         self.buy_wechat_bot.send_message(message)
         logger.info(f"已发送{len(notifications)}条高收益加密货币通知")
 
+    def get_estimate_apy(self, apy, fundingRate, leverage_ratio=leverage_ratio):
+        return 1 * leverage_ratio / (leverage_ratio + 1) * (apy + fundingRate * 3 * 365)
+
     def high_yield_filter(self, all_products):
         # 筛选年化利率高于阈值的产品
         high_yield_products = [p for p in all_products if p["apy"] >= self.min_apy_threshold]
@@ -363,14 +437,16 @@ class CryptoYieldMonitor:
             futures_results = self.get_futures_trading(perp_token)
             logger.info(f"{perp_token} get future results: {futures_results}")
             positive_futures_results = [i for i in futures_results if
-                                        i['fundingRate'] >= 0 and int(time.time()) - i['fundingTime'] / 1000 < 24 * 60 * 60]
+                                        i['fundingRate'] >= 0 and int(time.time()) - i[
+                                            'fundingTime'] / 1000 < 24 * 60 * 60]
             logger.info(
                 f"{perp_token} positive future results: {positive_futures_results}, current timestamp: {int(time.time())}")
 
             if positive_futures_results:
-                future_info_str = '\n'.join(
-                    [f"   • {i['exchange']}: 资金费率:{i['fundingRate']:.4f}%, 标记价格:{i['markPrice']:.4f}, {datetime.fromtimestamp(i['fundingTime'] / 1000)}" for i in
-                     futures_results])
+                future_info_str = '\n'.join([
+                    f"   • {i['exchange']}: 资金费率:{i['fundingRate']:.4f}%, 标记价格:{i['markPrice']:.4f}, 预估收益率: {self.get_estimate_apy(product['apy'], i['fundingRate']):.2f}%, {datetime.fromtimestamp(i['fundingTime'] / 1000)}"
+                    for i in
+                    futures_results])
                 logger.info(f"Token {token} 满足合约交易条件: {futures_results}")
                 # 生成通知内容
                 notification = {
@@ -382,24 +458,13 @@ class CryptoYieldMonitor:
                     "max_purchase": product["max_purchase"],
                 }
                 high_yield_notifications.append(notification)
-                # self.notified_tokens.add(notification_key)
-                # for exchange_name, funding_rate in futures_results:
-                #     notification_key = f"{token}_{exchange_name}"
-
-                    # 检查是否已经通知过（24小时内不重复通知同一个Token+交易所组合）
-                    # if notification_key in self.notified_tokens:
-                    #     logger.info(f"Token {token} 在 {exchange_name} 已通知过，跳过")
-                    #     continue
-                    # """
-                    # f"资金费率: {notif['funding_rate']['fundingRate']:.4f}% ({notif['futures_exchange']})\n"
-                    # f"   • 合约数据时间: {datetime.fromtimestamp(notif['funding_rate']['fundingTime'] / 1000)} ({notif['futures_exchange']})\n"
-                    # f"   • 最新价格: {notif['price']:.4f} ({notif['futures_exchange']})\n"
-                    # """
 
         # 发送通知
         if high_yield_notifications:
-            self._send_high_yield_notifications(high_yield_notifications)
             logger.info(f"已添加{len(high_yield_notifications)}个Token到通知列表")
+            limit = 10
+            for p in range(int(len(high_yield_notifications) / limit) + 1):
+                self._send_high_yield_notifications(high_yield_notifications[p * limit:(p + 1) * limit])
 
             # 每24小时清理一次通知记录，允许再次通知
             if len(self.notified_tokens) > 100:  # 避免无限增长
@@ -410,47 +475,51 @@ class CryptoYieldMonitor:
 
     def check_tokens(self, tokens, all_products):
         for token in tokens:
-            product = [i for i in all_products if i['exchange'] == token['exchange'] and i['token'] == token['symbol']]
+            # 获取理财产品最新利率
+            product = [i for i in all_products if
+                       i['exchange'] == token['spot_exchange'] and i['token'] == token['token']]
             if not product:
                 # 发送未找到理财产品通知
-                content = f"在交易所中未找到 {token} 理财产品"
+                content = f"在{token['spot_exchange']}交易所中未找到 {token} 理财产品"
                 self.sell_wechat_bot.send_message(content)
+                product = {'apy': content}
             else:
                 product = product[0]
-                # 过滤资金费率和利率，如果满足条件就告警
-                perp_token = f"{token['symbol']}USDT"
-                # product: {'exchange': 'Binance', 'token': 'AXS', 'apy': 17.9, 'min_purchase': 0.01, 'max_purchase': 301499.0}
-                # future_result: [('Binance', {'fundingTime': 1740960000001, 'fundingRate': 0.01, 'markPrice': 3.97194145})]
-                futures_results = self.get_futures_trading(perp_token)
-                negative_futures = [i for i in futures_results if i['fundingRate'] < 0]
-                future_info_str = '\n'.join(
-                    [f"   • {i['exchange']}: 资金费率:{i['fundingRate']:.4f}%, 标记价格:{i['markPrice']:.4f}, {datetime.fromtimestamp(i['fundingTime'] / 1000)}" for i in
-                     futures_results])
-                if product['apy'] < self.min_apy_threshold or negative_futures:
+            # 过滤资金费率和利率，如果满足条件就告警
+            perp_token = f"{token['token']}USDT"
+            futures_results = self.get_futures_trading(perp_token)
+            token_future = [i for i in futures_results if i['exchange'] == token['future_exchange']]
+            if token_future:
+                token_future = token_future[0]
+                future_info_str = f"   • {token_future['exchange']}: 资金费率:{token_future['fundingRate']:.4f}%, 标记价格:{token_future['markPrice']:.4f}, {datetime.fromtimestamp(token_future['fundingTime'] / 1000)}"
+                estimateAPY = self.get_estimate_apy(product['apy'], token_future['fundingRate'])
+                if product['apy'] < self.min_apy_threshold or token_future['fundingRate'] < 0 or estimateAPY < 30:
                     content = (
                         f"{product['exchange']}加密货币理财产品{product['token']} 卖出提醒\n"
                         f"最新年化收益: {product['apy']}%\n"
-                        f"持有仓位: {token['totalAmount']}\n"
+                        # f"持有仓位: {token['totalAmount']}\n"
+                        f"预估收益率: {estimateAPY:.2f}%(未考虑价格涨跌)\n"
                         f"各交易所资金费率: \n"
                         f"{future_info_str}"
                     )
                     self.sell_wechat_bot.send_message(content)
-
+            else:
+                content = f"在{token['future_exchange']}交易所中未找到 {token} 产品"
+                self.sell_wechat_bot.send_message(content)
 
     def check_sell_strategy(self, all_products):
         try:
             # 对所有已购买产品做检查
             # purchased_tokens = [('Binance', 'HIVE'), ]
             purchased_tokens = []
-            binance_earn_positions = get_binance_flexible_savings(api_key, api_secret, proxies)
-            for p in binance_earn_positions:
-                if float(p.get('totalAmount', 0)) > 1:
-                    purchased_tokens.append({"exchange": 'Binance', "symbol": p.get('asset'),
-                                             "totalAmount": float(p.get('totalAmount', 0.0))})
-            # purchased_tokens = [
-            #     {'exchange': 'Binance', 'symbol': 'HIVE', 'totalAmount': 500.0},
-            #     {'exchange': 'Binance', 'symbol': 'USDT', 'totalAmount': 200.0},
-            # ]
+            # binance_earn_positions = get_binance_flexible_savings(binance_api_key, binance_api_secret, proxies)
+            # for p in binance_earn_positions:
+            #     if float(p.get('totalAmount', 0)) > 1:
+            #         purchased_tokens.append({"exchange": 'Binance', "token": p.get('asset'),
+            #                                  "totalAmount": float(p.get('totalAmount', 0.0))})
+            purchased_tokens = [
+                {'spot_exchange': 'Bybit', 'future_exchange': 'Bitget', 'token': 'MOVE', 'totalAmount': 200.0},
+            ]
             logger.info(f"获取到的活期理财账户仓位如下：{purchased_tokens}")
             self.check_tokens(purchased_tokens, all_products)
         except Exception as e:
@@ -469,22 +538,23 @@ class CryptoYieldMonitor:
             binance_products = self.exchange_api.get_binance_flexible_products()
             logger.info(f"从Binance获取到{len(binance_products)}个活期理财产品")
 
-            # bitget_products = self.exchange_api.get_bitget_flexible_products()
-            # logger.info(f"从Bitget获取到{len(bitget_products)}个活期理财产品")
+            bitget_products = self.exchange_api.get_bitget_flexible_products()
+            logger.info(f"从Bitget获取到{len(bitget_products)}个活期理财产品")
 
-            # bybit_products = self.exchange_api.get_bybit_flexible_products()
-            # logger.info(f"从Bybit获取到{len(bybit_products)}个活期理财产品")
+            bybit_products = self.exchange_api.get_bybit_flexible_products()
+            logger.info(f"从Bybit获取到{len(bybit_products)}个活期理财产品")
+
+            gateio_products = self.exchange_api.get_gateio_flexible_products()
+            logger.info(f"从GateIO获取到{len(gateio_products)}个活期理财产品")
 
             # 合并所有产品
-            # all_products = binance_products + bitget_products + bybit_products
-            all_products = binance_products
+            all_products = binance_products + bitget_products + bybit_products + gateio_products
             logger.info(f"总共获取到{len(all_products)}个活期理财产品")
             # 过滤和处理高收益理财产品
             self.high_yield_filter(all_products)
-            # self.check_sell_strategy(all_products)
+            self.check_sell_strategy(all_products)
         except Exception as e:
             logger.error(f"运行监控任务时发生错误: {str(e)}")
-            raise
 
 
 # 主程序入口
@@ -494,6 +564,9 @@ def main():
     sell_webhook_url = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=38fd27ea-8569-4de2-9dee-4c4a4ffb77ed"
 
     monitor = CryptoYieldMonitor(buy_webhook_url, sell_webhook_url)
+    # get_proxy_ip()
+    # print(monitor.exchange_api.get_bitget_flexible_products())
+    # exit()
     # print(monitor.exchange_api.get_binance_futures('ETHUSDT'))
     # print(monitor.exchange_api.get_bybit_futures_funding_rate('ETHUSDT'))
     # print(monitor.exchange_api.get_bitget_futures_funding_rate('ETHUSDT'))

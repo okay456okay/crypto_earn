@@ -24,7 +24,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 # 将 config.py 所在的目录添加到系统路径
 sys.path.append(os.path.join(current_dir, '..'))
 
-from config import api_key, api_secret, proxies, logger
+from config import binance_api_key, binance_api_secret, proxies, logger
 
 # 设置SOCKS5代理
 # socks.set_default_proxy(socks.SOCKS5, "127.0.0.1", 7890)
@@ -139,6 +139,7 @@ def get_proxy_ip(proxies=proxies):
                                 proxies=proxies, timeout=10)
         if response.status_code == 200:
             proxy_ip = response.json()['ip']
+            logger.info(f"获取到外网ip为： {proxy_ip}")
             return proxy_ip
         return "无法获取"
     except Exception as e:
@@ -210,9 +211,9 @@ if __name__ == "__main__":
 
         # 初始化Binance客户端 - 使用代理设置
         if proxies:
-            client = Client(api_key, api_secret, {'proxies': proxies})
+            client = Client(binance_api_key, binance_api_secret, {'proxies': proxies})
         else:
-            client = Client(api_key, api_secret)
+            client = Client(binance_api_key, binance_api_secret)
         # 设置请求超时时间，考虑代理可能增加的延迟
         client.session.request_timeout = 20
 

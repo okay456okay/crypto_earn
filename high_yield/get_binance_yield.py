@@ -4,7 +4,7 @@ import hashlib
 import requests
 from urllib.parse import urlencode
 from typing import List, Dict, Any, Optional
-from config import api_secret, api_key, proxies, logger
+from config import binance_api_secret, binance_api_key, proxies, logger
 
 
 def get_binance_flexible_savings(api_key: str, api_secret: str, proxies) -> List[Dict[str, Any]]:
@@ -12,8 +12,8 @@ def get_binance_flexible_savings(api_key: str, api_secret: str, proxies) -> List
     获取币安账户中持仓的活期理财产品清单，使用Session和代理
 
     参数:
-        api_key (str): 币安API密钥
-        api_secret (str): 币安API密钥密文
+        binance_api_key (str): 币安API密钥
+        binance_api_secret (str): 币安API密钥密文
         proxy (str): 代理地址，默认为 "127.0.0.1:7890"
 
     返回:
@@ -172,7 +172,7 @@ def get_binance_flexible_savings(api_key: str, api_secret: str, proxies) -> List
 if __name__ == "__main__":
     # 示例API密钥(请替换为您的实际密钥)
     try:
-        savings_list = get_binance_flexible_savings(api_key, api_secret, proxies)
+        savings_list = get_binance_flexible_savings(binance_api_key, binance_api_secret, proxies)
 
         if not savings_list:
             logger.info("您当前没有活期理财产品持仓。")
