@@ -3,6 +3,7 @@
 通过套保策略，实现现货和空单合约对冲，然后用现货购买高收益率产品，赚取收益。
 该策略更适用于牛市，因为赚取的收益如果为非稳定币，随着价格下跌，则U本位的收益率会下跌
 """
+from readline import get_history_item
 
 import requests
 import time
@@ -22,8 +23,8 @@ from binance_buy.buy_spot import get_proxy_ip
 from config import api_secret, api_key, proxies, logger
 from high_yield.get_binance_yield import get_binance_flexible_savings
 
-# import json
 
+# import json
 
 
 # 企业微信群机器人类
@@ -101,7 +102,8 @@ class ExchangeAPI:
                             "token": item.get("asset", ""),
                             "apy": float(item.get("highestApy", 0)) * 100,
                             "min_purchase": float(item.get('productDetailList', [])[0].get("minPurchaseAmount", 0)),
-                            "max_purchase": float(item.get('productDetailList', [])[0].get("maxPurchaseAmountPerUser", 0))
+                            "max_purchase": float(
+                                item.get('productDetailList', [])[0].get("maxPurchaseAmountPerUser", 0))
                         }
                         products.append(product)
                 return products
@@ -167,7 +169,10 @@ class ExchangeAPI:
             return []
 
     def get_binance_futures(self, token):
-        """获取币安合约资金费率"""
+        """
+        获取币安合约资金费率
+        :return {'fundingTime': 1741478400001, 'fundingRate': 0.0068709999999999995, 'markPrice': 2202.84}
+        """
         try:
             url = f"https://fapi.binance.com/fapi/v1/fundingRate?symbol={token}"
             response = self.session.get(url)
@@ -184,30 +189,85 @@ class ExchangeAPI:
             logger.error(f"获取Binance {token}合约资金费率时出错: {str(e)}")
             return {}
 
-    def get_bitget_futures_funding_rate(self, token):
-        """获取Bitget合约资金费率"""
+    def get_bitget_futures_funding_price(self, token):
+        """
+        获取交易对市价/指数/标记价格
+        :return {'fundingTime': 1741478400001, 'fundingRate': 0.0068709999999999995, 'markPrice': 2202.84}
+        """
         try:
-            url = "https://api.bitget.com/api/mix/v1/market/fundingRate"
+            url = "https://api.bitget.com/api/v2/mix/market/symbol-price"
             params = {
-                "symbol": f"{token}USDT"
+                "symbol": f"{token}",
+                "productType": "USDT-FUTURES",
             }
             response = self.session.get(url, params=params)
             data = response.json()
 
             if data["code"] == "00000" and "data" in data:
-                return float(data["data"]["fundingRate"]) * 100  # 转换为百分比
+                return data["data"][0]["markPrice"]
             return None
         except Exception as e:
-            logger.error(f"获取Bitget合约资金费率时出错: {str(e)}")
+            logger.error(f"获取Bitget {token}下次资金费结算时间: {str(e)}")
+            return None
+
+    def get_bitget_futures_funding_time(self, token):
+        """
+        获取下次资金费结算时间
+        :return {'fundingTime': 1741478400001, 'fundingRate': 0.0068709999999999995, 'markPrice': 2202.84}
+        """
+        try:
+            url = "https://api.bitget.com/api/v2/mix/market/funding-time"
+            params = {
+                "symbol": f"{token}",
+                "productType": "USDT-FUTURES",
+            }
+            response = self.session.get(url, params=params)
+            data = response.json()
+
+            if data["code"] == "00000" and "data" in data:
+                return data["data"][0]["nextFundingTime"]
+            return None
+        except Exception as e:
+            logger.error(f"获取Bitget {token}下次资金费结算时间: {str(e)}")
+            return None
+
+    def get_bitget_futures_funding_rate(self, token):
+        """
+        获取Bitget合约资金费率
+        :return {'fundingTime': 1741478400001, 'fundingRate': 0.0068709999999999995, 'markPrice': 2202.84}
+        """
+        funding_time = self.get_bitget_futures_funding_time(token)
+        mark_price = self.get_bitget_futures_funding_price(token)
+        try:
+            url = "https://api.bitget.com/api/v2/mix/market/current-fund-rate"
+            params = {
+                "symbol": f"{token}",
+                "productType": "USDT-FUTURES",
+            }
+            response = self.session.get(url, params=params)
+            data = response.json()
+
+            if data["code"] == "00000" and "data" in data:
+                return {
+                    'fundingTime': int(funding_time),
+                    'fundingRate': float(data["data"][0]["fundingRate"]) * 100,
+                    'markPrice': float(mark_price),
+                }  # 转换为百分比
+            return None
+        except Exception as e:
+            logger.error(f"获取Bitget {token}合约资金费率时出错: {str(e)}")
             return None
 
     def get_bybit_futures_funding_rate(self, token):
-        """获取Bybit合约资金费率"""
+        """
+        获取Bybit合约资金费率
+        :return {'fundingTime': 1741478400001, 'fundingRate': 0.0068709999999999995, 'markPrice': 2202.84}
+        """
         try:
             url = "https://api.bybit.com/v5/market/tickers"
             params = {
                 "category": "linear",
-                "symbol": f"{token}USDT"
+                "symbol": f"{token}"
             }
             response = self.session.get(url, params=params)
             data = response.json()
@@ -215,11 +275,15 @@ class ExchangeAPI:
             if data["retCode"] == 0 and "result" in data and "list" in data["result"]:
                 for item in data["result"]["list"]:
                     if "fundingRate" in item:
-                        return float(item["fundingRate"]) * 100  # 转换为百分比
-            return None
+                        return {
+                            'fundingTime': int(item["nextFundingTime"]),
+                            'fundingRate': float(item["fundingRate"]) * 100,  # 转换为百分比
+                            'markPrice': float(item["markPrice"]),
+                        }
+            return {}
         except Exception as e:
-            logger.error(f"获取Bybit合约资金费率时出错: {str(e)}")
-            return None
+            logger.error(f"获取Bybit {token}合约资金费率时出错: {str(e)}")
+            return {}
 
 
 # 主业务逻辑类
@@ -238,20 +302,45 @@ class CryptoYieldMonitor:
         # 检查Binance
         binance_rate = self.exchange_api.get_binance_futures(token)
         logger.info(f"{token} Binance Perp info: {binance_rate}")
+
+        bitget_rate = self.exchange_api.get_bitget_futures_funding_rate(token)
+        logger.info(f"{token} Bitget Perp info: {bitget_rate}")
+
+        bybit_rate = self.exchange_api.get_bybit_futures_funding_rate(token)
+        logger.info(f"{token} Bybit Perp info: {bybit_rate}")
+
         if binance_rate:
-            results.append(("Binance", binance_rate))
+            binance_rate['exchange'] = 'Binance'
+            results.append(binance_rate)
 
         # 检查Bitget
-        # bitget_rate = self.exchange_api.get_bitget_futures_funding_rate(token)
-        # if bitget_rate is not None and bitget_rate > 0:
-        #     results.append(("Bitget", bitget_rate))
+        if bitget_rate:
+            bitget_rate['exchange'] = 'Bitget'
+            results.append(bitget_rate)
 
         # 检查Bybit
-        # bybit_rate = self.exchange_api.get_bybit_futures_funding_rate(token)
-        # if bybit_rate is not None and bybit_rate > 0:
-        #     results.append(("Bybit", bybit_rate))
+        if bybit_rate:
+            bybit_rate['exchange'] = 'Bybit'
+            results.append(bybit_rate)
 
         return results
+
+    def _send_high_yield_notifications(self, notifications):
+        """发送企业微信群机器人通知"""
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        message = f"📊 加密货币高收益理财产品监控 ({now})\n\n"
+
+        for idx, notif in enumerate(notifications, 1):
+            message += (
+                f"{idx}. {notif['token']} 💰\n"
+                f"   • 理财产品年化收益率: {notif['apy']:.2f}% ({notif['exchange']})\n"
+                f"   • 各交易所合约信息: \n{notif['future_info']}\n"
+                f"   • 最低购买量: {notif['min_purchase']}\n"
+                f"   • 最大购买量: {notif['max_purchase']}\n\n"
+            )
+
+        self.buy_wechat_bot.send_message(message)
+        logger.info(f"已发送{len(notifications)}条高收益加密货币通知")
 
     def high_yield_filter(self, all_products):
         # 筛选年化利率高于阈值的产品
@@ -273,32 +362,39 @@ class CryptoYieldMonitor:
             perp_token = f"{token}USDT"
             futures_results = self.get_futures_trading(perp_token)
             logger.info(f"{perp_token} get future results: {futures_results}")
-            positive_futures_results = [i for i in futures_results if i[1]['fundingRate'] >= 0 and int(time.time()) - i[1]['fundingTime']/1000 < 24*60*60]
-            logger.info(f"{perp_token} positive future results: {futures_results}, current timestamp: {int(time.time())}")
-            current_price = get_binance_price(perp_token)
+            positive_futures_results = [i for i in futures_results if
+                                        i['fundingRate'] >= 0 and int(time.time()) - i['fundingTime'] / 1000 < 24 * 60 * 60]
+            logger.info(
+                f"{perp_token} positive future results: {positive_futures_results}, current timestamp: {int(time.time())}")
 
             if positive_futures_results:
+                future_info_str = '\n'.join(
+                    [f"   • {i['exchange']}: 资金费率:{i['fundingRate']:.4f}%, 标记价格:{i['markPrice']:.4f}, {datetime.fromtimestamp(i['fundingTime'] / 1000)}" for i in
+                     futures_results])
                 logger.info(f"Token {token} 满足合约交易条件: {futures_results}")
                 # 生成通知内容
-                for exchange_name, funding_rate in futures_results:
-                    notification_key = f"{token}_{exchange_name}"
+                notification = {
+                    "exchange": product["exchange"],
+                    "token": token,
+                    "apy": product["apy"],
+                    "future_info": future_info_str,
+                    "min_purchase": product["min_purchase"],
+                    "max_purchase": product["max_purchase"],
+                }
+                high_yield_notifications.append(notification)
+                # self.notified_tokens.add(notification_key)
+                # for exchange_name, funding_rate in futures_results:
+                #     notification_key = f"{token}_{exchange_name}"
 
                     # 检查是否已经通知过（24小时内不重复通知同一个Token+交易所组合）
                     # if notification_key in self.notified_tokens:
                     #     logger.info(f"Token {token} 在 {exchange_name} 已通知过，跳过")
                     #     continue
-                    notification = {
-                        "token": token,
-                        "yield_exchange": product["exchange"],
-                        'price': current_price,
-                        "apy": product["apy"],
-                        "futures_exchange": exchange_name,
-                        "funding_rate": funding_rate,
-                        "min_purchase": product["min_purchase"],
-                        "max_purchase": product["max_purchase"],
-                    }
-                    high_yield_notifications.append(notification)
-                    self.notified_tokens.add(notification_key)
+                    # """
+                    # f"资金费率: {notif['funding_rate']['fundingRate']:.4f}% ({notif['futures_exchange']})\n"
+                    # f"   • 合约数据时间: {datetime.fromtimestamp(notif['funding_rate']['fundingTime'] / 1000)} ({notif['futures_exchange']})\n"
+                    # f"   • 最新价格: {notif['price']:.4f} ({notif['futures_exchange']})\n"
+                    # """
 
         # 发送通知
         if high_yield_notifications:
@@ -311,6 +407,54 @@ class CryptoYieldMonitor:
                 logger.info("已清理通知记录")
         else:
             logger.info("未找到满足所有条件的产品")
+
+    def check_tokens(self, tokens, all_products):
+        for token in tokens:
+            product = [i for i in all_products if i['exchange'] == token['exchange'] and i['token'] == token['symbol']]
+            if not product:
+                # 发送未找到理财产品通知
+                content = f"在交易所中未找到 {token} 理财产品"
+                self.sell_wechat_bot.send_message(content)
+            else:
+                product = product[0]
+                # 过滤资金费率和利率，如果满足条件就告警
+                perp_token = f"{token['symbol']}USDT"
+                # product: {'exchange': 'Binance', 'token': 'AXS', 'apy': 17.9, 'min_purchase': 0.01, 'max_purchase': 301499.0}
+                # future_result: [('Binance', {'fundingTime': 1740960000001, 'fundingRate': 0.01, 'markPrice': 3.97194145})]
+                futures_results = self.get_futures_trading(perp_token)
+                negative_futures = [i for i in futures_results if i['fundingRate'] < 0]
+                future_info_str = '\n'.join(
+                    [f"   • {i['exchange']}: 资金费率:{i['fundingRate']:.4f}%, 标记价格:{i['markPrice']:.4f}, {datetime.fromtimestamp(i['fundingTime'] / 1000)}" for i in
+                     futures_results])
+                if product['apy'] < self.min_apy_threshold or negative_futures:
+                    content = (
+                        f"{product['exchange']}加密货币理财产品{product['token']} 卖出提醒\n"
+                        f"最新年化收益: {product['apy']}%\n"
+                        f"持有仓位: {token['totalAmount']}\n"
+                        f"各交易所资金费率: \n"
+                        f"{future_info_str}"
+                    )
+                    self.sell_wechat_bot.send_message(content)
+
+
+    def check_sell_strategy(self, all_products):
+        try:
+            # 对所有已购买产品做检查
+            # purchased_tokens = [('Binance', 'HIVE'), ]
+            purchased_tokens = []
+            binance_earn_positions = get_binance_flexible_savings(api_key, api_secret, proxies)
+            for p in binance_earn_positions:
+                if float(p.get('totalAmount', 0)) > 1:
+                    purchased_tokens.append({"exchange": 'Binance', "symbol": p.get('asset'),
+                                             "totalAmount": float(p.get('totalAmount', 0.0))})
+            # purchased_tokens = [
+            #     {'exchange': 'Binance', 'symbol': 'HIVE', 'totalAmount': 500.0},
+            #     {'exchange': 'Binance', 'symbol': 'USDT', 'totalAmount': 200.0},
+            # ]
+            logger.info(f"获取到的活期理财账户仓位如下：{purchased_tokens}")
+            self.check_tokens(purchased_tokens, all_products)
+        except Exception as e:
+            logger.error(f"对所有已购买产品做检查失败 {e}")
 
     def run(self):
         # 尝试获取外网出口IP
@@ -337,68 +481,10 @@ class CryptoYieldMonitor:
             logger.info(f"总共获取到{len(all_products)}个活期理财产品")
             # 过滤和处理高收益理财产品
             self.high_yield_filter(all_products)
-            # 对所有已购买产品做检查
-            # purchased_tokens = [('Binance', 'HIVE'), ]
-            purchased_tokens = []
-            binance_earn_positions = get_binance_flexible_savings(api_key, api_secret, proxies)
-            for p in binance_earn_positions:
-                if float(p.get('totalAmount', 0)) > 1:
-                    purchased_tokens.append({"exchange": 'Binance', "symbol": p.get('asset'), "totalAmount": float(p.get('totalAmount', 0.0))})
-            # purchased_tokens = [
-            #     {'exchange': 'Binance', 'symbol': 'HIVE', 'totalAmount': 500.0},
-            #     {'exchange': 'Binance', 'symbol': 'USDT', 'totalAmount': 200.0},
-            # ]
-            logger.info(f"获取到的活期理财账户仓位如下：{purchased_tokens}")
-            self.check_tokens(purchased_tokens, all_products)
+            # self.check_sell_strategy(all_products)
         except Exception as e:
             logger.error(f"运行监控任务时发生错误: {str(e)}")
-
-    def check_tokens(self, tokens, all_products):
-        for token in tokens:
-            product = [i for i in all_products if i['exchange'] == token['exchange'] and i['token'] == token['symbol']]
-            if not product:
-                # 发送未找到理财产品通知
-                content = f"在交易所中未找到 {token} 理财产品"
-                self.sell_wechat_bot.send_message(content)
-            else:
-                product = product[0]
-                # 过滤资金费率和利率，如果满足条件就告警
-                perp_token = f"{token['symbol']}USDT"
-                # product: {'exchange': 'Binance', 'token': 'AXS', 'apy': 17.9, 'min_purchase': 0.01, 'max_purchase': 301499.0}
-                # future_result: [('Binance', {'fundingTime': 1740960000001, 'fundingRate': 0.01, 'markPrice': 3.97194145})]
-                futures_results = self.get_futures_trading(perp_token)
-                negative_futures = [i for i in futures_results if i[1]['fundingRate'] < 0]
-                futures_results_str = '\n'.join(
-                    [f"{i[0]}: {datetime.fromtimestamp(i[1]['fundingTime'] / 1000)}, {i[1]['fundingRate']}" for i in
-                     futures_results])
-                if product['apy'] < self.min_apy_threshold or negative_futures:
-                    content = (
-                        f"{product['exchange']}加密货币理财产品{product['token']} 卖出提醒\n"
-                        f"最新年化收益: {product['apy']}%\n"
-                        f"持有仓位: {token['totalAmount']}\n"
-                        f"各交易所资金费率: \n"
-                        f"{futures_results_str}"
-                    )
-                    self.sell_wechat_bot.send_message(content)
-
-    def _send_high_yield_notifications(self, notifications):
-        """发送企业微信群机器人通知"""
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        message = f"📊 加密货币高收益理财产品监控 ({now})\n\n"
-
-        for idx, notif in enumerate(notifications, 1):
-            message += (
-                f"{idx}. {notif['token']} 💰\n"
-                f"   • 年化收益率: {notif['apy']}% ({notif['yield_exchange']})\n"
-                f"   • 最新价格: {notif['price']:.4f} ({notif['futures_exchange']})\n"
-                f"   • 合约资金费率: {notif['funding_rate']['fundingRate']:.4f}% ({notif['futures_exchange']})\n"
-                f"   • 合约数据时间: {datetime.fromtimestamp(notif['funding_rate']['fundingTime'] / 1000)} ({notif['futures_exchange']})\n"
-                f"   • 最低购买量: {notif['min_purchase']}\n"
-                f"   • 最大购买量: {notif['max_purchase']}\n\n"
-            )
-
-        self.buy_wechat_bot.send_message(message)
-        logger.info(f"已发送{len(notifications)}条高收益加密货币通知")
+            raise
 
 
 # 主程序入口
@@ -408,6 +494,10 @@ def main():
     sell_webhook_url = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=38fd27ea-8569-4de2-9dee-4c4a4ffb77ed"
 
     monitor = CryptoYieldMonitor(buy_webhook_url, sell_webhook_url)
+    # print(monitor.exchange_api.get_binance_futures('ETHUSDT'))
+    # print(monitor.exchange_api.get_bybit_futures_funding_rate('ETHUSDT'))
+    # print(monitor.exchange_api.get_bitget_futures_funding_rate('ETHUSDT'))
+    # exit()
 
     # 立即运行一次
     monitor.run()
