@@ -18,7 +18,7 @@ sys.path.append(os.path.join(current_dir, '..'))
 
 from binance_buy.buy_spot import get_proxy_ip
 from config import binance_api_secret, binance_api_key, proxies, logger, bitget_api_key, bitget_api_secret, \
-    bitget_api_passphrase, leverage_ratio, purchased_tokens, yield_percentile
+    bitget_api_passphrase, leverage_ratio, purchased_tokens, yield_percentile, min_apy_threshold
 
 
 # import json
@@ -36,7 +36,7 @@ def get_percentile(data, percentile=yield_percentile, reverse=True):
     sorted_data = sorted(data, reverse=reverse)
     # 计算位置 (使用最近秩方法)
     n = len(sorted_data)
-    position = int(percentile * n)
+    position = int(percentile / 100 * n)
     # 如果位置是整数，取该位置的值
     if position < n:
         return sorted_data[position]
@@ -121,7 +121,7 @@ class ExchangeAPI:
                             "exchange": "Binance",
                             "token": item.get("asset", ""),
                             "apy": float(item.get("highestApy", 0)) * 100,
-                            'apy_percentile': 100,
+                            'apy_percentile': float(item.get("highestApy", 0)) * 100,
                             "min_purchase": float(item.get('productDetailList', [])[0].get("minPurchaseAmount", 0)),
                             "max_purchase": float(
                                 item.get('productDetailList', [])[0].get("maxPurchaseAmountPerUser", 0))
@@ -156,7 +156,7 @@ class ExchangeAPI:
                             "exchange": "Bitget",
                             "token": item["coin"],
                             "apy": float(item['apyList'][0]["currentApy"]),
-                            "apy_percentile": 100,
+                            "apy_percentile": float(item['apyList'][0]["currentApy"]),
                             "min_purchase": int(float(item['apyList'][0]['minStepVal'])),
                             "max_purchase": int(float(item['apyList'][0]['maxStepVal'])),
                         }
@@ -185,19 +185,23 @@ class ExchangeAPI:
             if data["retCode"] == 0 and "result" in data and "list" in data["result"]:
                 for item in data["result"]["list"]:
                     token = item["coin"]
+                    apy = float(item["estimateApr"].replace("%", ""))
                     if item['status'] != 'Available':
                         continue
                     try:
-                        logger.info(f"获取{token}近24小时收益率曲线")
-                        response = requests.post(
-                            url="https://api2.bybit.com/s1/byfi/get-flexible-saving-apr-history",
-                            json={"product_id": item['productId']},
-                            headers={"Content-Type": "application/json"},
-                            proxies=proxies
-                        )
-                        data = response.json().get('result', {}).get('hourly_apr_list', [])
-                        data = [int(i['apr_e8'])/1000000 for i in data]
-                        apy_percentile = get_percentile(data, percentile=yield_percentile, reverse=True)
+                        if apy >= min_apy_threshold:
+                            response = requests.post(
+                                url="https://api2.bybit.com/s1/byfi/get-flexible-saving-apr-history",
+                                json={"product_id": item['productId']},
+                                headers={"Content-Type": "application/json"},
+                                proxies=proxies
+                            )
+                            data = response.json().get('result', {}).get('hourly_apr_list', [])
+                            data = [int(i['apr_e8']) / 1000000 for i in data]
+                            logger.info(f"获取bybit {token}近24小时收益率曲线, 数据：{data}")
+                            apy_percentile = get_percentile(data, percentile=yield_percentile, reverse=True)
+                        else:
+                            apy_percentile = apy
                     except Exception as e:
                         logger.error(f"获取 {token}的收益曲线失败： {str(e)}")
                         apy_percentile = 0
@@ -249,16 +253,18 @@ class ExchangeAPI:
 
             if data["code"] == 0 and "data" in data and "list" in data["data"]:
                 end = int(datetime.now().replace(microsecond=0, second=0, minute=0).timestamp())
-                start = end - 3 * 24 * 60 * 60
+                start = end - 1 * 24 * 60 * 60
                 for item in data["data"]["list"]:
                     token = item["asset"]
-                    logger.info(f"get {token} yield chart for last 7days")
-                    asset_chart = requests.get(
-                        f'https://www.gate.io/apiw/v2/uni-loan/earn/chart?from={start}&to={end}&asset={token}&type=1',
-                        proxies=proxies)
                     try:
-                        apy_percentile = get_percentile([float(i['value']) for i in asset_chart.json().get('data', [])],
-                                             percentile=yield_percentile, reverse=True)
+                        url = f'https://www.gate.io/apiw/v2/uni-loan/earn/chart?from={start}&to={end}&asset={token}&type=1'
+                        logger.info(f"get gateio {token}近1天收益率曲线, url: {url}")
+                        asset_chart = requests.get(
+                            url=url,
+                            proxies=proxies)
+                        data = asset_chart.json()
+                        apy_percentile = get_percentile([float(i['value']) for i in data.get('data', [])],
+                                                        percentile=yield_percentile, reverse=True)
                     except Exception as e:
                         logger.error(f"get asset chart {item['asset']} error: {str(e)}")
                         apy_percentile = 0
@@ -283,17 +289,15 @@ class ExchangeAPI:
         :return {'fundingTime': 1741478400001, 'fundingRate': 0.0068709999999999995, 'markPrice': 2202.84}
         """
         try:
-            url = f"https://fapi.binance.com/fapi/v1/fundingRate?symbol={token}"
+            # url = f"https://fapi.binance.com/fapi/v1/fundingRate?symbol={token}"
+            url = f"https://fapi.binance.com/fapi/v1/premiumIndex?symbol={token}"
             response = self.session.get(url)
             data = response.json()
-            item = data[-1]
-            if token in item["symbol"]:
-                return {
-                    "fundingTime": item["fundingTime"],
-                    "fundingRate": float(item["fundingRate"]) * 100,
-                    "markPrice": float(item["markPrice"]),
-                }  # 转换为百分比
-            return {}  # 未找到对应Token的合约资金费率
+            return {
+                "fundingTime": data['nextFundingTime'],
+                "fundingRate": float(data["lastFundingRate"]) * 100,
+                "markPrice": float(data["markPrice"]),
+            }  # 转换为百分比
         except Exception as e:
             logger.error(f"获取Binance {token}合约资金费率时出错: {str(e)}")
             return {}
@@ -394,14 +398,33 @@ class ExchangeAPI:
             logger.error(f"获取Bybit {token}合约资金费率时出错: {str(e)}")
             return {}
 
+    def get_gateio_futures_funding_rate(self, token):
+        """
+        获取Bybit合约资金费率
+        :return {'fundingTime': 1741478400001, 'fundingRate': 0.0068709999999999995, 'markPrice': 2202.84}
+        """
+        try:
+            gate_io_token = token.replace('USDT', '_USDT')
+            url = f"https://api.gateio.ws/api/v4/futures/usdt/contracts/{gate_io_token}"
+            response = self.session.get(url)
+            data = response.json()
+            return {
+                'fundingTime': int(data["funding_next_apply"]) * 1000,
+                'fundingRate': float(data["funding_rate"]) * 100,  # 转换为百分比
+                'markPrice': float(data["mark_price"]),
+            }
+        except Exception as e:
+            logger.error(f"获取GateIO {token}合约资金费率时出错: {str(e)}")
+            return {}
+
 
 # 主业务逻辑类
 class CryptoYieldMonitor:
-    def __init__(self, buy_webhook_url, sell_webhook_url):
+    def __init__(self, buy_webhook_url, sell_webhook_url, min_apy_threshold=min_apy_threshold):
         self.exchange_api = ExchangeAPI()
         self.buy_wechat_bot = WeChatWorkBot(buy_webhook_url)
         self.sell_wechat_bot = WeChatWorkBot(sell_webhook_url)
-        self.min_apy_threshold = 25  # 最低年化利率阈值 (%)
+        self.min_apy_threshold = min_apy_threshold  # 最低年化利率阈值 (%)
         self.notified_tokens = set()  # 已通知的Token集合，避免重复通知
 
     def get_futures_trading(self, token):
@@ -428,6 +451,12 @@ class CryptoYieldMonitor:
         except Exception as e:
             bybit_rate = None
             logger.error(f"获取Bybit {token}的合约资金费率报错：: {str(e)}")
+        try:
+            gate_io_rate = self.exchange_api.get_gateio_futures_funding_rate(token)
+            logger.info(f"{token} GateIO Perp info: {gate_io_rate}")
+        except Exception as e:
+            bybit_rate = None
+            logger.error(f"获取GateIO {token}的合约资金费率报错：: {str(e)}")
 
         if binance_rate:
             binance_rate['exchange'] = 'Binance'
@@ -443,6 +472,10 @@ class CryptoYieldMonitor:
             bybit_rate['exchange'] = 'Bybit'
             results.append(bybit_rate)
 
+        if gate_io_rate:
+            gate_io_rate['exchange'] = 'GateIO'
+            results.append(gate_io_rate)
+
         return results
 
     def _send_high_yield_notifications(self, notifications):
@@ -450,17 +483,18 @@ class CryptoYieldMonitor:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         message = f"📊 加密货币高收益理财产品监控 ({now})\n\n"
 
-        for idx, notif in enumerate(notifications, 1):
-            message += (
-                f"{idx}. {notif['token']}({notif['exchange']}) 💰\n"
-                f"   • 最新年化收益率: {notif['apy']:.2f}%\n"
-                f"   • 近期P{yield_percentile*100}年化收益率: {notif['apy_percentile']:.2f}%\n"
-                f"   • 各交易所合约信息: \n{notif['future_info']}\n"
-                f"   • 最低购买量: {notif['min_purchase']}\n"
-                f"   • 最大购买量: {notif['max_purchase']}\n\n"
-            )
-
-        self.buy_wechat_bot.send_message(message)
+        limit = 6
+        for p in range(int(len(notifications) / limit) + 1):
+            for idx, notif in enumerate(notifications[p*limit:(p+1)*limit], 1):
+                message += (
+                    f"{idx+p*limit}. {notif['token']}({notif['exchange']}) 💰\n"
+                    f"   • 最新收益率: {notif['apy']:.2f}%\n"
+                    f"   • P{yield_percentile}收益率: {notif['apy_percentile']:.2f}%\n"
+                    f"   • 各交易所合约信息: \n{notif['future_info']}\n"
+                    f"   • 最低购买量: {notif['min_purchase']}\n"
+                    f"   • 最大购买量: {notif['max_purchase']}\n\n"
+                )
+                self.buy_wechat_bot.send_message(message)
         logger.info(f"已发送{len(notifications)}条高收益加密货币通知")
 
     def get_estimate_apy(self, apy, fundingRate, leverage_ratio=leverage_ratio):
@@ -490,12 +524,13 @@ class CryptoYieldMonitor:
             positive_futures_results = [i for i in futures_results if
                                         i['fundingRate'] >= 0 and int(time.time()) - i[
                                             'fundingTime'] / 1000 < 24 * 60 * 60]
-            estimate_apys = [i for i in futures_results if self.get_estimate_apy(product['apy'], i['fundingRate']) > self.min_apy_threshold]
+            estimate_apys = [i for i in futures_results if self.get_estimate_apy(product['apy_percentile'], i[
+                'fundingRate']) > self.min_apy_threshold]
             logger.info(
                 f"{perp_token} positive future results: {positive_futures_results}, current timestamp: {int(time.time())}")
             if estimate_apys and product['apy_percentile'] > self.min_apy_threshold:
                 future_info_str = '\n'.join([
-                    f"   • {i['exchange']}: 资金费率:{i['fundingRate']:.4f}%, 标记价格:{i['markPrice']:.4f}, 预估收益率: {self.get_estimate_apy(product['apy'], i['fundingRate']):.2f}%, {datetime.fromtimestamp(i['fundingTime'] / 1000)}"
+                    f"   • {i['exchange']}: 资金费率:{i['fundingRate']:.4f}%, 标记价格:{i['markPrice']:.4f}, 预估收益率: {self.get_estimate_apy(product['apy'], i['fundingRate']):.2f}%, P{yield_percentile}预估收益率: {self.get_estimate_apy(product['apy_percentile'], i['fundingRate']):.2f}%, {datetime.fromtimestamp(i['fundingTime'] / 1000)}"
                     for i in
                     futures_results])
                 logger.info(f"Token {token} 满足合约交易条件: {futures_results}")
@@ -514,9 +549,7 @@ class CryptoYieldMonitor:
         # 发送通知
         if high_yield_notifications:
             logger.info(f"已添加{len(high_yield_notifications)}个Token到通知列表")
-            limit = 10
-            for p in range(int(len(high_yield_notifications) / limit) + 1):
-                self._send_high_yield_notifications(high_yield_notifications[p * limit:(p + 1) * limit])
+            self._send_high_yield_notifications(high_yield_notifications)
 
             # 每24小时清理一次通知记录，允许再次通知
             if len(self.notified_tokens) > 100:  # 避免无限增长
@@ -540,21 +573,23 @@ class CryptoYieldMonitor:
             # 过滤资金费率和利率，如果满足条件就告警
             perp_token = f"{token['token']}USDT"
             futures_results = self.get_futures_trading(perp_token)
-            future_info_str = '\n'.join([
-                f"   • {i['exchange']}: 资金费率:{i['fundingRate']:.4f}%, 标记价格:{i['markPrice']:.4f}, 预估收益率: {self.get_estimate_apy(product['apy'], i['fundingRate']):.2f}%, {datetime.fromtimestamp(i['fundingTime'] / 1000)}"
-                for i in
-                futures_results])
             token_future = [i for i in futures_results if i['exchange'] == token['future_exchange']]
             if token_future:
                 token_future = token_future[0]
-                estimateAPY = self.get_estimate_apy(product['apy'], token_future['fundingRate'])
+                estimate_apy = self.get_estimate_apy(product['apy'], token_future['fundingRate'])
+                estimate_apy_percentile = self.get_estimate_apy(product['apy_percentile'], token_future['fundingRate'])
+                future_info_str = '\n'.join([
+                    f"   • {i['exchange']}: 资金费率:{i['fundingRate']:.4f}%, 标记价格:{i['markPrice']:.4f}, 预估收益率: {estimate_apy:.2f}%, P{yield_percentile}预估收益率: {estimate_apy_percentile:.2f}%, {datetime.fromtimestamp(i['fundingTime'] / 1000)}"
+                    for i in
+                    futures_results])
                 # token_future['fundingRate'] < 0
-                if product['apy'] < self.min_apy_threshold or estimateAPY < 20:
+                if product[
+                    'apy'] < self.min_apy_threshold or estimate_apy < self.min_apy_threshold or estimate_apy_percentile < self.min_apy_threshold:
                     content = (
                         f"{product['exchange']}加密货币理财产品{product['token']} 卖出提醒\n"
-                        f"最新年化收益: {product['apy']}%\n"
+                        f"最新收益率: {product['apy']}%\n"
+                        f"P{yield_percentile}收益率: {product['apy_percentile']}%\n"
                         # f"持有仓位: {token['totalAmount']}\n"
-                        f"预估收益率: {estimateAPY:.2f}%(未考虑价格涨跌)\n"
                         f"各交易所资金费率: (套保交易所: {token['future_exchange']})\n"
                         f"{future_info_str}"
                     )
@@ -599,7 +634,6 @@ class CryptoYieldMonitor:
             bybit_products = self.exchange_api.get_bybit_flexible_products()
             logger.info(f"从Bybit获取到{len(bybit_products)}个活期理财产品")
 
-
             # 合并所有产品
             all_products = binance_products + bitget_products + bybit_products + gateio_products
             logger.info(f"总共获取到{len(all_products)}个活期理财产品")
@@ -617,10 +651,10 @@ def main():
     sell_webhook_url = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=38fd27ea-8569-4de2-9dee-4c4a4ffb77ed"
 
     monitor = CryptoYieldMonitor(buy_webhook_url, sell_webhook_url)
+    print(monitor.exchange_api.get_binance_futures('ETHUSDT'))
     # get_proxy_ip()
     # print(monitor.exchange_api.get_bitget_flexible_products())
     # exit()
-    # print(monitor.exchange_api.get_binance_futures('ETHUSDT'))
     # print(monitor.exchange_api.get_bybit_futures_funding_rate('ETHUSDT'))
     # print(monitor.exchange_api.get_bitget_futures_funding_rate('ETHUSDT'))
     # exit()
