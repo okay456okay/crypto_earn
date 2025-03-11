@@ -17,9 +17,9 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 # 将 config.py 所在的目录添加到系统路径
 sys.path.append(os.path.join(current_dir, '..'))
 
-from binance_buy.buy_spot import get_proxy_ip, symbol
+from binance_buy.buy_spot import get_proxy_ip
 from config import binance_api_secret, binance_api_key, proxies, logger, bitget_api_key, bitget_api_secret, \
-    bitget_api_passphrase, leverage_ratio, yield_percentile, min_apy_threshold, purchased_tokens
+    bitget_api_passphrase, leverage_ratio, yield_percentile, min_apy_threshold
 
 
 # import json
@@ -664,7 +664,7 @@ class CryptoYieldMonitor:
                        i['exchange'] == token['spot_exchange'] and i['token'] == token['token']]
             if not product:
                 # 发送未找到理财产品通知
-                content = f"在{token['spot_exchange']}交易所中未找到 {token} 理财产品"
+                content = f"在{token['spot_exchange']}交易所中未找到 {token['token']} 理财产品"
                 sell_wechat_bot.send_message(content)
                 product = {'apy': 0.0, 'apy_percentile': 0.0, 'exchange': f'未在{token["spot_exchange"]}找到相关产品', 'token': token['token']}
             else:
@@ -694,7 +694,7 @@ class CryptoYieldMonitor:
                     )
                     sell_wechat_bot.send_message(content)
             else:
-                content = f"在{token['future_exchange']}交易所中未找到 {token} 产品"
+                content = f"在{token['future_exchange']}交易所中未找到 {token['token']} 产品"
                 sell_wechat_bot.send_message(content)
 
     def check_sell_strategy(self, all_products):

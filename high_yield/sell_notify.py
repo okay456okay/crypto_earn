@@ -123,7 +123,7 @@ class TokenManager:
             return False, None
 
 
-    def query_tokens(self, spot_exchange=None, future_exchange=None, token=None):
+    def query_tokens(self, spot_exchange=None, future_exchange=None, token=None, is_deleted=0):
         """查询数据库中的代币数据"""
         if not self.connection:
             if not self.connect():
@@ -132,7 +132,7 @@ class TokenManager:
         try:
             with self.connection.cursor() as cursor:
                 # 基础查询
-                query = "SELECT * FROM purchased_tokens WHERE 1=1"
+                query = f"SELECT * FROM purchased_tokens WHERE is_deleted={is_deleted}"
                 params = []
 
                 # 添加条件
