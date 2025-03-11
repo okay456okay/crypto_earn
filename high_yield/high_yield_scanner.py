@@ -3,6 +3,8 @@
 通过套保策略，实现现货和空单合约对冲，然后用现货购买高收益率产品，赚取收益。
 该策略更适用于牛市，因为赚取的收益如果为非稳定币，随着价格下跌，则U本位的收益率会下跌
 """
+from time import sleep
+
 import requests
 import time
 import schedule
@@ -217,6 +219,7 @@ class ExchangeAPI:
                         "max_purchase": float(item.get('maxStakeAmount', 0))
                     }
                     products.append(product)
+                    sleep(0.5)
             else:
                 logger.error(f"Bybit API返回错误: {data}")
         except Exception as e:
@@ -280,6 +283,7 @@ class ExchangeAPI:
                         "max_purchase": float(item.get('total_lend_amount', 0))
                     }
                     products.append(product)
+                    sleep(0.5)
             else:
                 logger.error(f"GateIO API返回错误: {data}")
         except Exception as e:
@@ -331,6 +335,7 @@ class ExchangeAPI:
                             "max_purchase": 0,
                         }
                         products.append(product)
+                        sleep(0.5)
             else:
                 logger.error(f"OKX API返回错误: {data}")
         except Exception as e:
