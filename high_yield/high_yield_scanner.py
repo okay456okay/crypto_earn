@@ -10,15 +10,16 @@ from datetime import datetime
 import sys
 import os
 import ccxt
+from high_yield.sell_notify import TokenManager
 
 # 获取当前脚本的目录
 current_dir = os.path.dirname(os.path.abspath(__file__))
 # 将 config.py 所在的目录添加到系统路径
 sys.path.append(os.path.join(current_dir, '..'))
 
-from binance_buy.buy_spot import get_proxy_ip
+from binance_buy.buy_spot import get_proxy_ip, symbol
 from config import binance_api_secret, binance_api_key, proxies, logger, bitget_api_key, bitget_api_secret, \
-    bitget_api_passphrase, leverage_ratio, purchased_tokens, yield_percentile, min_apy_threshold
+    bitget_api_passphrase, leverage_ratio, yield_percentile, min_apy_threshold, purchased_tokens
 
 
 # import json
@@ -62,6 +63,7 @@ class WeChatWorkBot:
             data["text"]["mentioned_list"] = mentioned_list
 
         try:
+            logger.info(f"开始发送企微消息，webhook_url: {self.webhook_url}, data: {data}")
             response = requests.post(self.webhook_url, json=data)
             result = response.json()
 
@@ -179,6 +181,7 @@ class ExchangeAPI:
             params = {
                 "category": "FlexibleSaving",
             }
+            logger.info(f"开始获取bybit储蓄产品")
             response = self.session.get(url, params=params)
             data = response.json()
 
@@ -339,18 +342,20 @@ class ExchangeAPI:
         获取币安合约资金费率
         :return {'fundingTime': 1741478400001, 'fundingRate': 0.0068709999999999995, 'markPrice': 2202.84}
         """
+        exchange = 'Binance'
         try:
             # url = f"https://fapi.binance.com/fapi/v1/fundingRate?symbol={token}"
             url = f"https://fapi.binance.com/fapi/v1/premiumIndex?symbol={token}"
             response = self.session.get(url)
             data = response.json()
             return {
+                "exchange": exchange,
                 "fundingTime": data['nextFundingTime'],
                 "fundingRate": float(data["lastFundingRate"]) * 100,
                 "markPrice": float(data["markPrice"]),
             }  # 转换为百分比
         except Exception as e:
-            logger.error(f"获取Binance {token}合约资金费率时出错: {str(e)}")
+            logger.error(f"获取{exchange} {token}合约资金费率时出错: {str(e)}")
             return {}
 
     def get_bitget_futures_funding_price(self, token):
@@ -400,6 +405,7 @@ class ExchangeAPI:
         获取Bitget合约资金费率
         :return {'fundingTime': 1741478400001, 'fundingRate': 0.0068709999999999995, 'markPrice': 2202.84}
         """
+        exchange = 'Bitget'
         funding_time = self.get_bitget_futures_funding_time(token)
         mark_price = self.get_bitget_futures_funding_price(token)
         try:
@@ -413,20 +419,22 @@ class ExchangeAPI:
 
             if data["code"] == "00000" and "data" in data:
                 return {
+                    "exchange": exchange,
                     'fundingTime': int(funding_time),
                     'fundingRate': float(data["data"][0]["fundingRate"]) * 100,
                     'markPrice': float(mark_price),
                 }  # 转换为百分比
-            return None
+            return {}
         except Exception as e:
-            logger.error(f"获取Bitget {token}合约资金费率时出错: {str(e)}")
-            return None
+            logger.error(f"获取{exchange} {token}合约资金费率时出错: {str(e)}")
+            return {}
 
     def get_bybit_futures_funding_rate(self, token):
         """
         获取Bybit合约资金费率
         :return {'fundingTime': 1741478400001, 'fundingRate': 0.0068709999999999995, 'markPrice': 2202.84}
         """
+        exchange = 'Bybit'
         try:
             url = "https://api.bybit.com/v5/market/tickers"
             params = {
@@ -440,41 +448,71 @@ class ExchangeAPI:
                 for item in data["result"]["list"]:
                     if "fundingRate" in item:
                         return {
+                            "exchange": exchange,
                             'fundingTime': int(item["nextFundingTime"]),
                             'fundingRate': float(item["fundingRate"]) * 100,  # 转换为百分比
                             'markPrice': float(item["markPrice"]),
                         }
             return {}
         except Exception as e:
-            logger.error(f"获取Bybit {token}合约资金费率时出错: {str(e)}")
+            logger.error(f"获取{exchange} {token}合约资金费率时出错: {str(e)}")
             return {}
 
     def get_gateio_futures_funding_rate(self, token):
         """
-        获取Bybit合约资金费率
+        获取GateIO合约资金费率
         :return {'fundingTime': 1741478400001, 'fundingRate': 0.0068709999999999995, 'markPrice': 2202.84}
         """
+        exchange = 'GateIO'
         try:
             gate_io_token = token.replace('USDT', '_USDT')
             url = f"https://api.gateio.ws/api/v4/futures/usdt/contracts/{gate_io_token}"
             response = self.session.get(url)
             data = response.json()
             return {
+                "exchange": exchange,
                 'fundingTime': int(data["funding_next_apply"]) * 1000,
                 'fundingRate': float(data["funding_rate"]) * 100,  # 转换为百分比
                 'markPrice': float(data["mark_price"]),
             }
         except Exception as e:
-            logger.error(f"获取GateIO {token}合约资金费率时出错: {str(e)}")
+            logger.error(f"获取{exchange} {token}合约资金费率时出错: {str(e)}")
             return {}
 
+    def get_okx_futures_funding_rate(self, token):
+        """
+        获取 OKX 合约资金费率
+        :return {'fundingTime': 1741478400001, 'fundingRate': 0.0068709999999999995, 'markPrice': 2202.84}
+        """
+        exchange = 'OKX'
+        symbol =  token.replace('USDT', '/USDT:USDT')
+        try:
+            # 初始化OKX交易所实例
+            exchange = ccxt.okx({'proxies': proxies})
+
+            # 获取当前价格
+            ticker = exchange.fetch_ticker(symbol)
+            current_price = ticker['last']
+
+            # 获取资金费率
+            funding_rate_info = exchange.fetch_funding_rate(symbol)
+            funding_rate = funding_rate_info['fundingRate']
+            next_funding_time = funding_rate_info['nextFundingTimestamp']
+            return {
+                'exchange': exchange,
+                'fundingTime': next_funding_time,
+                'fundingRate': float(funding_rate) * 100,
+                'markPrice': float(current_price) * 100,
+            }
+        except Exception as e:
+            logger.error(f"获取{exchange} {token}合约资金费率时出错: {str(e)}")
+            return {}
 
 # 主业务逻辑类
 class CryptoYieldMonitor:
     def __init__(self, buy_webhook_url, sell_webhook_url, min_apy_threshold=min_apy_threshold):
         self.exchange_api = ExchangeAPI()
         self.buy_wechat_bot = WeChatWorkBot(buy_webhook_url)
-        self.sell_wechat_bot = WeChatWorkBot(sell_webhook_url)
         self.min_apy_threshold = min_apy_threshold  # 最低年化利率阈值 (%)
         self.notified_tokens = set()  # 已通知的Token集合，避免重复通知
 
@@ -496,12 +534,14 @@ class CryptoYieldMonitor:
         except Exception as e:
             bitget_rate = None
             logger.error(f"获取Bitget {token}的合约资金费率报错：: {str(e)}")
+
         try:
             bybit_rate = self.exchange_api.get_bybit_futures_funding_rate(token)
             logger.info(f"{token} Bybit Perp info: {bybit_rate}")
         except Exception as e:
             bybit_rate = None
             logger.error(f"获取Bybit {token}的合约资金费率报错：: {str(e)}")
+
         try:
             gate_io_rate = self.exchange_api.get_gateio_futures_funding_rate(token)
             logger.info(f"{token} GateIO Perp info: {gate_io_rate}")
@@ -509,23 +549,30 @@ class CryptoYieldMonitor:
             bybit_rate = None
             logger.error(f"获取GateIO {token}的合约资金费率报错：: {str(e)}")
 
+        try:
+            okx_rate = self.exchange_api.get_okx_futures_funding_rate(token)
+            logger.info(f"{token} GateIO Perp info: {okx_rate}")
+        except Exception as e:
+            okx_rate = None
+            logger.error(f"获取OKX {token}的合约资金费率报错：: {str(e)}")
+
         if binance_rate:
             binance_rate['exchange'] = 'Binance'
             results.append(binance_rate)
 
         # 检查Bitget
         if bitget_rate:
-            bitget_rate['exchange'] = 'Bitget'
             results.append(bitget_rate)
 
         # 检查Bybit
         if bybit_rate:
-            bybit_rate['exchange'] = 'Bybit'
             results.append(bybit_rate)
 
         if gate_io_rate:
-            gate_io_rate['exchange'] = 'GateIO'
             results.append(gate_io_rate)
+
+        if okx_rate:
+            results.append(okx_rate)
 
         return results
 
@@ -612,13 +659,14 @@ class CryptoYieldMonitor:
     def check_tokens(self, tokens, all_products):
         for token in tokens:
             # 获取理财产品最新利率
+            sell_wechat_bot = WeChatWorkBot(token['webhook_url'])
             product = [i for i in all_products if
                        i['exchange'] == token['spot_exchange'] and i['token'] == token['token']]
             if not product:
                 # 发送未找到理财产品通知
                 content = f"在{token['spot_exchange']}交易所中未找到 {token} 理财产品"
-                self.sell_wechat_bot.send_message(content)
-                product = {'apy': content}
+                sell_wechat_bot.send_message(content)
+                product = {'apy': 0.0, 'apy_percentile': 0.0, 'exchange': f'未在{token["spot_exchange"]}找到相关产品', 'token': token['token']}
             else:
                 product = product[0]
             # 过滤资金费率和利率，如果满足条件就告警
@@ -644,10 +692,10 @@ class CryptoYieldMonitor:
                         f"各交易所资金费率: (套保交易所: {token['future_exchange']})\n"
                         f"{future_info_str}"
                     )
-                    self.sell_wechat_bot.send_message(content)
+                    sell_wechat_bot.send_message(content)
             else:
                 content = f"在{token['future_exchange']}交易所中未找到 {token} 产品"
-                self.sell_wechat_bot.send_message(content)
+                sell_wechat_bot.send_message(content)
 
     def check_sell_strategy(self, all_products):
         try:
@@ -658,6 +706,8 @@ class CryptoYieldMonitor:
             #     if float(p.get('totalAmount', 0)) > 1:
             #         purchased_tokens.append({"exchange": 'Binance', "token": p.get('asset'),
             #                                  "totalAmount": float(p.get('totalAmount', 0.0))})
+            token_manger = TokenManager()
+            purchased_tokens = token_manger.query_tokens()
             logger.info(f"获取到的活期理财账户仓位如下：{purchased_tokens}")
             self.check_tokens(purchased_tokens, all_products)
         except Exception as e:
