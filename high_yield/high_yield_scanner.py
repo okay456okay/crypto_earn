@@ -671,7 +671,7 @@ class CryptoYieldMonitor:
                 # 发送未找到理财产品通知
                 content = f"在{token['spot_exchange']}交易所中未找到 {token['token']} 理财产品"
                 sell_wechat_bot.send_message(content)
-                product = {'apy': 0.0, 'apy_percentile': 0.0, 'exchange': f'未在{token["spot_exchange"]}找到相关产品', 'token': token['token']}
+                product = {'apy': 0.0, 'apy_percentile': 0.0, 'exchange': f'(未在{token["spot_exchange"]}找到产品)', 'token': token['token']}
             else:
                 product = product[0]
             # 过滤资金费率和利率，如果满足条件就告警
