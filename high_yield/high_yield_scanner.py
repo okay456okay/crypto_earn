@@ -769,14 +769,13 @@ def main():
     monitor.run()
 
     # 设置定时任务，每30分钟运行一次
-    schedule.every(30).minutes.do(monitor.run)
-
-    logger.info("加密货币高收益监控服务已启动，每30分钟检查一次...")
+    # schedule.every(30).minutes.do(monitor.run)
+    # logger.info("加密货币高收益监控服务已启动，每30分钟检查一次...")
 
     # 保持程序运行
-    while True:
-        schedule.run_pending()
-        time.sleep(60)
+    # while True:
+    #     schedule.run_pending()
+    #     time.sleep(60)
 
 
 if __name__ == "__main__":
