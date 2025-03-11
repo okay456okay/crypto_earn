@@ -2,7 +2,6 @@ import pymysql
 from pymysql import Error
 from datetime import datetime
 from config import db_host, db_port, db_database, db_user, db_pass
-# from config import purchased_tokens
 
 class TokenManager:
     """管理代币数据库操作的类"""
@@ -241,6 +240,14 @@ class TokenManager:
 def main():
     # 创建数据库管理器实例
     db_manager = TokenManager()
+    purchased_tokens = [
+        {'spot_exchange': 'Bybit', 'future_exchange': 'Bybit', 'token': 'AVL', 'totalAmount': 720.0,
+         'user': 'zxl',
+         'webhook_url': 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=38fd27ea-8569-4de2-9dee-4c4a4ffb77ed'},
+        {'spot_exchange': 'GateIO', 'future_exchange': 'Bybit', 'token': 'B3', 'totalAmount': 75050.0,
+         'user': 'zxl',
+         'webhook_url': 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=38fd27ea-8569-4de2-9dee-4c4a4ffb77ed'},
+    ]
 
     try:
         # 连接到数据库
