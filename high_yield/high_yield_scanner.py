@@ -219,7 +219,6 @@ class ExchangeAPI:
                         "max_purchase": float(item.get('maxStakeAmount', 0))
                     }
                     products.append(product)
-                    sleep(0.5)
             else:
                 logger.error(f"Bybit API返回错误: {data}")
         except Exception as e:
@@ -283,7 +282,7 @@ class ExchangeAPI:
                         "max_purchase": float(item.get('total_lend_amount', 0))
                     }
                     products.append(product)
-                    sleep(0.5)
+                    sleep(1)
             else:
                 logger.error(f"GateIO API返回错误: {data}")
         except Exception as e:
