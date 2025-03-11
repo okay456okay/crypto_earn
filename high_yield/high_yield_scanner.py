@@ -283,6 +283,57 @@ class ExchangeAPI:
             logger.error(f"获取GateIO活期理财产品时出错: {str(e)}")
         return products
 
+    def get_okx_flexible_products(self):
+        """
+        获取OKX活期理财产品
+        https://www.okx.com/zh-hans/earn/simple-earn
+        """
+        products = []
+        try:
+            now_timestamp_ms = int(time.time()*1000)
+            url = f"https://www.okx.com/priapi/v1/earn/simple-earn/all-products?type=all&t={now_timestamp_ms}"
+            response = requests.get(url, proxies=proxies)
+            data = response.json()
+
+            if data["code"] == 0 and "data" in data and "allProducts" in data["data"]:
+                for item in data["data"]["allProducts"]['currencies']:
+                    token = item["investCurrency"]["currencyName"]
+                    toked_id = int(item['investCurrency']['currencyId'])
+                    apy = float(item['rate']['rateNum']['value'][0])
+                    if apy > min_apy_threshold:
+                        try:
+                            url = f'https://www.okx.com/priapi/v2/financial/rate-history?currencyId={toked_id}&t={now_timestamp_ms}'
+                            logger.info(f"get okx {token}近1天收益率曲线, url: {url}")
+                            headers = {
+                                "accept": "application/json",
+                                "content-type": "application/json",
+                                "authorization": "eyJhbGciOiJIUzUxMiJ9.eyJqdGkiOiJleDExMDE3NDE2MjI3Mjc0NzhFRkZGQzc4Mzk1N0U0RDMwMVhWV0IiLCJ1aWQiOiJMZDlvSkMxdVVXQlA0bWJtbDROcWp3PT0iLCJzdGEiOjAsIm1pZCI6IkxkOW9KQzF1VVdCUDRtYm1sNE5xanc9PSIsInBpZCI6IlBUeUE4VzA5ekZVSkJHSjZZUk5HWXc9PSIsIm5kZSI6MCwiaWF0IjoxNzQxNjIyNzI3LCJleHAiOjE3NDI4MzIzMjcsImJpZCI6MCwiZG9tIjoid3d3Lm9reC5jb20iLCJlaWQiOjE0LCJpc3MiOiJva2NvaW4iLCJkaWQiOiJJMW9iM0FDOEdPcXdyeG1ETEhDd3JGU3RsYUZ4bjlRUGNobmtibnZWMDhQcktxUlJ4QjNSWXVrY3p1YzkvRzJuIiwibGlkIjoiTGQ5b0pDMXVVV0JQNG1ibWw0TnFqdz09IiwidWZiIjoiUFR5QThXMDl6RlVKQkdKNllSTkdZdz09IiwidXBiIjoiaUJyYTJWaE5va3lSaWh4aUovM3pFdz09Iiwia3ljIjoyLCJreWkiOiJzVmtQSHhqTUdvYWFzajZndFcxUHg3ZFRwQ1pLZzUvNktuMW14YWlyWkNsTzhxa2IxYkx0YWYySVJVS2tMN3hFN3lkRi9ZTkNHUVcvNXlpNFZCelQzUT09IiwiY3BrIjoiaEJ2M21IRmNvSURMblNyRnp0R1NOWkxPb1pTazVtQThIcFBwT0w4UTVOVUR4dDJVVVE1N3BtcCsxcXVCRFJ2bGlta3gyQk94b0M5OG11Vi85a2tPdnR5VjlacGk5NkFEdHpKRGdiS0FjVnoyb01xeE5taVpabko0Q284ZWUyS1hsYXZXOVpiK3FqNTJPVnJSbGNId0tkK1hVWFdheWJQVjRackRXb2F0SnU4PSIsInZlciI6MSwiY2x0IjoyfQ.PirV2tw9OJordjLO5xs82rPPfS3tK7dSlonOh7FJi-hbdemX7vrJ65sDo2IlyR70GR9R0qD-te8QUdPugo9SRA",
+                                "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0",
+                            }
+                            asset_chart = requests.get(
+                                url=url,
+                                headers=headers,
+                                proxies=proxies)
+                            data = asset_chart.json()
+                            apy_percentile = get_percentile([float(i['rate'])*100 for i in data.get('data',{}).get('lastOneDayRates', {}).get('rates')])
+                        except Exception as e:
+                            logger.error(f"get asset chart {item['asset']} error: {str(e)}")
+                            apy_percentile = 0
+                        product = {
+                            "exchange": "OKX",
+                            "token": token,
+                            "apy": apy,
+                            "apy_percentile": apy_percentile,
+                            "min_purchase": 0,
+                            "max_purchase": 0,
+                        }
+                        products.append(product)
+            else:
+                logger.error(f"OKX API返回错误: {data}")
+        except Exception as e:
+            logger.error(f"获取OKX活期理财产品时出错: {str(e)}")
+        return products
+
     def get_binance_futures(self, token):
         """
         获取币安合约资金费率
@@ -481,10 +532,10 @@ class CryptoYieldMonitor:
     def _send_high_yield_notifications(self, notifications):
         """发送企业微信群机器人通知"""
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        message = f"📊 加密货币高收益理财产品监控 ({now})\n\n"
 
         limit = 6
         for p in range(int(len(notifications) / limit) + 1):
+            message = f"📊 加密货币高收益理财产品监控 ({now})\n\n"
             for idx, notif in enumerate(notifications[p*limit:(p+1)*limit], 1):
                 message += (
                     f"{idx+p*limit}. {notif['token']}({notif['exchange']}) 💰\n"
@@ -494,7 +545,7 @@ class CryptoYieldMonitor:
                     f"   • 最低购买量: {notif['min_purchase']}\n"
                     f"   • 最大购买量: {notif['max_purchase']}\n\n"
                 )
-                self.buy_wechat_bot.send_message(message)
+            self.buy_wechat_bot.send_message(message)
         logger.info(f"已发送{len(notifications)}条高收益加密货币通知")
 
     def get_estimate_apy(self, apy, fundingRate, leverage_ratio=leverage_ratio):
@@ -634,8 +685,11 @@ class CryptoYieldMonitor:
             bybit_products = self.exchange_api.get_bybit_flexible_products()
             logger.info(f"从Bybit获取到{len(bybit_products)}个活期理财产品")
 
+            okx_products = self.exchange_api.get_okx_flexible_products()
+            logger.info(f"从OKX获取到{len(okx_products)}个活期理财产品")
+
             # 合并所有产品
-            all_products = binance_products + bitget_products + bybit_products + gateio_products
+            all_products = binance_products + bitget_products + bybit_products + gateio_products + okx_products
             logger.info(f"总共获取到{len(all_products)}个活期理财产品")
             # 过滤和处理高收益理财产品
             self.high_yield_filter(all_products)
@@ -651,7 +705,7 @@ def main():
     sell_webhook_url = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=38fd27ea-8569-4de2-9dee-4c4a4ffb77ed"
 
     monitor = CryptoYieldMonitor(buy_webhook_url, sell_webhook_url)
-    print(monitor.exchange_api.get_binance_futures('ETHUSDT'))
+    # print(monitor.exchange_api.get_okx_flexible_products())
     # get_proxy_ip()
     # print(monitor.exchange_api.get_bitget_flexible_products())
     # exit()
