@@ -282,7 +282,7 @@ class ExchangeAPI:
                         "max_purchase": float(item.get('total_lend_amount', 0))
                     }
                     products.append(product)
-                    sleep(1)
+                    sleep(2)
             else:
                 logger.error(f"GateIO API返回错误: {data}")
         except Exception as e:
