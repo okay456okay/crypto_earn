@@ -622,6 +622,7 @@ class CryptoYieldMonitor:
             # 检查合约交易条件
             perp_token = f"{token}USDT"
             futures_results = self.get_futures_trading(perp_token)
+            sleep(1.5)
             logger.info(f"{perp_token} get future results: {futures_results}")
             positive_futures_results = [i for i in futures_results if
                                         i['fundingRate'] >= 0 and int(time.time()) - i[
@@ -676,6 +677,7 @@ class CryptoYieldMonitor:
             # 过滤资金费率和利率，如果满足条件就告警
             perp_token = f"{token['token']}USDT"
             futures_results = self.get_futures_trading(perp_token)
+            sleep(1.5)
             token_future = [i for i in futures_results if i['exchange'] == token['future_exchange']]
             if token_future:
                 token_future = token_future[0]
