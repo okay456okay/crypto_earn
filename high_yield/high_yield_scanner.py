@@ -10,16 +10,16 @@ from datetime import datetime
 import sys
 import os
 import ccxt
-from high_yield.sell_notify import TokenManager
 
 # 获取当前脚本的目录
 current_dir = os.path.dirname(os.path.abspath(__file__))
 # 将 config.py 所在的目录添加到系统路径
 sys.path.append(os.path.join(current_dir, '..'))
 
+from high_yield.sell_notify import TokenManager
 from binance_buy.buy_spot import get_proxy_ip
 from config import binance_api_secret, binance_api_key, proxies, logger, bitget_api_key, bitget_api_secret, \
-    bitget_api_passphrase, leverage_ratio, yield_percentile, min_apy_threshold
+    bitget_api_passphrase, leverage_ratio, yield_percentile, min_apy_threshold, buy_webhook_url
 
 
 # import json
@@ -510,7 +510,7 @@ class ExchangeAPI:
 
 # 主业务逻辑类
 class CryptoYieldMonitor:
-    def __init__(self, buy_webhook_url, sell_webhook_url, min_apy_threshold=min_apy_threshold):
+    def __init__(self, buy_webhook_url, min_apy_threshold=min_apy_threshold):
         self.exchange_api = ExchangeAPI()
         self.buy_wechat_bot = WeChatWorkBot(buy_webhook_url)
         self.min_apy_threshold = min_apy_threshold  # 最低年化利率阈值 (%)
@@ -750,11 +750,7 @@ class CryptoYieldMonitor:
 
 # 主程序入口
 def main():
-    # 企业微信群机器人webhook URL（请替换为您的实际webhook URL）
-    buy_webhook_url = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=293071ec-9865-4e86-9e69-b48f1a12a83a"
-    sell_webhook_url = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=38fd27ea-8569-4de2-9dee-4c4a4ffb77ed"
-
-    monitor = CryptoYieldMonitor(buy_webhook_url, sell_webhook_url)
+    monitor = CryptoYieldMonitor(buy_webhook_url)
     # print(monitor.exchange_api.get_okx_flexible_products())
     # get_proxy_ip()
     # print(monitor.exchange_api.get_bitget_flexible_products())
