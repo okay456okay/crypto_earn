@@ -782,7 +782,7 @@ class CryptoYieldMonitor:
             all_products =  bybit_products + gateio_products + okx_products + binance_products
             logger.info(f"总共获取到{len(all_products)}个活期理财产品")
             # 过滤和处理高收益理财产品
-            # self.high_yield_filter(all_products)
+            self.high_yield_filter(all_products)
             self.position_check(all_products)
         except Exception as e:
             logger.error(f"运行监控任务时发生错误: {str(e)}")
