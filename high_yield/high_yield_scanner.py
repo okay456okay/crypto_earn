@@ -612,7 +612,7 @@ class CryptoYieldMonitor:
 
         limit = 4
         for p in range(int(len(notifications) / limit) + 1):
-            message = f"📊 加密货币高收益理财产品监控 ({now})\n\n"
+            message = ''
             for idx, notif in enumerate(notifications[p*limit:(p+1)*limit], 1):
                 message += (
                     f"{idx+p*limit}. {notif['token']}({notif['exchange']}) 💰\n"
@@ -622,7 +622,9 @@ class CryptoYieldMonitor:
                     f"   • 最低购买量: {notif['min_purchase']}\n"
                     f"   • 最大购买量: {notif['max_purchase']}\n\n"
                 )
-            self.buy_wechat_bot.send_message(message)
+            if message:
+                message = f"📊 加密货币高收益理财产品监控 ({now})\n\n" + message
+                self.buy_wechat_bot.send_message(message)
         logger.info(f"已发送{len(notifications)}条高收益加密货币通知")
 
     def get_estimate_apy(self, apy, fundingRate, leverage_ratio=leverage_ratio):
