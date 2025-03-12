@@ -610,7 +610,7 @@ class CryptoYieldMonitor:
         """发送企业微信群机器人通知"""
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        limit = 6
+        limit = 4
         for p in range(int(len(notifications) / limit) + 1):
             message = f"📊 加密货币高收益理财产品监控 ({now})\n\n"
             for idx, notif in enumerate(notifications[p*limit:(p+1)*limit], 1):
@@ -708,7 +708,7 @@ class CryptoYieldMonitor:
                 estimate_apy = self.get_estimate_apy(product['apy'], token_future['fundingRate'])
                 estimate_apy_percentile = self.get_estimate_apy(product['apy_percentile'], token_future['fundingRate'])
                 future_info_str = '\n'.join([
-                    f"   • {i['exchange']}: 资金费率:{i['fundingRate']:.4f}%, 标记价格:{i['markPrice']:.4f}, 预估收益率: {estimate_apy:.2f}%, P{yield_percentile}预估收益率: {estimate_apy_percentile:.2f}%, {datetime.fromtimestamp(i['fundingTime'] / 1000)}"
+                    f"   • {i['exchange']}: 资金费率:{i['fundingRate']:.4f}%, 标记价格:{i['markPrice']:.4f}, 预估收益率: {self.get_estimate_apy(product['apy'], i['fundingRate']):.2f}%, P{yield_percentile}预估收益率: {self.get_estimate_apy(product['apy_percentile'], i['fundingRate']):.2f}%, {datetime.fromtimestamp(i['fundingTime'] / 1000)}"
                     for i in
                     futures_results])
                 # token_future['fundingRate'] < 0
