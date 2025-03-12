@@ -55,8 +55,8 @@ class WeChatWorkBot:
     def send_message(self, content, mentioned_list=None):
         """发送企业微信群机器人消息"""
         data = {
-            "msgtype": "text",
-            "text": {
+            "msgtype": "markdown",
+            "markdown": {
                 "content": content,
             }
         }
@@ -121,16 +121,30 @@ class ExchangeAPI:
                 for item in data["data"]['list']:
                     # 适配新的API返回结构
                     if int(item['duration']) == 0:
+                        prouct_id = item['productId']
+                        apy = float(item.get("highestApy", 0)) * 100
+                        apy_percentile = apy
+                        try:
+                            if apy > min_apy_threshold:
+                                url = f'https://www.binance.com/bapi/earn/v1/friendly/lending/daily/product/position-market-apr?productId={prouct_id}'
+                                response = requests.get(url, proxies=proxies)
+                                logger.info(f"binance get asset charts, url: {url}, status: {response.status_code}, response: {response.text}")
+                                asset_charts = response.json()
+                                asset_charts = [float(i['marketApr'])*100 for i in asset_charts['data']['marketAprList']]
+                                apy_percentile = get_percentile(asset_charts, yield_percentile)
+                        except Exception as e:
+                            logger.error(f"binance get asset charts, url: {url}, error: {str(e)}")
                         product = {
                             "exchange": "Binance",
                             "token": item.get("asset", ""),
-                            "apy": float(item.get("highestApy", 0)) * 100,
-                            'apy_percentile': float(item.get("highestApy", 0)) * 100,
+                            "apy": apy,
+                            'apy_percentile': apy_percentile,
                             "min_purchase": float(item.get('productDetailList', [])[0].get("minPurchaseAmount", 0)),
                             "max_purchase": float(
                                 item.get('productDetailList', [])[0].get("maxPurchaseAmountPerUser", 0))
                         }
                         products.append(product)
+                        sleep(0.1)
                 return products
         except Exception as e:
             logger.error(f"获取Binance活期理财产品时出错: {str(e)}")
@@ -191,25 +205,26 @@ class ExchangeAPI:
                 for item in data["result"]["list"]:
                     token = item["coin"]
                     apy = float(item["estimateApr"].replace("%", ""))
+                    apy_percentile = apy
                     if item['status'] != 'Available':
                         continue
                     try:
+                        # 最新一个点是否大于最小收益率，很多时候收益率是向下走的
                         if apy >= min_apy_threshold:
+                            url = "https://api2.bybit.com/s1/byfi/get-flexible-saving-apr-history"
                             response = requests.post(
-                                url="https://api2.bybit.com/s1/byfi/get-flexible-saving-apr-history",
+                                url=url,
                                 json={"product_id": item['productId']},
                                 headers={"Content-Type": "application/json"},
                                 proxies=proxies
                             )
+                            logger.info(f"bybit get asset charts, url: {url}, status: {response.status_code}, response: {response.text}")
                             data = response.json().get('result', {}).get('hourly_apr_list', [])
                             data = [int(i['apr_e8']) / 1000000 for i in data]
                             logger.info(f"获取bybit {token}近24小时收益率曲线, 数据：{data}")
                             apy_percentile = get_percentile(data, percentile=yield_percentile, reverse=True)
-                        else:
-                            apy_percentile = apy
                     except Exception as e:
                         logger.error(f"获取 {token}的收益曲线失败： {str(e)}")
-                        apy_percentile = 0
                     product = {
                         "exchange": "Bybit",
                         "token": item["coin"],
@@ -238,7 +253,7 @@ class ExchangeAPI:
             params = {
                 "sort_type": 3,
                 "available": True,
-                "limit": 50,
+                "limit": 500,
                 "page": 1,
             }
             headers = {
@@ -261,25 +276,28 @@ class ExchangeAPI:
                 start = end - 1 * 24 * 60 * 60
                 for item in data["data"]["list"]:
                     token = item["asset"]
-                    try:
-                        url = f'https://www.gate.io/apiw/v2/uni-loan/earn/chart?from={start}&to={end}&asset={token}&type=1'
-                        logger.info(f"get gateio {token}近1天收益率曲线, url: {url}")
-                        asset_chart = requests.get(
-                            url=url,
-                            proxies=proxies)
-                        data = asset_chart.json()
-                        apy_percentile = get_percentile([float(i['value']) for i in data.get('data', [])],
-                                                        percentile=yield_percentile, reverse=True)
-                    except Exception as e:
-                        logger.error(f"get asset chart {item['asset']} error: {str(e)}")
-                        apy_percentile = 0
+                    apy = float(item["next_time_rate_year"]) * 100
+                    apy_percentile = apy
+                    if apy >= min_apy_threshold:
+                        try:
+                            url = f'https://www.gate.io/apiw/v2/uni-loan/earn/chart?from={start}&to={end}&asset={token}&type=1'
+                            logger.info(f"get gateio {token}近1天收益率曲线, url: {url}")
+                            response = requests.get(
+                                url=url,
+                                proxies=proxies)
+                            logger.info(f"gateio get asset charts, url: {url}, status: {response.status_code}, response: {response.text}")
+                            data = response.json()
+                            apy_percentile = get_percentile([float(i['value']) for i in data.get('data', [])],
+                                                            percentile=yield_percentile, reverse=True)
+                        except Exception as e:
+                            logger.error(f"get asset chart {item['asset']} error: {str(e)}")
                     product = {
                         "exchange": "GateIO",
                         "token": token,
-                        "apy": float(item["next_time_rate_year"]) * 100,
+                        "apy": apy,
                         "apy_percentile": apy_percentile,
-                        "min_purchase": float(item.get('total_lend_available', 0)),
-                        "max_purchase": float(item.get('total_lend_amount', 0))
+                        "min_purchase": f"{float(item.get('total_lend_available', 0))}(total_lend_available-可借总额)",
+                        "max_purchase": f"{float(item.get('total_lend_all_amount', 0))}(total_lend_all_amount-借出总额)"
                     }
                     products.append(product)
                     sleep(2)
@@ -306,6 +324,7 @@ class ExchangeAPI:
                     token = item["investCurrency"]["currencyName"]
                     toked_id = int(item['investCurrency']['currencyId'])
                     apy = float(item['rate']['rateNum']['value'][0])
+                    apy_percentile = apy
                     if apy > min_apy_threshold:
                         try:
                             url = f'https://www.okx.com/priapi/v2/financial/rate-history?currencyId={toked_id}&t={now_timestamp_ms}'
@@ -316,15 +335,15 @@ class ExchangeAPI:
                                 "authorization": "eyJhbGciOiJIUzUxMiJ9.eyJqdGkiOiJleDExMDE3NDE2MjI3Mjc0NzhFRkZGQzc4Mzk1N0U0RDMwMVhWV0IiLCJ1aWQiOiJMZDlvSkMxdVVXQlA0bWJtbDROcWp3PT0iLCJzdGEiOjAsIm1pZCI6IkxkOW9KQzF1VVdCUDRtYm1sNE5xanc9PSIsInBpZCI6IlBUeUE4VzA5ekZVSkJHSjZZUk5HWXc9PSIsIm5kZSI6MCwiaWF0IjoxNzQxNjIyNzI3LCJleHAiOjE3NDI4MzIzMjcsImJpZCI6MCwiZG9tIjoid3d3Lm9reC5jb20iLCJlaWQiOjE0LCJpc3MiOiJva2NvaW4iLCJkaWQiOiJJMW9iM0FDOEdPcXdyeG1ETEhDd3JGU3RsYUZ4bjlRUGNobmtibnZWMDhQcktxUlJ4QjNSWXVrY3p1YzkvRzJuIiwibGlkIjoiTGQ5b0pDMXVVV0JQNG1ibWw0TnFqdz09IiwidWZiIjoiUFR5QThXMDl6RlVKQkdKNllSTkdZdz09IiwidXBiIjoiaUJyYTJWaE5va3lSaWh4aUovM3pFdz09Iiwia3ljIjoyLCJreWkiOiJzVmtQSHhqTUdvYWFzajZndFcxUHg3ZFRwQ1pLZzUvNktuMW14YWlyWkNsTzhxa2IxYkx0YWYySVJVS2tMN3hFN3lkRi9ZTkNHUVcvNXlpNFZCelQzUT09IiwiY3BrIjoiaEJ2M21IRmNvSURMblNyRnp0R1NOWkxPb1pTazVtQThIcFBwT0w4UTVOVUR4dDJVVVE1N3BtcCsxcXVCRFJ2bGlta3gyQk94b0M5OG11Vi85a2tPdnR5VjlacGk5NkFEdHpKRGdiS0FjVnoyb01xeE5taVpabko0Q284ZWUyS1hsYXZXOVpiK3FqNTJPVnJSbGNId0tkK1hVWFdheWJQVjRackRXb2F0SnU4PSIsInZlciI6MSwiY2x0IjoyfQ.PirV2tw9OJordjLO5xs82rPPfS3tK7dSlonOh7FJi-hbdemX7vrJ65sDo2IlyR70GR9R0qD-te8QUdPugo9SRA",
                                 "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0",
                             }
-                            asset_chart = requests.get(
+                            response = requests.get(
                                 url=url,
                                 headers=headers,
                                 proxies=proxies)
-                            data = asset_chart.json()
+                            logger.info(f"gateio get asset charts, url: {url}, status: {response.status_code}, response: {response.text}")
+                            data = response.json()
                             apy_percentile = get_percentile([float(i['rate'])*100 for i in data.get('data',{}).get('lastOneDayRates', {}).get('rates')])
                         except Exception as e:
                             logger.error(f"get asset chart {item['asset']} error: {str(e)}")
-                            apy_percentile = 0
                         product = {
                             "exchange": "OKX",
                             "token": token,
@@ -334,7 +353,7 @@ class ExchangeAPI:
                             "max_purchase": '无',
                         }
                         products.append(product)
-                        sleep(0.5)
+                        sleep(0.1)
             else:
                 logger.error(f"OKX API返回错误: {data}")
         except Exception as e:
@@ -351,6 +370,7 @@ class ExchangeAPI:
             # url = f"https://fapi.binance.com/fapi/v1/fundingRate?symbol={token}"
             url = f"https://fapi.binance.com/fapi/v1/premiumIndex?symbol={token}"
             response = self.session.get(url)
+            logger.info(f"binance get future, url: {url}, status: {response.status_code}, response: {response.text}")
             data = response.json()
             return {
                 "exchange": exchange,
@@ -374,6 +394,7 @@ class ExchangeAPI:
                 "productType": "USDT-FUTURES",
             }
             response = self.session.get(url, params=params)
+            logger.info(f"bitget get future price, url: {url}, status: {response.status_code}, response: {response.text}")
             data = response.json()
 
             if data["code"] == "00000" and "data" in data:
@@ -395,6 +416,7 @@ class ExchangeAPI:
                 "productType": "USDT-FUTURES",
             }
             response = self.session.get(url, params=params)
+            logger.info(f"bitget get future funding time, url: {url}, status: {response.status_code}, response: {response.text}")
             data = response.json()
 
             if data["code"] == "00000" and "data" in data:
@@ -419,6 +441,7 @@ class ExchangeAPI:
                 "productType": "USDT-FUTURES",
             }
             response = self.session.get(url, params=params)
+            logger.info(f"bitget get future, url: {url}, status: {response.status_code}, response: {response.text}")
             data = response.json()
 
             if data["code"] == "00000" and "data" in data:
@@ -446,6 +469,7 @@ class ExchangeAPI:
                 "symbol": f"{token}"
             }
             response = self.session.get(url, params=params)
+            logger.info(f"bybit get future, url: {url}, status: {response.status_code}, response: {response.text}")
             data = response.json()
 
             if data["retCode"] == 0 and "result" in data and "list" in data["result"]:
@@ -472,6 +496,7 @@ class ExchangeAPI:
             gate_io_token = token.replace('USDT', '_USDT')
             url = f"https://api.gateio.ws/api/v4/futures/usdt/contracts/{gate_io_token}"
             response = self.session.get(url)
+            logger.info(f"gateio get future, url: {url}, status: {response.status_code}, response: {response.text}")
             data = response.json()
             return {
                 "exchange": exchange,
@@ -500,6 +525,7 @@ class ExchangeAPI:
 
             # 获取资金费率
             funding_rate_info = exchange.fetch_funding_rate(symbol)
+            logger.info(f"okx get future, result: {funding_rate_info}")
             funding_rate = funding_rate_info['fundingRate']
             next_funding_time = funding_rate_info['nextFundingTimestamp']
             return {
@@ -622,7 +648,6 @@ class CryptoYieldMonitor:
             # 检查合约交易条件
             perp_token = f"{token}USDT"
             futures_results = self.get_futures_trading(perp_token)
-            sleep(1.5)
             logger.info(f"{perp_token} get future results: {futures_results}")
             positive_futures_results = [i for i in futures_results if
                                         i['fundingRate'] >= 0 and int(time.time()) - i[
@@ -677,7 +702,6 @@ class CryptoYieldMonitor:
             # 过滤资金费率和利率，如果满足条件就告警
             perp_token = f"{token['token']}USDT"
             futures_results = self.get_futures_trading(perp_token)
-            sleep(1.5)
             token_future = [i for i in futures_results if i['exchange'] == token['future_exchange']]
             if token_future:
                 token_future = token_future[0]
@@ -691,19 +715,28 @@ class CryptoYieldMonitor:
                 if product[
                     'apy'] < self.min_apy_threshold or estimate_apy < self.min_apy_threshold or estimate_apy_percentile < self.min_apy_threshold:
                     content = (
-                        f"{product['exchange']}加密货币理财产品{product['token']} 卖出提醒\n"
-                        f"最新收益率: {product['apy']}%\n"
-                        f"P{yield_percentile}收益率: {product['apy_percentile']}%\n"
+                        f"**卖出提醒**: {product['exchange']}加密货币理财产品{product['token']}\n"
+                        f"最新收益率: {product['apy']:.2f}%\n"
+                        f"P{yield_percentile}收益率: {product['apy_percentile']:.2f}%\n"
                         # f"持有仓位: {token['totalAmount']}\n"
                         f"各交易所资金费率: (套保交易所: {token['future_exchange']})\n"
                         f"{future_info_str}"
                     )
-                    sell_wechat_bot.send_message(content)
-            else:
-                content = f"在{token['future_exchange']}交易所中未找到 {token['token']} 产品"
+                else:
+                    content = (
+                    f"**持仓收率益**: {product['exchange']}加密货币理财产品{product['token']}\n"
+                    f"最新收益率: {product['apy']:.2f}%\n"
+                    f"P{yield_percentile}收益率: {product['apy_percentile']:.2f}%\n"
+                    # f"持有仓位: {token['totalAmount']}\n"
+                    f"各交易所资金费率: (套保交易所: {token['future_exchange']})\n"
+                    f"{future_info_str}")
                 sell_wechat_bot.send_message(content)
+            else:
+                content = f"在{token['future_exchange']}交易所中未找到 {token['token']} 合约产品"
+                sell_wechat_bot.send_message(content)
+            sleep(0.5)
 
-    def check_sell_strategy(self, all_products):
+    def position_check(self, all_products):
         try:
             # 对所有已购买产品做检查
             # purchased_tokens = [('Binance', 'HIVE'), ]
@@ -729,8 +762,8 @@ class CryptoYieldMonitor:
         logger.info("开始检查高收益加密货币...")
         try:
             # 获取所有交易所的活期理财产品
-            # binance_products = self.exchange_api.get_binance_flexible_products()
-            # logger.info(f"从Binance获取到{len(binance_products)}个活期理财产品")
+            binance_products = self.exchange_api.get_binance_flexible_products()
+            logger.info(f"从Binance获取到{len(binance_products)}个活期理财产品")
 
             gateio_products = self.exchange_api.get_gateio_flexible_products()
             logger.info(f"从GateIO获取到{len(gateio_products)}个活期理财产品")
@@ -746,11 +779,11 @@ class CryptoYieldMonitor:
 
             # 合并所有产品
             # all_products = binance_products + bitget_products + bybit_products + gateio_products + okx_products
-            all_products = bybit_products + gateio_products + okx_products
+            all_products =  bybit_products + gateio_products + okx_products + binance_products
             logger.info(f"总共获取到{len(all_products)}个活期理财产品")
             # 过滤和处理高收益理财产品
-            self.high_yield_filter(all_products)
-            self.check_sell_strategy(all_products)
+            # self.high_yield_filter(all_products)
+            self.position_check(all_products)
         except Exception as e:
             logger.error(f"运行监控任务时发生错误: {str(e)}")
 
