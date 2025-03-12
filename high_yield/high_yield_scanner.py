@@ -291,6 +291,7 @@ class ExchangeAPI:
                                                             percentile=yield_percentile, reverse=True)
                         except Exception as e:
                             logger.error(f"get asset chart {item['asset']} error: {str(e)}")
+                        sleep(2)
                     product = {
                         "exchange": "GateIO",
                         "token": token,
@@ -300,7 +301,6 @@ class ExchangeAPI:
                         "max_purchase": f"{float(item.get('total_lend_all_amount', 0))}(total_lend_all_amount-借出总额)"
                     }
                     products.append(product)
-                    sleep(2)
             else:
                 logger.error(f"GateIO API返回错误: {data}")
         except Exception as e:
