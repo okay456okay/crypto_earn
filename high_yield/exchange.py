@@ -333,12 +333,14 @@ class ExchangeAPI:
             if not self.binance_funding_info:
                 self.get_binance_funding_info()
             fundingIntervalHours = self.binance_funding_info.get(token, {}).get('fundingIntervalHours', 8)
+            fundingIntervalHoursText = self.binance_funding_info.get(token, {}).get('fundingIntervalHours', '无')
             return {
                 "exchange": exchange,
                 "fundingTime": data['nextFundingTime'],
                 "fundingRate": float(data["lastFundingRate"]) * 100,
                 "markPrice": float(data["markPrice"]),
                 "fundingIntervalHours": fundingIntervalHours,
+                'fundingIntervalHoursText': fundingIntervalHoursText,
             }  # 转换为百分比
         except Exception as e:
             logger.error(f"获取{exchange} {token}合约资金费率时出错: {str(e)}")
@@ -405,6 +407,7 @@ class ExchangeAPI:
 
             if data["code"] == "00000" and "data" in data:
                 funding_time, fundingIntervalHours = self.get_bitget_futures_funding_time(token)
+                fundingIntervalHoursText = fundingIntervalHours if fundingIntervalHours else "无"
                 mark_price = self.get_bitget_futures_funding_price(token)
                 return {
                     "exchange": exchange,
@@ -412,6 +415,7 @@ class ExchangeAPI:
                     'fundingRate': float(data["data"][0]["fundingRate"]) * 100,
                     'markPrice': float(mark_price),
                     'fundingIntervalHours': fundingIntervalHours,
+                    'fundingIntervalHoursText': fundingIntervalHoursText,
                 }  # 转换为百分比
             return {}
         except Exception as e:
@@ -448,6 +452,7 @@ class ExchangeAPI:
                             'fundingRate': float(item["fundingRate"]) * 100,  # 转换为百分比
                             'markPrice': float(item["markPrice"]),
                             'fundingIntervalHours': fundingIntervalHours,
+                            'fundingIntervalHoursText': '无',
                         }
             return {}
         except Exception as e:
@@ -473,6 +478,7 @@ class ExchangeAPI:
                 'fundingRate': float(data["funding_rate"]) * 100,  # 转换为百分比
                 'markPrice': float(data["mark_price"]),
                 'fundingIntervalHours': fundingIntervalHours,
+                'fundingIntervalHoursText': fundingIntervalHours,
             }
         except Exception as e:
             logger.error(f"获取{exchange} {token}合约资金费率时出错: {str(e)}")
@@ -505,6 +511,7 @@ class ExchangeAPI:
                 'fundingRate': float(funding_rate) * 100,
                 'markPrice': float(current_price) * 100,
                 "fundingIntervalHours": fundingIntervalHours,
+                'fundingIntervalHoursText': fundingIntervalHours,
             }
         except Exception as e:
             logger.error(f"获取{exchange} {token}合约资金费率时出错: {str(e)}")
