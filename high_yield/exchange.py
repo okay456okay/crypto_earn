@@ -471,7 +471,7 @@ class ExchangeAPI:
             response = self.session.get(url)
             logger.info(f"gateio get future, url: {url}, status: {response.status_code}, response: {response.text}")
             data = response.json()
-            fundingIntervalHours = data['funding_interval']/60/60
+            fundingIntervalHours = int(data['funding_interval']/60/60)
             return {
                 "exchange": exchange,
                 'fundingTime': int(data["funding_next_apply"]) * 1000,
@@ -504,7 +504,7 @@ class ExchangeAPI:
             logger.info(f"okx get future, result: {funding_rate_info}")
             funding_rate = funding_rate_info['fundingRate']
             next_funding_time = funding_rate_info['nextFundingTimestamp']
-            fundingIntervalHours = (funding_rate_info['nextFundingTimestamp'] - funding_rate_info['fundingTimestamp'])/1000/60/60
+            fundingIntervalHours = int((funding_rate_info['nextFundingTimestamp'] - funding_rate_info['fundingTimestamp'])/1000/60/60)
             return {
                 'exchange': exchange,
                 'fundingTime': next_funding_time,
