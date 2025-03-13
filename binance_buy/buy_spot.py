@@ -24,7 +24,8 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 # 将 config.py 所在的目录添加到系统路径
 sys.path.append(os.path.join(current_dir, '..'))
 
-from config import binance_api_key, binance_api_secret, proxies, logger
+from config import binance_api_key, binance_api_secret, proxies
+from tools.logger import logger
 
 # 设置SOCKS5代理
 # socks.set_default_proxy(socks.SOCKS5, "127.0.0.1", 7890)

@@ -6,7 +6,9 @@ import os
 current_dir = os.path.dirname(os.path.abspath(__file__))
 # 将 config.py 所在的目录添加到系统路径
 sys.path.append(os.path.join(current_dir, '..'))
-from config import proxies, logger
+from config import proxies
+from tools.logger import logger
+
 
 def get_binance_price(symbol, proxies=proxies):
     """

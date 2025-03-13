@@ -4,7 +4,8 @@ import hashlib
 import requests
 from urllib.parse import urlencode
 from typing import List, Dict, Any, Optional
-from config import binance_api_secret, binance_api_key, proxies, logger
+from config import binance_api_secret, binance_api_key, proxies
+from tools.logger import logger
 
 
 def get_binance_flexible_savings(api_key: str, api_secret: str, proxies) -> List[Dict[str, Any]]:
