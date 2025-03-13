@@ -4,6 +4,12 @@ from time import sleep
 
 import ccxt
 import requests
+import os
+import sys
+# 获取当前脚本的目录
+current_dir = os.path.dirname(os.path.abspath(__file__))
+# 将 config.py 所在的目录添加到系统路径
+sys.path.append(os.path.join(current_dir, '..'))
 
 from config import proxies, min_apy_threshold, yield_percentile, bitget_api_key, bitget_api_secret, \
     bitget_api_passphrase
