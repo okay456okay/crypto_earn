@@ -12,7 +12,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(current_dir, '..'))
 
 from config import proxies, min_apy_threshold, yield_percentile, bitget_api_key, bitget_api_secret, \
-    bitget_api_passphrase
+    bitget_api_passphrase, okx_earn_insurance_keep_ratio
 from tools.logger import logger
 from high_yield.common import get_percentile
 
@@ -284,8 +284,8 @@ class ExchangeAPI:
                         product = {
                             "exchange": "OKX",
                             "token": token,
-                            "apy": apy,
-                            "apy_percentile": apy_percentile,
+                            "apy": apy*(1-okx_earn_insurance_keep_ratio),
+                            "apy_percentile": apy_percentile*(1-okx_earn_insurance_keep_ratio),
                             "min_purchase": '无',
                             "max_purchase": '无',
                         }
