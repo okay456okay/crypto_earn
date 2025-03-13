@@ -88,6 +88,7 @@ class ExchangeAPI:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         })
         self.session.proxies.update(proxies)
+        self.binance_funding_info = {}
 
     def get_binance_flexible_products(self):
         """
@@ -360,6 +361,24 @@ class ExchangeAPI:
             logger.error(f"获取OKX活期理财产品时出错: {str(e)}")
         return products
 
+    def get_binance_funding_info(self):
+        """
+        获取币安合约资金费率周期数据
+        [{
+            "symbol": "LPTUSDT",
+            "adjustedFundingRateCap": "0.02000000",
+            "adjustedFundingRateFloor": "-0.02000000",
+            "fundingIntervalHours": 4,
+            "disclaimer": false
+        }]
+        :return:
+        """
+        response = requests.get('https://www.binance.com/bapi/futures/v1/public/future/common/get-funding-info', proxies=proxies)
+        data = response.json()
+        logger.info(f"binance funding info get funding info: {data}")
+        for i in data.get('data', []):
+            self.binance_funding_info[i['symbol']] = i
+
     def get_binance_futures(self, token):
         """
         获取币安合约资金费率
@@ -372,11 +391,15 @@ class ExchangeAPI:
             response = self.session.get(url)
             logger.info(f"binance get future, url: {url}, status: {response.status_code}, response: {response.text}")
             data = response.json()
+            if not self.binance_funding_info:
+                self.get_binance_funding_info()
+            fundingIntervalHours = self.binance_funding_info.get(token, {}).get('fundingIntervalHours', 8)
             return {
                 "exchange": exchange,
                 "fundingTime": data['nextFundingTime'],
                 "fundingRate": float(data["lastFundingRate"]) * 100,
                 "markPrice": float(data["markPrice"]),
+                "fundingIntervalHours": fundingIntervalHours,
             }  # 转换为百分比
         except Exception as e:
             logger.error(f"获取{exchange} {token}合约资金费率时出错: {str(e)}")
@@ -418,13 +441,12 @@ class ExchangeAPI:
             response = self.session.get(url, params=params)
             logger.info(f"bitget get future funding time, url: {url}, status: {response.status_code}, response: {response.text}")
             data = response.json()
-
             if data["code"] == "00000" and "data" in data:
-                return data["data"][0]["nextFundingTime"]
-            return None
+                return data["data"][0]["nextFundingTime"], int(data["data"][0]['ratePeriod'])
+            return None, None
         except Exception as e:
             logger.error(f"获取Bitget {token}下次资金费结算时间: {str(e)}")
-            return None
+            return None, None
 
     def get_bitget_futures_funding_rate(self, token):
         """
@@ -432,8 +454,6 @@ class ExchangeAPI:
         :return {'fundingTime': 1741478400001, 'fundingRate': 0.0068709999999999995, 'markPrice': 2202.84}
         """
         exchange = 'Bitget'
-        funding_time = self.get_bitget_futures_funding_time(token)
-        mark_price = self.get_bitget_futures_funding_price(token)
         try:
             url = "https://api.bitget.com/api/v2/mix/market/current-fund-rate"
             params = {
@@ -445,11 +465,14 @@ class ExchangeAPI:
             data = response.json()
 
             if data["code"] == "00000" and "data" in data:
+                funding_time, fundingIntervalHours = self.get_bitget_futures_funding_time(token)
+                mark_price = self.get_bitget_futures_funding_price(token)
                 return {
                     "exchange": exchange,
                     'fundingTime': int(funding_time),
                     'fundingRate': float(data["data"][0]["fundingRate"]) * 100,
                     'markPrice': float(mark_price),
+                    'fundingIntervalHours': fundingIntervalHours,
                 }  # 转换为百分比
             return {}
         except Exception as e:
@@ -475,11 +498,17 @@ class ExchangeAPI:
             if data["retCode"] == 0 and "result" in data and "list" in data["result"]:
                 for item in data["result"]["list"]:
                     if "fundingRate" in item:
+                        fundingRate = float(item["fundingRate"]) * 100
+                        if fundingRate >= 0:
+                            fundingIntervalHours = 8
+                        else:
+                            fundingIntervalHours = 1
                         return {
                             "exchange": exchange,
                             'fundingTime': int(item["nextFundingTime"]),
                             'fundingRate': float(item["fundingRate"]) * 100,  # 转换为百分比
                             'markPrice': float(item["markPrice"]),
+                            'fundingIntervalHours': fundingIntervalHours,
                         }
             return {}
         except Exception as e:
@@ -498,11 +527,13 @@ class ExchangeAPI:
             response = self.session.get(url)
             logger.info(f"gateio get future, url: {url}, status: {response.status_code}, response: {response.text}")
             data = response.json()
+            fundingIntervalHours = data['funding_interval']/60/60
             return {
                 "exchange": exchange,
                 'fundingTime': int(data["funding_next_apply"]) * 1000,
                 'fundingRate': float(data["funding_rate"]) * 100,  # 转换为百分比
                 'markPrice': float(data["mark_price"]),
+                'fundingIntervalHours': fundingIntervalHours,
             }
         except Exception as e:
             logger.error(f"获取{exchange} {token}合约资金费率时出错: {str(e)}")
@@ -528,11 +559,13 @@ class ExchangeAPI:
             logger.info(f"okx get future, result: {funding_rate_info}")
             funding_rate = funding_rate_info['fundingRate']
             next_funding_time = funding_rate_info['nextFundingTimestamp']
+            fundingIntervalHours = (funding_rate_info['nextFundingTimestamp'] - funding_rate_info['fundingTimestamp'])/1000/60/60
             return {
                 'exchange': exchange,
                 'fundingTime': next_funding_time,
                 'fundingRate': float(funding_rate) * 100,
                 'markPrice': float(current_price) * 100,
+                "fundingIntervalHours": fundingIntervalHours,
             }
         except Exception as e:
             logger.error(f"获取{exchange} {token}合约资金费率时出错: {str(e)}")
@@ -627,8 +660,8 @@ class CryptoYieldMonitor:
                 self.buy_wechat_bot.send_message(message)
         logger.info(f"已发送{len(notifications)}条高收益加密货币通知")
 
-    def get_estimate_apy(self, apy, fundingRate, leverage_ratio=leverage_ratio):
-        return 1 * leverage_ratio / (leverage_ratio + 1) * (apy + fundingRate * 3 * 365)
+    def get_estimate_apy(self, apy, fundingRate, fundingIntervalHours, leverage_ratio=leverage_ratio):
+        return 1 * leverage_ratio / (leverage_ratio + 1) * (apy + fundingRate * (24 / fundingIntervalHours) * 365)
 
     def high_yield_filter(self, all_products):
         # 筛选年化利率高于阈值的产品
@@ -654,13 +687,12 @@ class CryptoYieldMonitor:
             positive_futures_results = [i for i in futures_results if
                                         i['fundingRate'] >= 0 and int(time.time()) - i[
                                             'fundingTime'] / 1000 < 24 * 60 * 60]
-            estimate_apys = [i for i in futures_results if self.get_estimate_apy(product['apy_percentile'], i[
-                'fundingRate']) > self.min_apy_threshold]
+            estimate_apys = [i for i in futures_results if self.get_estimate_apy(product['apy_percentile'], i['fundingRate'], i['fundingIntervalHours']) > self.min_apy_threshold]
             logger.info(
                 f"{perp_token} positive future results: {positive_futures_results}, current timestamp: {int(time.time())}")
             if estimate_apys and product['apy_percentile'] > self.min_apy_threshold:
                 future_info_str = '\n'.join([
-                    f"   • {i['exchange']}: 资金费率:{i['fundingRate']:.4f}%, 标记价格:{i['markPrice']:.4f}, 预估收益率: {self.get_estimate_apy(product['apy'], i['fundingRate']):.2f}%, P{yield_percentile}预估收益率: {self.get_estimate_apy(product['apy_percentile'], i['fundingRate']):.2f}%, {datetime.fromtimestamp(i['fundingTime'] / 1000)}"
+                    f"   • {i['exchange']}: 资金费率:{i['fundingRate']:.4f}%, 标记价格:{i['markPrice']:.4f}, 预估收益率: {self.get_estimate_apy(product['apy'], i['fundingRate'], i['fundingIntervalHours']):.2f}%, P{yield_percentile}预估收益率: {self.get_estimate_apy(product['apy_percentile'], i['fundingRate'], i['fundingIntervalHours']):.2f}%, {datetime.fromtimestamp(i['fundingTime'] / 1000)}"
                     for i in
                     futures_results])
                 logger.info(f"Token {token} 满足合约交易条件: {futures_results}")
@@ -707,10 +739,10 @@ class CryptoYieldMonitor:
             token_future = [i for i in futures_results if i['exchange'] == token['future_exchange']]
             if token_future:
                 token_future = token_future[0]
-                estimate_apy = self.get_estimate_apy(product['apy'], token_future['fundingRate'])
-                estimate_apy_percentile = self.get_estimate_apy(product['apy_percentile'], token_future['fundingRate'])
+                estimate_apy = self.get_estimate_apy(product['apy'], token_future['fundingRate'], token_future['fundingIntervalHours'])
+                estimate_apy_percentile = self.get_estimate_apy(product['apy_percentile'], token_future['fundingRate'], token_future['fundingIntervalHours'])
                 future_info_str = '\n'.join([
-                    f"   • {i['exchange']}: 资金费率:{i['fundingRate']:.4f}%, 标记价格:{i['markPrice']:.4f}, 预估收益率: {self.get_estimate_apy(product['apy'], i['fundingRate']):.2f}%, P{yield_percentile}预估收益率: {self.get_estimate_apy(product['apy_percentile'], i['fundingRate']):.2f}%, {datetime.fromtimestamp(i['fundingTime'] / 1000)}"
+                    f"   • {i['exchange']}: 资金费率:{i['fundingRate']:.4f}%, 标记价格:{i['markPrice']:.4f}, 预估收益率: {self.get_estimate_apy(product['apy'], i['fundingRate'], i['fundingIntervalHours']):.2f}%, P{yield_percentile}预估收益率: {self.get_estimate_apy(product['apy_percentile'], i['fundingRate'], i['fundingIntervalHours']):.2f}%, {datetime.fromtimestamp(i['fundingTime'] / 1000)}"
                     for i in
                     futures_results])
                 # token_future['fundingRate'] < 0
@@ -783,6 +815,7 @@ class CryptoYieldMonitor:
             # all_products = binance_products + bitget_products + bybit_products + gateio_products + okx_products
             all_products =  bybit_products + gateio_products + okx_products + binance_products
             logger.info(f"总共获取到{len(all_products)}个活期理财产品")
+            self.exchange_api.get_binance_funding_info()
             # 过滤和处理高收益理财产品
             self.high_yield_filter(all_products)
             self.position_check(all_products)
@@ -793,6 +826,11 @@ class CryptoYieldMonitor:
 # 主程序入口
 def main():
     monitor = CryptoYieldMonitor(buy_webhook_url)
+    # print(monitor.exchange_api.get_binance_futures('ETHUSDT'))
+    # print(monitor.exchange_api.get_bitget_futures_funding_rate('ETHUSDT'))
+    # print(monitor.exchange_api.get_okx_futures_funding_rate('ETHUSDT'))
+    # print(monitor.exchange_api.get_gateio_futures_funding_rate('ETHUSDT'))
+    # print(monitor.exchange_api.get_bybit_futures_funding_rate('ETHUSDT'))
     # print(monitor.exchange_api.get_okx_flexible_products())
     # get_proxy_ip()
     # print(monitor.exchange_api.get_bitget_flexible_products())
