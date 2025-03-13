@@ -37,7 +37,7 @@ class ExchangeAPI:
                 "orderBy": "APY_DESC",
                 "simpleEarnType": "ALL",
             }
-            response = self.session.get(url, params=params)
+            response = requests.get(url, params=params, proxies=proxies)
 
             # 记录响应状态码和响应文本的前100个字符用于调试
             if response.status_code != 200:
@@ -304,10 +304,13 @@ class ExchangeAPI:
         :return:
         """
         response = requests.get('https://www.binance.com/bapi/futures/v1/public/future/common/get-funding-info', proxies=proxies)
-        data = response.json()
-        logger.info(f"binance funding info get funding info: {data}")
-        for i in data.get('data', []):
-            self.binance_funding_info[i['symbol']] = i
+        if response.status_code == 200:
+            data = response.json()
+            logger.info(f"binance funding info get funding info: {data}")
+            for i in data.get('data', []):
+                self.binance_funding_info[i['symbol']] = i
+        else:
+            logger.error(f"binance get funding info failed, code: {response.status_code}, error: {response.text}")
 
     def get_binance_futures(self, token):
         """
@@ -318,7 +321,7 @@ class ExchangeAPI:
         try:
             # url = f"https://fapi.binance.com/fapi/v1/fundingRate?symbol={token}"
             url = f"https://fapi.binance.com/fapi/v1/premiumIndex?symbol={token}"
-            response = self.session.get(url)
+            response = requests.get(url, proxies=proxies)
             logger.info(f"binance get future, url: {url}, status: {response.status_code}, response: {response.text}")
             data = response.json()
             if not self.binance_funding_info:
@@ -504,4 +507,5 @@ class ExchangeAPI:
 
 if __name__ == "__main__":
     api = ExchangeAPI()
+    api.get_binance_funding_info()
     api.get_bitget_futures_funding_rate('ETHUSDT')
