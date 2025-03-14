@@ -114,7 +114,7 @@ class CryptoYieldMonitor:
                     f"   • 最大购买量: {notif['max_purchase']}\n\n"
                 )
             if message:
-                message = f"📊 加密货币高收益理财产品监控 ({now})\n\n" + message
+                message = f"📊 交易所高收益率活期理财产品监控 ({now})\n\n" + message
                 self.buy_wechat_bot.send_message(message)
         logger.info(f"已发送{len(notifications)}条高收益加密货币通知")
 
@@ -187,8 +187,9 @@ class CryptoYieldMonitor:
             if not product:
                 # 发送未找到理财产品通知
                 content = f"在{token['spot_exchange']}交易所中未找到 {token['token']} 理财产品"
-                sell_wechat_bot.send_message(content)
-                product = {'apy': 0.0, 'apy_percentile': 0.0, 'exchange': f'(未在{token["spot_exchange"]}找到产品)', 'token': token['token']}
+                # sell_wechat_bot.send_message(content)
+                logger.info(content)
+                product = {'apy': 0.0, 'apy_percentile': 0.0, 'exchange': f'({token["spot_exchange"]}未找到该活期理财产品)', 'token': token['token']}
             else:
                 product = product[0]
             # 过滤资金费率和利率，如果满足条件就告警
@@ -207,7 +208,7 @@ class CryptoYieldMonitor:
                 if product[
                     'apy'] < self.min_apy_threshold or estimate_apy < self.min_apy_threshold or estimate_apy_percentile < self.min_apy_threshold:
                     content = (
-                        f"**卖出提醒**: {product['exchange']}加密货币理财产品{product['token']}\n"
+                        f"**卖出提醒**: {product['exchange']}活期理财产品{product['token']}\n"
                         f"最新收益率: {product['apy']:.2f}%\n"
                         f"P{yield_percentile}收益率: {product['apy_percentile']:.2f}%\n"
                         # f"持有仓位: {token['totalAmount']}\n"
@@ -216,7 +217,7 @@ class CryptoYieldMonitor:
                     )
                 else:
                     content = (
-                    f"**持仓收率益**: {product['exchange']}加密货币理财产品{product['token']}\n"
+                    f"**持仓收率益**: {product['exchange']}活期理财产品{product['token']}\n"
                     f"最新收益率: {product['apy']:.2f}%\n"
                     f"P{yield_percentile}收益率: {product['apy_percentile']:.2f}%\n"
                     # f"持有仓位: {token['totalAmount']}\n"
@@ -225,7 +226,8 @@ class CryptoYieldMonitor:
                 sell_wechat_bot.send_message(content)
             else:
                 content = f"在{token['future_exchange']}交易所中未找到 {token['token']} 合约产品"
-                sell_wechat_bot.send_message(content)
+                logger.info(content)
+                # sell_wechat_bot.send_message(content)
             sleep(0.5)
 
     def position_check(self, all_products):
