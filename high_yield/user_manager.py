@@ -1,9 +1,9 @@
 import pymysql
 from pymysql import Error
-from datetime import datetime
+from datetime import datetime, timedelta
 from config import db_host, db_port, db_database, db_user, db_pass
 
-class TokenManager:
+class UserManager:
     """管理代币数据库操作的类"""
 
     def __init__(self, host=db_host, database=db_database, db_port=db_port,
@@ -45,18 +45,18 @@ class TokenManager:
         if not self.connection:
             if not self.connect():
                 return False
-
         try:
             with self.connection.cursor() as cursor:
                 # 创建表的SQL语句
                 create_table_query = """
-                CREATE TABLE IF NOT EXISTS purchased_tokens (
+                CREATE TABLE IF NOT EXISTS user (
                     id INT AUTO_INCREMENT PRIMARY KEY,
-                    spot_exchange VARCHAR(100),
-                    future_exchange VARCHAR(100),
-                    token VARCHAR(50),
-                    totalAmount DECIMAL(20, 8),
+                    name VARCHAR(100),
                     webhook_url VARCHAR(255),
+                    phone VARCHAR(100),
+                    email VARCHAR(50),
+                    subscrible_by DATETIME COMMENT '订阅过期时间',
+                    trail_by  DATETIME COMMENT '试用过期时间',
                     created_time DATETIME,
                     created_by VARCHAR(100),
                     updated_time DATETIME,
@@ -71,7 +71,7 @@ class TokenManager:
             print(f"创建表时发生错误: {e}")
             return False
 
-    def insert_token(self, token_data):
+    def insert_user(self, user_data):
         """
         插入单个代币数据到数据库
         参数:
@@ -90,23 +90,24 @@ class TokenManager:
 
                 # 准备插入数据的SQL语句
                 insert_query = """
-                INSERT INTO purchased_tokens 
-                (spot_exchange, future_exchange, token, totalAmount, webhook_url, 
+                INSERT INTO user 
+                (name, webhook_url, phone, email, subscrible_by, trail_by
                  created_time, created_by, updated_time, updated_by)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """
 
                 # 准备数据
                 data_tuple = (
-                    token_data.get('spot_exchange', ''),
-                    token_data.get('future_exchange', ''),
-                    token_data.get('token', ''),
-                    token_data.get('totalAmount', 0.0),
-                    token_data.get('webhook_url', ''),
+                    user_data.get('name', ''),
+                    user_data.get('webhook_url', ''),
+                    user_data.get('phone', ''),
+                    user_data.get('email', 0.0),
+                    current_time + timedelta(days=7),
+                    current_time + timedelta(days=7),
                     current_time,
-                    token_data.get('user', ''),
+                    'system',
                     current_time,
-                    token_data.get('user', ''),
+                    'system',
                 )
 
                 # 执行SQL语句
@@ -115,7 +116,7 @@ class TokenManager:
 
                 # 获取新插入记录的ID
                 new_id = cursor.lastrowid
-                print(f"成功插入代币记录，ID: {new_id}")
+                print(f"成功插入用户记录，ID: {new_id}")
 
                 return True, new_id
         except Error as e:
@@ -123,8 +124,8 @@ class TokenManager:
             return False, None
 
 
-    def query_tokens(self, spot_exchange=None, future_exchange=None, token=None, name=None, is_deleted=0):
-        """查询数据库中的代币数据"""
+    def query_users(self, name=None, email=None, phone=None, is_deleted=0):
+        """查询数据库中的用户数据"""
         if not self.connection:
             if not self.connect():
                 return []
@@ -132,25 +133,21 @@ class TokenManager:
         try:
             with self.connection.cursor() as cursor:
                 # 基础查询
-                query = f"SELECT t.*, u.webhook_url FROM purchased_tokens t join user u on t.user_id = u.id WHERE t.is_deleted={is_deleted} and u.is_deleted={is_deleted}"
+                query = f"SELECT * FROM user WHERE is_deleted={is_deleted}"
                 params = []
 
                 # 添加条件
-                if spot_exchange:
-                    query += " AND t.spot_exchange = %s"
-                    params.append(spot_exchange)
-
-                if future_exchange:
-                    query += " AND t.future_exchange = %s"
-                    params.append(future_exchange)
-
-                if token:
-                    query += " AND t.token = %s"
-                    params.append(token)
-
                 if name:
-                    query += " AND u.name = %s"
-                    params.append(token)
+                    query += " AND name = %s"
+                    params.append(name)
+
+                if phone:
+                    query += " AND phone = %s"
+                    params.append(phone)
+
+                if email:
+                    query += " AND email = %s"
+                    params.append(email)
 
                 # 执行查询
                 cursor.execute(query, params)
@@ -162,16 +159,16 @@ class TokenManager:
             print(f"查询数据时发生错误: {e}")
             return []
 
-    def get_token_by_id(self, token_id):
-        """根据ID查询特定的代币记录"""
+    def get_user_by_id(self, user_id):
+        """根据ID查询特定的用户记录"""
         if not self.connection:
             if not self.connect():
                 return None
 
         try:
             with self.connection.cursor() as cursor:
-                query = "SELECT * FROM purchased_tokens WHERE id = %s"
-                cursor.execute(query, (token_id,))
+                query = "SELECT * FROM user WHERE id = %s"
+                cursor.execute(query, (user_id,))
                 result = cursor.fetchone()
                 return result
 
@@ -179,8 +176,8 @@ class TokenManager:
             print(f"根据ID查询数据时发生错误: {e}")
             return None
 
-    def update_token(self, token_id, data, updated_by="system"):
-        """更新代币数据"""
+    def update_user(self, user_id, data, updated_by="system"):
+        """更新用户数据"""
         if not self.connection:
             if not self.connect():
                 return False
@@ -188,13 +185,13 @@ class TokenManager:
         try:
             with self.connection.cursor() as cursor:
                 # 准备基础更新查询
-                update_query = "UPDATE purchased_tokens SET "
+                update_query = "UPDATE user SET "
                 update_parts = []
                 params = []
 
                 # 添加要更新的字段
                 for key, value in data.items():
-                    if key in ['spot_exchange', 'future_exchange', 'token', 'totalAmount', 'webhook_url']:
+                    if key in ['name', 'phone', 'email', 'webhook_url', 'is_deleted']:
                         update_parts.append(f"{key} = %s")
                         params.append(value)
 
@@ -207,32 +204,33 @@ class TokenManager:
                 # 完成查询字符串
                 update_query += ", ".join(update_parts)
                 update_query += " WHERE id = %s"
-                params.append(token_id)
+                params.append(user_id)
 
                 # 执行更新
                 cursor.execute(update_query, params)
 
             self.connection.commit()
-            print(f"成功更新ID为 {token_id} 的记录")
+            print(f"成功更新ID为 {user_id} 的记录")
             return True
 
         except Error as e:
             print(f"更新数据时发生错误: {e}")
             return False
 
-    def delete_token(self, token_id):
-        """删除代币数据"""
+    def delete_user(self, user_id):
+        """删除用户数据"""
         if not self.connection:
             if not self.connect():
                 return False
 
         try:
-            with self.connection.cursor() as cursor:
-                delete_query = "DELETE FROM purchased_tokens WHERE id = %s"
-                cursor.execute(delete_query, (token_id,))
-
-            self.connection.commit()
-            print(f"成功删除ID为 {token_id} 的记录")
+            # with self.connection.cursor() as cursor:
+            #     delete_query = "DELETE FROM user WHERE id = %s"
+            #     cursor.execute(delete_query, (user_id,))
+            #
+            # self.connection.commit()
+            # print(f"成功删除ID为 {user_id} 的记录")
+            self.update_user(user_id, {"is_deleted": 1})
             return True
 
         except Error as e:
@@ -243,15 +241,15 @@ class TokenManager:
 # 使用示例
 def main():
     # 创建数据库管理器实例
-    db_manager = TokenManager()
-    purchased_tokens = [
-        {'spot_exchange': 'Bybit', 'future_exchange': 'Bybit', 'token': 'AVL', 'totalAmount': 720.0,
-         'user': 'zxl',
-         'webhook_url': 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=38fd27ea-8569-4de2-9dee-4c4a4ffb77ed'},
-        {'spot_exchange': 'GateIO', 'future_exchange': 'Bybit', 'token': 'B3', 'totalAmount': 75050.0,
-         'user': 'zxl',
-         'webhook_url': 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=38fd27ea-8569-4de2-9dee-4c4a4ffb77ed'},
-    ]
+    db_manager = UserManager()
+    # purchased_tokens = [
+    #     {'spot_exchange': 'Bybit', 'future_exchange': 'Bybit', 'token': 'AVL', 'totalAmount': 720.0,
+    #      'user': 'zxl',
+    #      'webhook_url': 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=38fd27ea-8569-4de2-9dee-4c4a4ffb77ed'},
+    #     {'spot_exchange': 'GateIO', 'future_exchange': 'Bybit', 'token': 'B3', 'totalAmount': 75050.0,
+    #      'user': 'zxl',
+    #      'webhook_url': 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=38fd27ea-8569-4de2-9dee-4c4a4ffb77ed'},
+    # ]
 
     try:
         # 连接到数据库
@@ -266,9 +264,9 @@ def main():
             #     db_manager.insert_token(token)
 
             # 查询数据
-            print("\n查询Bybit交易所的AVL代币数据:")
+            print("\n查询Bybit交易所的用户数据:")
             # results = db_manager.query_tokens(spot_exchange='Bybit', token='AVL')
-            results = db_manager.query_tokens()
+            results = db_manager.query_users()
             for row in results:
                 print(row)
 
