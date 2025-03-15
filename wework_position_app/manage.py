@@ -58,12 +58,15 @@ def webhook():
                 msg_ids[msg_id] = None
         if msg_type == 'event' and msg_event == 'enter_agent':
             # 进入会话
-            wecom_app.txt_send2user(userid, f"欢迎使用“持仓管理机器人, 请按照下面的指令操作机器人")
+            content = f"请按照下面指令操作\n"
+            content += f"""添加持仓操作: 发送格式:添加token,现货交易所,合约交易所, 如 '添加ETH,Bitget,Bybit'\n"""
+            content += f"""删除持仓操作: 发送格式:删除token, 如 '删除ETH'\n"""
+            wecom_app.txt_send2user(userid, content)
         elif msg_type == 'text':
             # 回复消息
             content = message_dict.get('Content')
             logger.info(f"收到{userid}消息: {content}")
-            wecom_app.txt_send2user(userid, f"欢迎使用持仓管理机器人, 我已经按您的指示操作了")
+            wecom_app.txt_send2user(userid, f"我已经按您的指示操作了")
         return replay_encrypted, 200
     else:
         logger.warning(f"Not support method: {request.method}")
