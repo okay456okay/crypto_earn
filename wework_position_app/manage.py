@@ -55,7 +55,7 @@ def webhook():
             if msg_id in msg_ids:
                 return '重复消息', 200
             else:
-                msg_ids.append(msg_id)
+                msg_ids[msg_id] = None
         if msg_type == 'event' and msg_event == 'enter_agent':
             # 进入会话
             wecom_app.txt_send2user(userid, f"欢迎使用“持仓管理机器人”，{message}")
