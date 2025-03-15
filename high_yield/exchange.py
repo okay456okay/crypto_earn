@@ -29,6 +29,7 @@ class ExchangeAPI:
     def get_binance_flexible_products(self):
         """
         获取币安活期理财产品 - 使用更新的API
+        https://www.binance.com/zh-CN/earn/simple-earn
         :return [{'exchange': 'Binance', 'token': 'AUCTION', 'apy': 25.573329, 'min_purchase': 0.01, 'max_purchase': 50280.0}]
         """
         try:
@@ -61,14 +62,15 @@ class ExchangeAPI:
                         prouct_id = item['productId']
                         apy = float(item.get("highestApy", 0)) * 100
                         apy_percentile = apy
+                        startTime = int(time.time()*1000) - 30*24*60*60*1000
+                        apy_month = []
                         try:
                             if apy > min_apy_threshold:
-                                url = f'https://www.binance.com/bapi/earn/v1/friendly/lending/daily/product/position-market-apr?productId={prouct_id}'
+                                url = f'https://www.binance.com/bapi/earn/v1/friendly/lending/daily/product/position-market-apr?productId={prouct_id}&startTime={startTime}'
                                 response = requests.get(url, proxies=proxies)
                                 logger.info(f"binance get asset charts, url: {url}, status: {response.status_code}, response: {response.text}")
-                                asset_charts = response.json()
-                                asset_charts = [float(i['marketApr'])*100 for i in asset_charts['data']['marketAprList']]
-                                apy_percentile = get_percentile(asset_charts, yield_percentile)
+                                apy_month = [{'timestamp': int(i['calcTime']), 'apy': float(i['marketApr'])*100} for i in response.json().get('data', {}).get('marketAprList', [])]
+                                apy_percentile = get_percentile([i['apy'] for i in apy_month[-24:]], yield_percentile)
                         except Exception as e:
                             logger.error(f"binance get asset charts, url: {url}, error: {str(e)}")
                         product = {
@@ -76,9 +78,9 @@ class ExchangeAPI:
                             "token": item.get("asset", ""),
                             "apy": apy,
                             'apy_percentile': apy_percentile,
+                            'apy_month': apy_month,
                             "min_purchase": float(item.get('productDetailList', [])[0].get("minPurchaseAmount", 0)),
-                            "max_purchase": float(
-                                item.get('productDetailList', [])[0].get("maxPurchaseAmountPerUser", 0))
+                            "max_purchase": float(item.get('productDetailList', [])[0].get("maxPurchaseAmountPerUser", 0))
                         }
                         products.append(product)
                         sleep(0.1)
@@ -103,6 +105,7 @@ class ExchangeAPI:
             exchange.proxies = proxies
             data = exchange.private_earn_get_v2_earn_savings_product()
 
+
             if data["code"] == "00000" and "data" in data:
                 products = []
                 for item in data["data"]:
@@ -112,6 +115,7 @@ class ExchangeAPI:
                             "token": item["coin"],
                             "apy": float(item['apyList'][0]["currentApy"]),
                             "apy_percentile": float(item['apyList'][0]["currentApy"]),
+                            'apy_month': [],
                             "min_purchase": int(float(item['apyList'][0]['minStepVal'])),
                             "max_purchase": int(float(item['apyList'][0]['maxStepVal'])),
                         }
@@ -167,6 +171,7 @@ class ExchangeAPI:
                         "token": item["coin"],
                         "apy": float(item["estimateApr"].replace("%", "")),
                         'apy_percentile': apy_percentile,
+                        'apy_month': [],
                         "min_purchase": float(item.get('minStakeAmount', 0)),
                         "max_purchase": float(item.get('maxStakeAmount', 0))
                     }
@@ -180,6 +185,7 @@ class ExchangeAPI:
     def get_gateio_flexible_products(self):
         """
         获取GateIO活期理财产品
+        https://www.gate.io/zh/simple-earn
         https://www.gate.io/docs/developers/apiv4/zh_CN/#earnuni
         """
         products = []
@@ -206,26 +212,38 @@ class ExchangeAPI:
                 'exchange_rate_switch': '1',
             }
             response = requests.get(url, params=params, headers=headers, cookies=cookies, proxies=proxies)
+            logger.info(f"get gateio活期理财产品, url: {url}, code: {response.status_code}")
             data = response.json()
 
             if data["code"] == 0 and "data" in data and "list" in data["data"]:
                 end = int(datetime.now().replace(microsecond=0, second=0, minute=0).timestamp())
                 start = end - 1 * 24 * 60 * 60
+                start_30 = end - 30 * 24 * 60 * 60
                 for item in data["data"]["list"]:
                     token = item["asset"]
                     apy = float(item["next_time_rate_year"]) * 100
                     apy_percentile = apy
+                    apy_month = []
                     if apy >= min_apy_threshold:
                         try:
+                            # https://www.gate.io/apiw/v2/uni-loan/earn/chart?from=1741874400&to=1741957200&asset=SOL&type=1
                             url = f'https://www.gate.io/apiw/v2/uni-loan/earn/chart?from={start}&to={end}&asset={token}&type=1'
                             logger.info(f"get gateio {token}近1天收益率曲线, url: {url}")
                             response = requests.get(
                                 url=url,
                                 proxies=proxies)
-                            logger.info(f"gateio get asset charts, url: {url}, status: {response.status_code}, response: {response.text}")
+                            logger.info(f"gateio get 1day asset charts, url: {url}, status: {response.status_code}, response: {response.text}")
                             data = response.json()
-                            apy_percentile = get_percentile([float(i['value']) for i in data.get('data', [])],
-                                                            percentile=yield_percentile, reverse=True)
+                            apy_percentile = get_percentile([float(i['value']) for i in data.get('data', [])], percentile=yield_percentile, reverse=True)
+
+                            url = f'https://www.gate.io/apiw/v2/uni-loan/earn/chart?from={start_30}&to={end}&asset={token}&type=2'
+                            logger.info(f"get gateio {token}近30天收益率曲线, url: {url}")
+                            response = requests.get(
+                                url=url,
+                                proxies=proxies)
+                            logger.info(f"gateio get 30days asset charts, url: {url}, status: {response.status_code}, response: {response.text}")
+                            data = response.json().get('data', [])
+                            apy_month = [{'timestamp': i['time']*1000, 'apy': float(i['value'])} for i in data]
                         except Exception as e:
                             logger.error(f"get asset chart {item['asset']} error: {str(e)}")
                         sleep(2)
@@ -234,6 +252,7 @@ class ExchangeAPI:
                         "token": token,
                         "apy": apy,
                         "apy_percentile": apy_percentile,
+                        'apy_month': apy_month,
                         "min_purchase": f"{float(item.get('total_lend_available', 0))}(total_lend_available-可借总额)",
                         "max_purchase": f"{float(item.get('total_lend_all_amount', 0))}(total_lend_all_amount-借出总额)"
                     }
@@ -262,6 +281,7 @@ class ExchangeAPI:
                     toked_id = int(item['investCurrency']['currencyId'])
                     apy = float(item['rate']['rateNum']['value'][0])
                     apy_percentile = apy
+                    apy_month = []
                     if apy > min_apy_threshold:
                         try:
                             url = f'https://www.okx.com/priapi/v2/financial/rate-history?currencyId={toked_id}&t={now_timestamp_ms}'
@@ -277,8 +297,9 @@ class ExchangeAPI:
                                 headers=headers,
                                 proxies=proxies)
                             logger.info(f"gateio get asset charts, url: {url}, status: {response.status_code}, response: {response.text}")
-                            data = response.json()
-                            apy_percentile = get_percentile([float(i['rate'])*100 for i in data.get('data',{}).get('lastOneDayRates', {}).get('rates')])
+                            data = response.json().get('data', {})
+                            apy_percentile = get_percentile([float(i['rate'])*100 for i in data.get('lastOneDayRates', {}).get('rates')])
+                            apy_month = [{'timestamp': i['dataDate'], 'apy': float(i['rate'])*100*(1-okx_earn_insurance_keep_ratio)} for i in data.get('lastOneMonthRates', {}).get('rates', [])]
                         except Exception as e:
                             logger.error(f"get asset chart {item['asset']} error: {str(e)}")
                         product = {
@@ -286,6 +307,7 @@ class ExchangeAPI:
                             "token": token,
                             "apy": apy*(1-okx_earn_insurance_keep_ratio),
                             "apy_percentile": apy_percentile*(1-okx_earn_insurance_keep_ratio),
+                            'apy_month': apy_month,
                             "min_purchase": '无',
                             "max_purchase": '无',
                         }
@@ -318,7 +340,43 @@ class ExchangeAPI:
         else:
             logger.error(f"binance get funding info failed, code: {response.status_code}, error: {response.text}")
 
-    def get_binance_futures(self, token):
+    def get_binance_future_funding_rate_history(self, token, startTime, endTime):
+        """
+        https://developers.binance.com/docs/zh-CN/derivatives/usds-margined-futures/market-data/rest-api/Get-Funding-Rate-History
+        [{
+            "symbol": "ETHUSDT",
+            "fundingTime": 1740758400000,
+            "fundingRate": "0.00001248",
+            "markPrice": "2221.68000000"
+        },
+        {
+            "symbol": "ETHUSDT",
+            "fundingTime": 1740787200000,
+            "fundingRate": "0.00004855",
+            "markPrice": "2236.07630952"
+        },
+        {
+            "symbol": "ETHUSDT",
+            "fundingTime": 1740816000000,
+            "fundingRate": "-0.00001061",
+            "markPrice": "2228.15000000"
+        }]
+        :param token:
+        :param startTime:
+        :param endTime:
+        :return:
+        """
+        history = []
+        try:
+            url = f"https://fapi.binance.com/fapi/v1/fundingRate?symbol={token}&startTime={startTime}&endTime={endTime}"
+            response = requests.get(url, proxies=proxies)
+            logger.info(f"binance future funding rate history get {url}, status: {response.status_code}, response: {response.text}")
+            history = [{'fundingTime': int(i['fundingTime']), 'fundingRate': float(i['fundingRate']), 'symbol': token} for i in response.json()]
+        except Exception as e:
+            logger.error(f"get get_binance_future_funding_rate_history failed, code: {str(e)}")
+        return history
+
+    def get_binance_futures_funding_rate(self, token):
         """
         获取币安合约资金费率
         :return {'fundingTime': 1741478400001, 'fundingRate': 0.0068709999999999995, 'markPrice': 2202.84}
@@ -326,7 +384,7 @@ class ExchangeAPI:
         exchange = 'Binance'
         try:
             # url = f"https://fapi.binance.com/fapi/v1/fundingRate?symbol={token}"
-            url = f"https://fapi.binance.com/fapi/v1/premiumIndex?symbol={token}"
+            url = f"https://fapi.binance.copythm/fapi/v1/premiumIndex?symbol={token}"
             response = requests.get(url, proxies=proxies)
             logger.info(f"binance get future, url: {url}, status: {response.status_code}, response: {response.text}")
             data = response.json()
@@ -345,6 +403,71 @@ class ExchangeAPI:
         except Exception as e:
             logger.error(f"获取{exchange} {token}合约资金费率时出错: {str(e)}")
             return {}
+
+    def get_bybit_futures_funding_rate_history(self, token, startTime, endTime):
+        """
+        https://bybit-exchange.github.io/docs/zh-TW/v5/market/history-fund-rate
+        [{
+            "symbol": "ETHUSDT",
+            "fundingRate": "0.000074",
+            "fundingTime": "1741939200000"
+        },
+        {
+            "symbol": "ETHUSDT",
+            "fundingRate": "0.000023",
+            "fundingTime": "1741910400000"
+        }]
+        :param token:
+        :param startTime:
+        :param endTime:
+        :param pageSize:
+        :param pageNo:
+        :return:
+        """
+        history = []
+        try:
+            # symbol = token.replace('USDT', 'PERP')
+            url = f"https://api.bybit.com/v5/market/funding/history?category=linear&symbol={token}&&startTime={startTime}&endTime={endTime}"
+            response = requests.get(url, proxies=proxies)
+            logger.info(f"bybit future funding rate history get {url}, status: {response.status_code}, response: {response.text}")
+            history = response.json().get('result', {}).get('list', [])
+            history = [{'symbol': token, 'fundingRate': float(i['fundingRate']), 'fundingTime': int(i['fundingRateTimestamp'])} for i in history]
+        except Exception as e:
+            logger.error(f"get get_bybit_future_funding_rate_history failed, code: {str(e)}")
+        return history
+
+    def get_bitget_futures_funding_rate_history(self, token, startTime, endTime, pageSize=100, pageNo=1):
+        """
+        https://www.bitget.com/zh-CN/api-doc/contract/market/Get-History-Funding-Rate
+        [{
+            "symbol": "ETHUSDT",
+            "fundingRate": "0.000074",
+            "fundingTime": "1741939200000"
+        },
+        {
+            "symbol": "ETHUSDT",
+            "fundingRate": "0.000023",
+            "fundingTime": "1741910400000"
+        }]
+        :param token:
+        :param startTime:
+        :param endTime:
+        :param pageSize:
+        :param pageNo:
+        :return:
+        """
+        history = []
+        try:
+            url = f"https://api.bitget.com/api/v2/mix/market/history-fund-rate?symbol={token}&productType=USDT-FUTURES&pageSize={pageSize}&pageNo={pageNo}"
+            response = requests.get(url, proxies=proxies)
+            logger.info(f"bitget future funding rate history get {url}, status: {response.status_code}, response: {response.text}")
+            history = response.json().get('data', [])
+            history = [{'symbol': token, 'fundingTime': int(i['fundingTime']), 'fundingRate': float(i['fundingRate'])} for i in history if  startTime <= int(i['fundingTime']) <= endTime]
+        except Exception as e:
+            logger.error(f"get get_bitget_future_funding_rate_history failed, code: {str(e)}")
+        return history
+
+
 
     def get_bitget_futures_funding_price(self, token):
         """
@@ -517,8 +640,55 @@ class ExchangeAPI:
             logger.error(f"获取{exchange} {token}合约资金费率时出错: {str(e)}")
             return {}
 
+    def get_okx_futures_funding_rate_history(self, token,  startTime, endTime):
+        """
+        获取 OKX 合约资金费率
+        :return {'fundingTime': 1741478400001, 'fundingRate': 0.0068709999999999995, 'markPrice': 2202.84}
+        """
+        history = []
+        symbol =  token.replace('USDT', '-USD-SWAP')
+        try:
+            # 初始化OKX交易所实例
+            url = f"https://www.okx.com/api/v5/public/funding-rate-history?instId={symbol}&before={startTime}&after={endTime}"
+            response = requests.get(url, proxies=proxies)
+            logger.info(f"okx future funding rate history get {url}, status: {response.status_code}, response: {response.text}")
+            history = response.json().get('data', [])
+            history = [{'fundingTime': int(i['fundingTime']), 'symbol': token, 'fundingRate': float(i['fundingRate'])*100} for i in history]
+        except Exception as e:
+            logger.error(f"get get_okx_future_funding_rate_history failed, code: {str(e)}")
+        return history
+
+    def get_gateio_futures_funding_rate_history(self, token,  startTime, endTime):
+        """
+        获取 OKX 合约资金费率
+        :return {'fundingTime': 1741478400001, 'fundingRate': 0.0068709999999999995, 'markPrice': 2202.84}
+        """
+        history = []
+        try:
+            gate_io_token = token.replace('USDT', '_USDT')
+            url = f"https://api.gateio.ws/api/v4/futures/usdt/funding_rate?contract={gate_io_token}&from={int(startTime/1000)}&to={int(endTime/1000)}"
+            headers = {'Accept': 'application/json', 'Content-Type': 'application/json'}
+            response = self.session.get(url, headers=headers, proxies=proxies)
+            logger.info(f"okx future funding rate history get {url}, status: {response.status_code}, response: {response.text}")
+            history = response.json()
+            history = [{'fundingTime': i['t']*1000, 'symbol': token, 'fundingRate': 100*float(i['r'])} for i in history]
+        except Exception as e:
+            logger.error(f"get get_gateio_future_funding_rate_history failed, code: {str(e)}")
+        return history
+
 
 if __name__ == "__main__":
     api = ExchangeAPI()
-    api.get_binance_funding_info()
-    api.get_bitget_futures_funding_rate('ETHUSDT')
+    # api.get_binance_funding_info()
+    token = 'SOLUSDT'
+    start = 1739318400000
+    end = 1741939200000
+    # print(api.get_binance_future_funding_rate_history(token, startTime=start, endTime=end)[0])
+    # print(api.get_bitget_futures_funding_rate_history(token, startTime=start, endTime=end)[0])
+    # print(api.get_bybit_futures_funding_rate_history(token, startTime=start, endTime=end)[0])
+    # print(api.get_okx_futures_funding_rate_history(token, startTime=start, endTime=end)[0])
+    # print(api.get_gateio_futures_funding_rate_history(token, startTime=start, endTime=end)[0])
+    # print(api.get_binance_flexible_products())
+    print(api.get_gateio_flexible_products())
+    # print(api.get_okx_flexible_products())
+

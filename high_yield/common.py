@@ -12,6 +12,8 @@ def get_percentile(data, percentile=yield_percentile, reverse=True):
     p95 -- 95百分位数值
     """
     # 排序数据
+    if not data:
+        return 0.0
     sorted_data = sorted(data, reverse=reverse)
     # 计算位置 (使用最近秩方法)
     n = len(sorted_data)
