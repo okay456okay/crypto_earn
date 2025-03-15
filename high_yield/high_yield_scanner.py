@@ -3,7 +3,6 @@
 通过套保策略，实现现货和空单合约对冲，然后用现货购买高收益率产品，赚取收益。
 该策略更适用于牛市，因为赚取的收益如果为非稳定币，随着价格下跌，则U本位的收益率会下跌
 """
-from itertools import product
 from time import sleep
 
 import time
@@ -11,17 +10,15 @@ from datetime import datetime
 import sys
 import os
 
-from high_yield.common import get_percentile
-
 # 获取当前脚本的目录
 current_dir = os.path.dirname(os.path.abspath(__file__))
 # 将 config.py 所在的目录添加到系统路径
 sys.path.append(os.path.join(current_dir, '..'))
 
 
+from high_yield.common import get_percentile
 from high_yield.exchange import ExchangeAPI
 from tools.wechatwork import WeChatWorkBot
-
 from high_yield.token_manager import TokenManager
 from binance_buy.buy_spot import get_proxy_ip
 from config import leverage_ratio, yield_percentile, min_apy_threshold, buy_webhook_url, future_percentile
