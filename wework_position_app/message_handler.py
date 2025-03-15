@@ -1,7 +1,6 @@
 import sys
 import os
 
-from wework_position_app.wecom_app import WECOM_APP
 
 # 获取当前脚本的目录
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -13,6 +12,7 @@ from tools.logger import logger
 from wework_position_app.wxcrypt import WXBizMsgCrypt
 import xmltodict
 from flask import Flask, request, abort
+from wework_position_app.wecom_app import WECOM_APP
 
 app = Flask(__name__)
 
