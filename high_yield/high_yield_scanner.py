@@ -136,6 +136,7 @@ class CryptoYieldMonitor:
                     f"   • 最大购买量: {notif['max_purchase']}\n\n"
                 )
             if message:
+                # https://emojipedia.org/
                 message = f"📊 交易所高收益率活期理财产品监控 ({now_str})\n\n" + message
                 self.buy_wechat_bot.send_message(message)
         logger.info(f"已发送{len(notifications)}条高收益加密货币通知")
