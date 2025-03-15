@@ -91,7 +91,7 @@ class TokenManager:
                 # 准备插入数据的SQL语句
                 insert_query = """
                 INSERT INTO purchased_tokens 
-                (spot_exchange, future_exchange, token, totalAmount, webhook_url, 
+                (spot_exchange, future_exchange, token, totalAmount, user_id, 
                  created_time, created_by, updated_time, updated_by)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """
@@ -102,11 +102,11 @@ class TokenManager:
                     token_data.get('future_exchange', ''),
                     token_data.get('token', ''),
                     token_data.get('totalAmount', 0.0),
-                    token_data.get('webhook_url', ''),
+                    token_data.get('user_id', ''),
                     current_time,
-                    token_data.get('user', ''),
+                    token_data.get('user', 'system'),
                     current_time,
-                    token_data.get('user', ''),
+                    token_data.get('user', 'system'),
                 )
 
                 # 执行SQL语句
@@ -123,7 +123,7 @@ class TokenManager:
             return False, None
 
 
-    def query_tokens(self, spot_exchange=None, future_exchange=None, token=None, name=None, is_deleted=0):
+    def query_tokens(self, spot_exchange=None, future_exchange=None, token=None, user_id=None, name=None, is_deleted=0):
         """查询数据库中的代币数据"""
         if not self.connection:
             if not self.connect():
@@ -139,6 +139,10 @@ class TokenManager:
                 if spot_exchange:
                     query += " AND t.spot_exchange = %s"
                     params.append(spot_exchange)
+
+                if user_id:
+                    query += " AND t.user_id = %s"
+                    params.append(user_id)
 
                 if future_exchange:
                     query += " AND t.future_exchange = %s"
@@ -194,7 +198,7 @@ class TokenManager:
 
                 # 添加要更新的字段
                 for key, value in data.items():
-                    if key in ['spot_exchange', 'future_exchange', 'token', 'totalAmount', 'webhook_url']:
+                    if key in ['spot_exchange', 'future_exchange', 'totalAmount', 'is_deleted']:
                         update_parts.append(f"{key} = %s")
                         params.append(value)
 
@@ -264,11 +268,14 @@ def main():
             # 插入数据
             # for token in purchased_tokens:
             #     db_manager.insert_token(token)
+            # db_manager.insert_token({"user_id": 1, "spot_exchange": "Bybit", "future_exchange": "Bybit", "token": "BNB"})
+            token = 'KAVA'
+            db_manager.update_token(token_id=13, data={'spot_exchange': 'GateIO'})
 
             # 查询数据
-            print("\n查询Bybit交易所的AVL代币数据:")
+            print(f"查询Bybit交易所的{token}代币数据:")
             # results = db_manager.query_tokens(spot_exchange='Bybit', token='AVL')
-            results = db_manager.query_tokens()
+            results = db_manager.query_tokens(user_id=1, token=token)
             for row in results:
                 print(row)
 

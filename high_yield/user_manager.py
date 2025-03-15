@@ -124,7 +124,7 @@ class UserManager:
             return False, None
 
 
-    def query_users(self, name=None, email=None, phone=None, is_deleted=0):
+    def query_users(self, name=None, email=None, wecom_userid=None, phone=None, is_deleted=0):
         """查询数据库中的用户数据"""
         if not self.connection:
             if not self.connect():
@@ -148,6 +148,10 @@ class UserManager:
                 if email:
                     query += " AND email = %s"
                     params.append(email)
+
+                if wecom_userid:
+                    query += " AND wecom_userid = %s"
+                    params.append(wecom_userid)
 
                 # 执行查询
                 cursor.execute(query, params)
@@ -266,7 +270,7 @@ def main():
             # 查询数据
             print("\n查询Bybit交易所的用户数据:")
             # results = db_manager.query_tokens(spot_exchange='Bybit', token='AVL')
-            results = db_manager.query_users()
+            results = db_manager.query_users(wecom_userid='raymon-ZhuXiuLong')
             for row in results:
                 print(row)
 
