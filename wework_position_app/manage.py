@@ -43,6 +43,8 @@ def webhook():
             abort(403, error_message)
         return echostr_decrypted, 200
     elif request.method == "POST":
+        user_manager.connect()
+        token_manager.connect()
         ret, message = wxcpt.DecryptMsg(request.data, msg_signature, timestamp, nonce)
         message_dict = xmltodict.parse(message.decode())['xml']
         logger.info(f"接收到的企业微信消息内容：{message_dict}")

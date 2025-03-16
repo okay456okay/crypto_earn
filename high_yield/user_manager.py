@@ -2,6 +2,7 @@ import pymysql
 from pymysql import Error
 from datetime import datetime, timedelta
 from config import db_host, db_port, db_database, db_user, db_pass
+from tools.logger import logger
 
 class UserManager:
     """管理代币数据库操作的类"""
@@ -30,7 +31,7 @@ class UserManager:
             )
             return True
         except Error as e:
-            print(f"连接MySQL时发生错误: {e}")
+            logger.error(f"连接MySQL时发生错误: {e}")
             return False
 
     def disconnect(self):
@@ -38,7 +39,7 @@ class UserManager:
         if self.connection:
             self.connection.close()
             self.connection = None
-            print("数据库连接已关闭")
+            logger.info("数据库连接已关闭")
 
     def create_table(self):
         """创建数据表（如果不存在）"""
@@ -65,10 +66,10 @@ class UserManager:
                 """
                 cursor.execute(create_table_query)
             self.connection.commit()
-            print("数据表创建成功或已存在")
+            logger.warn("数据表创建成功或已存在")
             return True
         except Error as e:
-            print(f"创建表时发生错误: {e}")
+            logger.error(f"创建表时发生错误: {e}")
             return False
 
     def insert_user(self, user_data):
@@ -116,11 +117,11 @@ class UserManager:
 
                 # 获取新插入记录的ID
                 new_id = cursor.lastrowid
-                print(f"成功插入用户记录，ID: {new_id}")
+                logger.info(f"成功插入用户记录，ID: {new_id}")
 
                 return True, new_id
         except Error as e:
-            print(f"插入数据时发生错误: {e}")
+            logger.error(f"插入数据时发生错误: {e}")
             return False, None
 
 
@@ -160,7 +161,7 @@ class UserManager:
                 return results
 
         except Error as e:
-            print(f"查询数据时发生错误: {e}")
+            logger.error(f"查询数据时发生错误: {e}")
             return []
 
     def get_user_by_id(self, user_id):
@@ -177,7 +178,7 @@ class UserManager:
                 return result
 
         except Error as e:
-            print(f"根据ID查询数据时发生错误: {e}")
+            logger.error(f"根据ID查询数据时发生错误: {e}")
             return None
 
     def update_user(self, user_id, data, updated_by="system"):
@@ -214,11 +215,11 @@ class UserManager:
                 cursor.execute(update_query, params)
 
             self.connection.commit()
-            print(f"成功更新ID为 {user_id} 的记录")
+            logger.info(f"成功更新ID为 {user_id} 的记录")
             return True
 
         except Error as e:
-            print(f"更新数据时发生错误: {e}")
+            logger.error(f"更新数据时发生错误: {e}")
             return False
 
     def delete_user(self, user_id):
@@ -233,12 +234,12 @@ class UserManager:
             #     cursor.execute(delete_query, (user_id,))
             #
             # self.connection.commit()
-            # print(f"成功删除ID为 {user_id} 的记录")
+            # logger.info(f"成功删除ID为 {user_id} 的记录")
             self.update_user(user_id, {"is_deleted": 1})
             return True
 
         except Error as e:
-            print(f"删除数据时发生错误: {e}")
+            logger.error(f"删除数据时发生错误: {e}")
             return False
 
 
@@ -258,7 +259,7 @@ def main():
     try:
         # 连接到数据库
         if db_manager.connect():
-            print("成功连接到数据库")
+            logger.info("成功连接到数据库")
 
             # # 创建表
             # db_manager.create_table()
@@ -268,12 +269,12 @@ def main():
             #     db_manager.insert_token(token)
 
             # 查询数据
-            print("\n查询Bybit交易所的用户数据:")
+            logger.info("\n查询Bybit交易所的用户数据:")
             # results = db_manager.query_tokens(spot_exchange='Bybit', token='AVL')
             # results = db_manager.query_users(wecom_userid='raymon-ZhuXiuLong')
             results = db_manager.query_users(wecom_userid='raymon-ZhuXiuLong')
             for row in results:
-                print(row)
+                logger.info(row)
 
                 # 如果找到了记录，尝试更新它
                 # if row:
@@ -284,8 +285,8 @@ def main():
                 #
                 #     # 查看更新后的记录
                 #     updated_token = db_manager.get_token_by_id(token_id)
-                #     print("\n更新后的记录:")
-                #     print(updated_token)
+                #     logger.info("\n更新后的记录:")
+                #     logger.info(updated_token)
 
     finally:
         # 关闭数据库连接

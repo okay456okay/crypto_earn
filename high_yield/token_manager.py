@@ -2,6 +2,7 @@ import pymysql
 from pymysql import Error
 from datetime import datetime
 from config import db_host, db_port, db_database, db_user, db_pass
+from tools.logger import logger
 
 class TokenManager:
     """管理代币数据库操作的类"""
@@ -30,7 +31,7 @@ class TokenManager:
             )
             return True
         except Error as e:
-            print(f"连接MySQL时发生错误: {e}")
+            logger.error(f"连接MySQL时发生错误: {e}")
             return False
 
     def disconnect(self):
@@ -38,7 +39,7 @@ class TokenManager:
         if self.connection:
             self.connection.close()
             self.connection = None
-            print("数据库连接已关闭")
+            logger.info("数据库连接已关闭")
 
     def create_table(self):
         """创建数据表（如果不存在）"""
@@ -65,10 +66,10 @@ class TokenManager:
                 """
                 cursor.execute(create_table_query)
             self.connection.commit()
-            print("数据表创建成功或已存在")
+            logger.warn("数据表创建成功或已存在")
             return True
         except Error as e:
-            print(f"创建表时发生错误: {e}")
+            logger.error(f"创建表时发生错误: {e}")
             return False
 
     def insert_token(self, token_data):
@@ -115,11 +116,11 @@ class TokenManager:
 
                 # 获取新插入记录的ID
                 new_id = cursor.lastrowid
-                print(f"成功插入代币记录，ID: {new_id}")
+                logger.info(f"成功插入代币记录，ID: {new_id}")
 
                 return True, new_id
         except Error as e:
-            print(f"插入数据时发生错误: {e}")
+            logger.error(f"插入数据时发生错误: {e}")
             return False, None
 
 
@@ -163,7 +164,7 @@ class TokenManager:
                 return results
 
         except Error as e:
-            print(f"查询数据时发生错误: {e}")
+            logger.error(f"查询数据时发生错误: {e}")
             return []
 
     def get_token_by_id(self, token_id):
@@ -180,7 +181,7 @@ class TokenManager:
                 return result
 
         except Error as e:
-            print(f"根据ID查询数据时发生错误: {e}")
+            logger.error(f"根据ID查询数据时发生错误: {e}")
             return None
 
     def update_token(self, token_id, data, updated_by="system"):
@@ -217,11 +218,11 @@ class TokenManager:
                 cursor.execute(update_query, params)
 
             self.connection.commit()
-            print(f"成功更新ID为 {token_id} 的记录")
+            logger.info(f"成功更新ID为 {token_id} 的记录")
             return True
 
         except Error as e:
-            print(f"更新数据时发生错误: {e}")
+            logger.error(f"更新数据时发生错误: {e}")
             return False
 
     def delete_token(self, token_id):
@@ -236,11 +237,11 @@ class TokenManager:
                 cursor.execute(delete_query, (token_id,))
 
             self.connection.commit()
-            print(f"成功删除ID为 {token_id} 的记录")
+            logger.info(f"成功删除ID为 {token_id} 的记录")
             return True
 
         except Error as e:
-            print(f"删除数据时发生错误: {e}")
+            logger.error(f"删除数据时发生错误: {e}")
             return False
 
 
@@ -260,7 +261,7 @@ def main():
     try:
         # 连接到数据库
         if db_manager.connect():
-            print("成功连接到数据库")
+            logger.info("成功连接到数据库")
 
             # # 创建表
             # db_manager.create_table()
@@ -273,11 +274,11 @@ def main():
             db_manager.update_token(token_id=13, data={'spot_exchange': 'GateIO'})
 
             # 查询数据
-            print(f"查询Bybit交易所的{token}代币数据:")
+            logger.info(f"查询Bybit交易所的{token}代币数据:")
             # results = db_manager.query_tokens(spot_exchange='Bybit', token='AVL')
             results = db_manager.query_tokens(user_id=1, token=token)
             for row in results:
-                print(row)
+                logger.info(row)
 
                 # 如果找到了记录，尝试更新它
                 # if row:
@@ -288,8 +289,8 @@ def main():
                 #
                 #     # 查看更新后的记录
                 #     updated_token = db_manager.get_token_by_id(token_id)
-                #     print("\n更新后的记录:")
-                #     print(updated_token)
+                #     logger.info("\n更新后的记录:")
+                #     logger.info(updated_token)
 
     finally:
         # 关闭数据库连接
