@@ -75,6 +75,7 @@ def webhook():
             content = message_dict.get('Content').strip()
             logger.info(f"收到{userid}消息: {content}")
             users = user_manager.query_users(wecom_userid=userid)
+            logger.info(f"get users with userid: {userid}, users: {users}")
             if not users:
                 wecom_app.txt_send2user(admin_userid, f"未在user表里找到{userid}用户，请尽快添加，谢谢")
                 wecom_app.txt_send2user(userid, "未完成配置，请联系管理员处理，谢谢")
