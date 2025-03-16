@@ -84,6 +84,7 @@ def webhook():
             if content.startswith('添加') or content.startswith('更新'):
                 token, spot_exchange, future_exchange = content.replace('添加', '').replace('更新', '').split(',')
                 user_token = token_manager.query_tokens(user_id=user_id, token=token)
+                logger.info(f"get {user_id} {token}: {user_token}")
                 if user_token:
                     token_id = user_token[0].get('id')
                     token_manager.update_token(
@@ -100,11 +101,13 @@ def webhook():
             elif content.startswith('删除'):
                 token = content.replace('删除', '')
                 user_token = token_manager.query_tokens(user_id=user_id, token=token)
+                logger.info(f"get {user_id} {token}: {user_token}")
                 if user_token:
                     token_id = user_token[0].get('id')
                     token_manager.update_token(token_id=token_id, data={'is_deleted': 1})
             elif content.startswith('查询'):
                 tokens = token_manager.query_tokens(user_id=user_id)
+                logger.info(f"get {user_id} tokens: {tokens}")
                 tokens_str = '\n'.join([f"{t['token']}:{t['spot_exchange']}(现货交易所),{t['future_exchange']}(合约交易所)" for t in tokens])
                 wecom_app.txt_send2user(userid, f"最新持仓如下：\n{tokens_str}")
                 return replay_encrypted, 200
@@ -112,6 +115,7 @@ def webhook():
                 wecom_app.txt_send2user(userid, f"指令有误，{guideline}")
                 return replay_encrypted, 200
             tokens = token_manager.query_tokens(user_id=user_id)
+            logger.info(f"get {user_id} tokens: {tokens}")
             tokens_str = '\n'.join(
                 [f"{t['token']}:{t['spot_exchange']}(现货交易所),{t['future_exchange']}(合约交易所)" for t in tokens])
             wecom_app.txt_send2user(userid, f"已经完成操作，最新持仓如下：\n{tokens_str}")
