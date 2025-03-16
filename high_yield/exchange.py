@@ -384,7 +384,7 @@ class ExchangeAPI:
         exchange = 'Binance'
         try:
             # url = f"https://fapi.binance.com/fapi/v1/fundingRate?symbol={token}"
-            url = f"https://fapi.binance.copythm/fapi/v1/premiumIndex?symbol={token}"
+            url = f"https://fapi.binance.com/fapi/v1/premiumIndex?symbol={token}"
             response = requests.get(url, proxies=proxies)
             logger.info(f"binance get future, url: {url}, status: {response.status_code}, response: {response.text}")
             data = response.json()
