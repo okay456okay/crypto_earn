@@ -283,7 +283,7 @@ class ExchangeAPI:
                             # 按time字段排序
                             sorted_data = sorted(data, key=lambda x: x["time"])
                             if is_gold_dog(sorted_data):
-                                note = f"收益率暴增至{sorted_data[-1]['value']}%"
+                                note = f"🚀收益率暴增至{sorted_data[-1]['value']}%"
 
                             url = f'https://www.gate.io/apiw/v2/uni-loan/earn/chart?from={start_30}&to={end}&asset={token}&type=2'
                             logger.info(f"get gateio {token}近30天收益率曲线, url: {url}")
