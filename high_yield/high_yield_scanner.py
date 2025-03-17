@@ -78,7 +78,7 @@ class CryptoYieldMonitor:
             okx_rate = None
             logger.error(f"获取OKX {token}的合约资金费率报错：: {str(e)}")
 
-        end = time.time()*1000
+        end = int(time.time()*1000)
         start = end - 7*24*60*60*1000
         if binance_rate:
             binance_rate['d7history'] = self.exchange_api.get_binance_future_funding_rate_history(token, startTime=start, endTime=end)
