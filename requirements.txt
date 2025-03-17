@@ -5,3 +5,5 @@ urllib3==1.26.15
 schedule==1.2.2
 ccxt==4.4.65
 PyMySQL==1.1.1
+xmltodict==0.14.2
+Flask==3.1.0
