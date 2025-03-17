@@ -135,7 +135,7 @@ class CryptoYieldMonitor:
                 )
                 if notif['note']:
                     message += f"   • 备注: {notif['note']}\n"
-
+                    logger.info(f"发现金狗: {notif}")
                     gold_dog_wechat_bot = WeChatWorkBot(gold_dog_buy_webhook_url)
                     gold_dog_message = f"🚀 交易所高收益率活期理财产品监控 ({now_str})\n\n"
                     gold_dog_message += (
