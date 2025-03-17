@@ -130,8 +130,10 @@ class CryptoYieldMonitor:
                     f"   • 近30天P{yield_percentile}收益率: {d30apy_str}\n"
                     f"   • 各交易所合约信息: \n{notif['future_info']}\n"
                     f"   • 最低购买量: {notif['min_purchase']}\n"
-                    f"   • 最大购买量: {notif['max_purchase']}\n\n"
+                    f"   • 最大购买量: {notif['max_purchase']}\n"
                 )
+                if notif['note']:
+                    message += f"   • 备注: {notif['note']}\n"
             if message:
                 # https://emojipedia.org/
                 message = f"📊 交易所高收益率活期理财产品监控 ({now_str})\n\n" + message
@@ -179,6 +181,7 @@ class CryptoYieldMonitor:
                     "future_info": future_info_str,
                     "min_purchase": product["min_purchase"],
                     "max_purchase": product["max_purchase"],
+                    "note": product["note"],
                 }
                 high_yield_notifications.append(notification)
 
