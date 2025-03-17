@@ -428,6 +428,9 @@ class ExchangeAPI:
             response = requests.get(url, proxies=proxies)
             if response.status_code != 200:
                 logger.error(f"binance future funding rate history failed, url:{url}, status:{response.status_code}, response:{response.text}")
+            else:
+                logger.info(
+                    f"binance future funding rate history success, url:{url}, status:{response.status_code}, response:{response.text}")
             history = [{'fundingTime': int(i['fundingTime']), 'fundingRate': float(i['fundingRate']), 'symbol': token} for i in response.json()]
         except Exception as e:
             logger.error(f"get get_binance_future_funding_rate_history failed, code: {str(e)}")
