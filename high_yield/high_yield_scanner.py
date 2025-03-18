@@ -21,7 +21,7 @@ from high_yield.exchange import ExchangeAPI
 from tools.wechatwork import WeChatWorkBot
 from high_yield.token_manager import TokenManager
 from binance_buy.buy_spot import get_proxy_ip
-from config import leverage_ratio, yield_percentile, min_apy_threshold, buy_webhook_url, future_percentile, \
+from config import leverage_ratio, yield_percentile, buy_apy_threshold, sell_apy_threshold, buy_webhook_url, future_percentile, \
     gold_dog_buy_webhook_url
 from tools.logger import logger
 
@@ -33,10 +33,11 @@ from tools.logger import logger
 
 # 主业务逻辑类
 class CryptoYieldMonitor:
-    def __init__(self, buy_webhook_url, min_apy_threshold=min_apy_threshold):
+    def __init__(self, buy_webhook_url, buy_apy_threshold=buy_apy_threshold, sell_apy_threshold=sell_apy_threshold):
         self.exchange_api = ExchangeAPI()
         self.buy_wechat_bot = WeChatWorkBot(buy_webhook_url)
-        self.min_apy_threshold = min_apy_threshold  # 最低年化利率阈值 (%)
+        self.buy_apy_threshold = buy_apy_threshold  # 最低年化利率阈值 (%)
+        self.sell_apy_threshold = sell_apy_threshold  # 最低年化利率阈值 (%)
         self.notified_tokens = set()  # 已通知的Token集合，避免重复通知
 
     def get_futures_trading(self, token):
@@ -161,12 +162,12 @@ class CryptoYieldMonitor:
 
     def high_yield_filter(self, all_products):
         # 筛选年化利率高于阈值的产品
-        high_yield_products = [p for p in all_products if p["apy"] >= self.min_apy_threshold]
+        high_yield_products = [p for p in all_products if p["apy"] >= self.buy_apy_threshold]
         high_yield_products = sorted(high_yield_products, key=lambda x: x['apy'], reverse=True)
-        logger.info(f"筛选出{len(high_yield_products)}个年化利率高于{self.min_apy_threshold}%的产品")
+        logger.info(f"筛选出{len(high_yield_products)}个年化利率高于{self.buy_apy_threshold}%的产品")
 
         if not high_yield_products:
-            logger.info(f"未找到年化利率高于{self.min_apy_threshold}%的产品")
+            logger.info(f"未找到年化利率高于{self.buy_apy_threshold}%的产品")
             return
 
         # 检查每个高收益产品是否满足合约交易条件
@@ -180,8 +181,8 @@ class CryptoYieldMonitor:
             perp_token = f"{token}USDT"
             futures_results = self.get_futures_trading(perp_token)
             logger.info(f"{perp_token} get future results: {futures_results}")
-            estimate_apys = [i for i in futures_results if self.get_estimate_apy(product['apy_percentile'], i['fundingRate'], i['fundingIntervalHours']) > self.min_apy_threshold]
-            if estimate_apys and product['apy_percentile'] > self.min_apy_threshold:
+            estimate_apys = [i for i in futures_results if self.get_estimate_apy(product['apy_percentile'], i['fundingRate'], i['fundingIntervalHours']) > self.buy_apy_threshold]
+            if estimate_apys and product['apy_percentile'] > self.buy_apy_threshold:
                 future_info_str = '\n'.join([
                     f"   • {i['exchange']}: 最新资金费率:{i['fundingRate']:.4f}%, 近7天P{future_percentile}资金费率:{get_percentile([i['fundingRate'] for i in i['d7history']], future_percentile):.4f}%, 标记价格:{i['markPrice']:.4f}, 预估收益率: {self.get_estimate_apy(product['apy'], i['fundingRate'], i['fundingIntervalHours']):.2f}%, P{yield_percentile}预估收益率: {self.get_estimate_apy(product['apy_percentile'], i['fundingRate'], i['fundingIntervalHours']):.2f}%, 结算周期:{i['fundingIntervalHoursText']}, {datetime.fromtimestamp(i['fundingTime'] / 1000)}"
                     for i in
@@ -252,7 +253,7 @@ class CryptoYieldMonitor:
                     d30apy = get_percentile([i['apy'] for i in product['apy_month'] if d30start <= i['timestamp'] <= end], yield_percentile)
                     d30apy_str = f"{d30apy:.2f}%"
                 if product[
-                    'apy'] < self.min_apy_threshold or estimate_apy < self.min_apy_threshold or estimate_apy_percentile < self.min_apy_threshold:
+                    'apy'] < self.sell_apy_threshold or estimate_apy < self.sell_apy_threshold or estimate_apy_percentile < self.sell_apy_threshold:
                     content = (
                         f"📉**卖出提醒**: {product['exchange']}活期理财产品{product['token']} ({now_str})\n"
                         f"最新收益率: {product['apy']:.2f}%\n"

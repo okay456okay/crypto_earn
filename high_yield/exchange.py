@@ -11,7 +11,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 # 将 config.py 所在的目录添加到系统路径
 sys.path.append(os.path.join(current_dir, '..'))
 
-from config import proxies, min_apy_threshold, yield_percentile, bitget_api_key, bitget_api_secret, \
+from config import proxies, buy_apy_threshold, yield_percentile, bitget_api_key, bitget_api_secret, \
     bitget_api_passphrase, okx_earn_insurance_keep_ratio
 from tools.logger import logger
 from high_yield.common import get_percentile
@@ -99,7 +99,7 @@ class ExchangeAPI:
                         startTime = int(time.time()*1000) - 30*24*60*60*1000
                         apy_month = []
                         try:
-                            if apy > min_apy_threshold:
+                            if apy > buy_apy_threshold:
                                 url = f'https://www.binance.com/bapi/earn/v1/friendly/lending/daily/product/position-market-apr?productId={prouct_id}&startTime={startTime}'
                                 response = requests.get(url, proxies=proxies)
                                 if response.status_code == 200:
@@ -191,7 +191,7 @@ class ExchangeAPI:
                         continue
                     try:
                         # 最新一个点是否大于最小收益率，很多时候收益率是向下走的
-                        if apy >= min_apy_threshold:
+                        if apy >= buy_apy_threshold:
                             url = "https://api2.bybit.com/s1/byfi/get-flexible-saving-apr-history"
                             response = requests.post(
                                 url=url,
@@ -268,7 +268,7 @@ class ExchangeAPI:
                     apy_percentile = apy
                     apy_month = []
                     note = ''
-                    if apy >= min_apy_threshold:
+                    if apy >= buy_apy_threshold:
                         try:
                             # https://www.gate.io/apiw/v2/uni-loan/earn/chart?from=1741874400&to=1741957200&asset=SOL&type=1
                             url = f'https://www.gate.io/apiw/v2/uni-loan/earn/chart?from={start}&to={end}&asset={token}&type=1'
@@ -335,7 +335,7 @@ class ExchangeAPI:
                     apy = float(item['rate']['rateNum']['value'][0])
                     apy_percentile = apy
                     apy_month = []
-                    if apy > min_apy_threshold:
+                    if apy > buy_apy_threshold:
                         try:
                             url = f'https://www.okx.com/priapi/v2/financial/rate-history?currencyId={toked_id}&t={now_timestamp_ms}'
                             logger.info(f"get okx {token}近1天收益率曲线, url: {url}")
