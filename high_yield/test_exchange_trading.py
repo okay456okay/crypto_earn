@@ -300,134 +300,209 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
         
         # 为 Bitget 特别处理
         if exchange_id == "bitget":
-            # 直接使用 privateMixPostV2MixOrderPlaceOrder 方法下单
-            # 根据 Bitget 文档构造参数
+            logger.info(f"Bitget合约交易 - 使用直接API调用")
             
-            # 获取精确的交易对名称 (去掉 :USDT 后缀)
-            symbol_name = contract_symbol.replace(':USDT', '')
+            # 获取交易对名称 (对于Bitget需要特殊格式)
+            symbol_name = contract_symbol.split(':')[0]  # 获取DOGE/USDT部分
+            symbol_name = symbol_name.replace('/', '')   # 转换为DOGEUSDT格式
+            logger.info(f"处理后的交易对名称: {symbol_name}")
             
-            # 1. 开仓 - 执行市价买入(开多)
-            logger.info(f"Bitget合约交易 - 使用直接API调用开多")
+            # 尝试通过不同方法获取API
+            api_method = None
             
-            # 构造开仓参数
-            open_params = {
-                'symbol': symbol_name,
-                'productType': 'USDT-FUTURES',  # USDT永续合约类型
-                'marginMode': margin_mode,       # cross或isolated
-                'marginCoin': 'USDT',            # 保证金币种
-                'size': str(quantity),           # 数量
-                'side': 'buy',                   # 买入方向
-                # 单向持仓模式下，不传tradeSide参数
-                'orderType': 'market',           # 市价单
-                'force': 'normal',               # 普通订单类型
-                'clientOid': f'test_open_{int(time.time() * 1000)}'  # 客户端订单ID
-            }
+            # 检查可用的API方法
+            for method_name in dir(exchange):
+                if 'mixpostv2' in method_name.lower() and 'order' in method_name.lower():
+                    logger.info(f"找到可能的API方法: {method_name}")
+                    api_method = method_name
+                    break
             
-            logger.info(f"Bitget开仓参数: {open_params}")
-            
-            # 发送开仓请求
-            try:
-                open_response = exchange.privateMixPostV2MixOrderPlaceOrder(open_params)
-                logger.info(f"Bitget开仓响应: {open_response}")
+            if not api_method:
+                logger.warning("未找到直接的API方法，将尝试使用请求函数")
                 
-                if 'data' not in open_response or 'orderId' not in open_response['data']:
-                    logger.error(f"Bitget开仓失败: {open_response}")
-                    return False
+                # 使用通用请求方法
+                api_endpoint = "/api/v2/mix/order/place-order"
                 
-                open_order_id = open_response['data']['orderId']
-                logger.info(f"Bitget开仓成功，订单ID: {open_order_id}")
+                # 1. 开仓 - 执行市价买入(开多)
+                logger.info(f"尝试使用原始请求方式开多")
                 
-                # 模拟订单对象以兼容其他代码
-                buy_order = {
-                    'id': open_order_id,
-                    'info': open_response,
-                    'amount': quantity,
-                    'filled': quantity,  # 假设全部成交
-                    'status': 'closed',
-                    'symbol': contract_symbol
-                }
-                
-                # 等待开仓完成
-                time.sleep(2)
-                
-                # 获取持仓信息以验证开仓是否成功
-                try:
-                    positions = exchange.fetch_positions([contract_symbol])
-                    logger.info(f"当前持仓: {positions}")
-                    
-                    # 检查是否有多头持仓
-                    has_position = False
-                    for pos in positions:
-                        if pos['side'] == 'long' and float(pos.get('contracts', 0)) > 0:
-                            has_position = True
-                            filled_amount = float(pos.get('contracts', quantity))
-                            logger.info(f"检测到多头持仓: {filled_amount} 合约")
-                            break
-                    
-                    if not has_position:
-                        logger.warning("未检测到多头持仓，将使用原始数量平仓")
-                        filled_amount = quantity
-                    
-                except Exception as e:
-                    logger.warning(f"获取持仓信息失败: {e}，将使用原始数量")
-                    filled_amount = quantity
-                
-                # 2. 平仓 - 执行市价卖出(平多)
-                logger.info(f"Bitget合约交易 - 使用直接API调用平多")
-                
-                # 构造平仓参数
-                close_params = {
+                # 构造开仓参数 (遵循官方文档)
+                open_params = {
                     'symbol': symbol_name,
                     'productType': 'USDT-FUTURES',
                     'marginMode': margin_mode,
                     'marginCoin': 'USDT',
-                    'size': str(filled_amount),
-                    'side': 'sell',                 # 卖出方向
-                    # 单向持仓模式下，不传tradeSide参数
+                    'size': str(int(quantity)),  # 确保是整数
+                    'side': 'buy',
                     'orderType': 'market',
                     'force': 'normal',
-                    'clientOid': f'test_close_{int(time.time() * 1000)}'
+                    'clientOid': f'test_open_{int(time.time() * 1000)}'
                 }
                 
-                logger.info(f"Bitget平仓参数: {close_params}")
+                logger.info(f"Bitget开仓参数: {open_params}")
                 
-                # 发送平仓请求
-                close_response = exchange.privateMixPostV2MixOrderPlaceOrder(close_params)
-                logger.info(f"Bitget平仓响应: {close_response}")
+                try:
+                    # 使用exchange._request方法直接发送HTTP请求
+                    headers = exchange.prepare_request_headers(exchange.encode(json.dumps(open_params)))
+                    open_response = exchange.request('POST', api_endpoint, headers=headers, body=json.dumps(open_params))
+                    logger.info(f"开仓响应: {open_response}")
+                    
+                    if isinstance(open_response, dict) and 'code' in open_response and open_response['code'] != '00000':
+                        logger.error(f"开仓失败: {open_response}")
+                        return False
+                    
+                    # 获取订单ID
+                    open_order_id = open_response.get('data', {}).get('orderId', '')
+                    logger.info(f"开仓成功，订单ID: {open_order_id}")
+                    
+                    # 等待持仓建立
+                    time.sleep(3)
+                    
+                    # 2. 平仓 - 执行市价卖出(平多)
+                    logger.info(f"尝试使用原始请求方式平多")
+                    
+                    # 构造平仓参数
+                    close_params = {
+                        'symbol': symbol_name,
+                        'productType': 'USDT-FUTURES',
+                        'marginMode': margin_mode,
+                        'marginCoin': 'USDT',
+                        'size': str(int(quantity)),  # 使用相同数量平仓
+                        'side': 'sell',
+                        'orderType': 'market',
+                        'force': 'normal',
+                        'clientOid': f'test_close_{int(time.time() * 1000)}'
+                    }
+                    
+                    logger.info(f"Bitget平仓参数: {close_params}")
+                    
+                    # 发送平仓请求
+                    headers = exchange.prepare_request_headers(exchange.encode(json.dumps(close_params)))
+                    close_response = exchange.request('POST', api_endpoint, headers=headers, body=json.dumps(close_params))
+                    logger.info(f"平仓响应: {close_response}")
+                    
+                    if isinstance(close_response, dict) and 'code' in close_response and close_response['code'] != '00000':
+                        logger.error(f"平仓失败: {close_response}")
+                        return False
+                    
+                    # 获取订单ID
+                    close_order_id = close_response.get('data', {}).get('orderId', '')
+                    logger.info(f"平仓成功，订单ID: {close_order_id}")
+                    
+                    # 验证交易结果
+                    if open_order_id and close_order_id:
+                        logger.info(f"{exchange_id} 合约交易测试成功！")
+                        return True
+                    else:
+                        logger.error(f"{exchange_id} 合约交易测试失败！")
+                        return False
+                    
+                except Exception as e:
+                    logger.error(f"Bitget API请求失败: {e}")
+                    logger.error(traceback.format_exc())
+                    
+                    # 尝试使用v1 API
+                    logger.info("尝试使用V1 API")
+                    try:
+                        # 构造V1 API参数
+                        v1_open_params = {
+                            'symbol': symbol_name,
+                            'marginCoin': 'USDT',
+                            'side': 'open_long',  # V1 API使用open_long而不是buy
+                            'orderType': 'market',
+                            'size': str(int(quantity)),
+                            'marginMode': margin_mode
+                        }
+                        
+                        logger.info(f"V1 API开仓参数: {v1_open_params}")
+                        
+                        # 尝试找到V1 API方法
+                        v1_method = None
+                        for method_name in dir(exchange):
+                            if 'mixpost' in method_name.lower() and 'order' in method_name.lower() and 'v1' in method_name.lower():
+                                v1_method = getattr(exchange, method_name)
+                                logger.info(f"找到V1 API方法: {method_name}")
+                                break
+                        
+                        if v1_method:
+                            v1_open_response = v1_method(v1_open_params)
+                            logger.info(f"V1 API开仓响应: {v1_open_response}")
+                            
+                            # 等待持仓建立
+                            time.sleep(3)
+                            
+                            # V1 API平仓
+                            v1_close_params = {
+                                'symbol': symbol_name,
+                                'marginCoin': 'USDT',
+                                'side': 'close_long',  # V1 API使用close_long
+                                'orderType': 'market',
+                                'size': str(int(quantity)),
+                                'marginMode': margin_mode
+                            }
+                            
+                            logger.info(f"V1 API平仓参数: {v1_close_params}")
+                            v1_close_response = v1_method(v1_close_params)
+                            logger.info(f"V1 API平仓响应: {v1_close_response}")
+                            
+                            logger.info(f"{exchange_id} V1 API合约交易测试完成！")
+                            return True
+                        else:
+                            logger.error("未找到合适的V1 API方法")
+                            return False
+                    except Exception as e2:
+                        logger.error(f"V1 API尝试也失败: {e2}")
+                        logger.error(traceback.format_exc())
+                        return False
+            else:
+                # 使用找到的API方法
+                logger.info(f"使用找到的API方法: {api_method}")
+                api_func = getattr(exchange, api_method)
                 
-                if 'data' not in close_response or 'orderId' not in close_response['data']:
-                    logger.error(f"Bitget平仓失败: {close_response}")
-                    return False
-                
-                close_order_id = close_response['data']['orderId']
-                logger.info(f"Bitget平仓成功，订单ID: {close_order_id}")
-                
-                # 模拟订单对象
-                sell_order = {
-                    'id': close_order_id,
-                    'info': close_response,
-                    'amount': filled_amount,
-                    'filled': filled_amount,
-                    'status': 'closed',
-                    'symbol': contract_symbol
+                # 构造开仓参数
+                open_params = {
+                    'symbol': symbol_name,
+                    'productType': 'USDT-FUTURES',
+                    'marginMode': margin_mode,
+                    'marginCoin': 'USDT',
+                    'size': str(int(quantity)),
+                    'side': 'buy',
+                    'orderType': 'market',
+                    'force': 'normal',
+                    'clientOid': f'test_open_{int(time.time() * 1000)}'
                 }
                 
-                # 等待平仓完成
-                time.sleep(2)
-                
-                # 验证交易结果
-                if open_order_id and close_order_id:
-                    logger.info(f"{exchange_id} 合约交易测试成功！")
+                logger.info(f"使用API方法开仓，参数: {open_params}")
+                try:
+                    open_response = api_func(open_params)
+                    logger.info(f"API方法开仓响应: {open_response}")
+                    
+                    # 等待持仓建立
+                    time.sleep(3)
+                    
+                    # 平仓
+                    close_params = {
+                        'symbol': symbol_name,
+                        'productType': 'USDT-FUTURES',
+                        'marginMode': margin_mode,
+                        'marginCoin': 'USDT',
+                        'size': str(int(quantity)),
+                        'side': 'sell',
+                        'orderType': 'market',
+                        'force': 'normal',
+                        'clientOid': f'test_close_{int(time.time() * 1000)}'
+                    }
+                    
+                    logger.info(f"使用API方法平仓，参数: {close_params}")
+                    close_response = api_func(close_params)
+                    logger.info(f"API方法平仓响应: {close_response}")
+                    
+                    logger.info(f"{exchange_id} API方法合约交易测试完成！")
                     return True
-                else:
-                    logger.error(f"{exchange_id} 合约交易测试失败！")
+                except Exception as e:
+                    logger.error(f"API方法调用失败: {e}")
+                    logger.error(traceback.format_exc())
                     return False
-                
-            except Exception as e:
-                logger.error(f"Bitget合约交易失败: {e}")
-                logger.error(traceback.format_exc())
-                return False
-                
         else:
             # 其他交易所的代码保持不变
             # ... 执行开多操作 ...
