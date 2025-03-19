@@ -307,31 +307,29 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
             symbol_name = symbol_name.replace('/', '')   # 转换为DOGEUSDT格式
             logger.info(f"处理后的交易对名称: {symbol_name}")
             
-            # 直接使用明确的API方法名称
-            api_method = 'privateMixPostV2MixOrderPlaceOrder'
+            # 查找可用的API方法
+            available_methods = []
+            for method_name in dir(exchange):
+                if 'mixpost' in method_name.lower() and 'order' in method_name.lower() and 'place' in method_name.lower():
+                    available_methods.append(method_name)
             
-            # 检查该方法是否存在
-            if hasattr(exchange, api_method):
+            logger.info(f"找到的下单API方法: {available_methods}")
+            
+            # 如果找到了可用的方法
+            if available_methods:
+                api_method = available_methods[0]
                 logger.info(f"使用API方法: {api_method}")
                 api_func = getattr(exchange, api_method)
                 
-                # 测试获取当前持仓模式
                 try:
-                    # 获取账户信息
-                    account_info = exchange.privateMixGetV2MixAccount({'productType': 'USDT-FUTURES'})
-                    logger.info(f"账户信息: {account_info}")
-                    
-                    # 获取持仓模式
-                    position_mode = 'single'  # 默认为单向持仓
-                    
-                    # 构造开仓参数 - 遵循Bitget API文档
+                    # 构造开仓参数
                     open_params = {
                         'symbol': symbol_name,
                         'productType': 'USDT-FUTURES',
                         'marginMode': margin_mode,
                         'marginCoin': 'USDT',
                         'size': str(int(quantity)),
-                        'side': 'buy',  # 单向持仓买入开多
+                        'side': 'buy',
                         'orderType': 'market',
                         'clientOid': f'test_open_{int(time.time() * 1000)}'
                     }
@@ -350,7 +348,7 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
                         'marginMode': margin_mode,
                         'marginCoin': 'USDT',
                         'size': str(int(quantity)),
-                        'side': 'sell',  # 单向持仓卖出平多
+                        'side': 'sell',
                         'orderType': 'market',
                         'clientOid': f'test_close_{int(time.time() * 1000)}'
                     }
@@ -364,72 +362,13 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
                 except Exception as e:
                     logger.error(f"API方法调用失败: {e}")
                     logger.error(traceback.format_exc())
-                    return False
+                    
+                    # 使用通用请求方法作为备选
+                    return try_generic_request_method(exchange, symbol_name, margin_mode, quantity, exchange_id)
             else:
-                logger.error(f"找不到API方法: {api_method}")
-                
-                # 退回到通用请求方法
-                try:
-                    logger.info("尝试使用通用请求方法")
-                    api_endpoint = "/api/v2/mix/order/place-order"
-                    
-                    # 开仓参数
-                    open_params = {
-                        'symbol': symbol_name,
-                        'productType': 'USDT-FUTURES',
-                        'marginMode': margin_mode,
-                        'marginCoin': 'USDT',
-                        'size': str(int(quantity)),
-                        'side': 'buy',
-                        'orderType': 'market',
-                        'clientOid': f'test_open_{int(time.time() * 1000)}'
-                    }
-                    
-                    logger.info(f"开仓参数: {open_params}")
-                    
-                    # 使用exchange.request方法
-                    open_response = exchange.request(
-                        'POST', 
-                        api_endpoint, 
-                        headers=exchange.sign(api_endpoint, open_params),
-                        body=json.dumps(open_params)
-                    )
-                    
-                    logger.info(f"开仓响应: {open_response}")
-                    
-                    # 等待持仓建立
-                    time.sleep(3)
-                    
-                    # 平仓参数
-                    close_params = {
-                        'symbol': symbol_name,
-                        'productType': 'USDT-FUTURES',
-                        'marginMode': margin_mode,
-                        'marginCoin': 'USDT',
-                        'size': str(int(quantity)),
-                        'side': 'sell',
-                        'orderType': 'market',
-                        'clientOid': f'test_close_{int(time.time() * 1000)}'
-                    }
-                    
-                    logger.info(f"平仓参数: {close_params}")
-                    
-                    # 发送平仓请求
-                    close_response = exchange.request(
-                        'POST', 
-                        api_endpoint, 
-                        headers=exchange.sign(api_endpoint, close_params),
-                        body=json.dumps(close_params)
-                    )
-                    
-                    logger.info(f"平仓响应: {close_response}")
-                    
-                    logger.info(f"{exchange_id} 通用请求方法合约交易测试完成！")
-                    return True
-                except Exception as e:
-                    logger.error(f"通用请求方法失败: {e}")
-                    logger.error(traceback.format_exc())
-                    return False
+                logger.error("未找到合适的API方法")
+                # 使用通用请求方法作为备选
+                return try_generic_request_method(exchange, symbol_name, margin_mode, quantity, exchange_id)
         else:
             # 其他交易所的代码
             # 4. 执行开多(市价买入)操作
