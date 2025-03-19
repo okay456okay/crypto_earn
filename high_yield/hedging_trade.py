@@ -155,61 +155,150 @@ def setup_logger(args):
 def init_exchanges(args):
     try:
         exchanges = {}
+        errors = {}  # 用于收集初始化错误
+        
+        # 测试模式：初始化所有交易所
+        test_mode = getattr(args, 'test_mode', False)
+        
+        # 确定需要初始化的交易所列表
+        exchange_ids_to_init = []
+        
+        if test_mode:
+            # 检查是否有特殊的标记表示初始化所有交易所
+            if getattr(args, 'spot_exchange', None) == "all_exchanges" or getattr(args, 'future_exchange', None) == "all_exchanges":
+                # 初始化所有支持的交易所
+                exchange_ids_to_init = ["gateio", "bitget", "binance", "okx", "bybit"]
+            else:
+                # 只初始化args中指定的交易所
+                for exchange_id in ["gateio", "bitget", "binance", "okx", "bybit"]:
+                    if args.spot_exchange == exchange_id or args.future_exchange == exchange_id:
+                        exchange_ids_to_init.append(exchange_id)
+        else:
+            # 非测试模式：只初始化args中指定的交易所
+            for exchange_id in ["gateio", "bitget", "binance", "okx", "bybit"]:
+                if args.spot_exchange == exchange_id or args.future_exchange == exchange_id:
+                    exchange_ids_to_init.append(exchange_id)
+                    
+        logger.info(f"将初始化以下交易所: {exchange_ids_to_init}")
         
         # GateIO配置
-        if args.spot_exchange == "gateio" or args.future_exchange == "gateio":
-            exchanges["gateio"] = ccxt.gateio({
-                'apiKey': gateio_api_key,
-                'secret': gateio_api_secret,
-                'enableRateLimit': True,
-                'proxies': proxies,
-            })
+        if "gateio" in exchange_ids_to_init:
+            try:
+                exchanges["gateio"] = ccxt.gateio({
+                    'apiKey': gateio_api_key,
+                    'secret': gateio_api_secret,
+                    'enableRateLimit': True,
+                    'proxies': proxies,
+                })
+                logger.info("GateIO交易所初始化成功")
+            except Exception as e:
+                error_msg = f"GateIO交易所初始化失败: {e}"
+                logger.error(error_msg)
+                logger.error(traceback.format_exc())
+                errors["gateio"] = error_msg
 
         # Bitget配置
-        if args.spot_exchange == "bitget" or args.future_exchange == "bitget":
-            exchanges["bitget"] = ccxt.bitget({
-                'apiKey': bitget_api_key,
-                'secret': bitget_api_secret,
-                'password': bitget_api_passphrase,
-                'enableRateLimit': True,
-                'proxies': proxies,
-            })
+        if "bitget" in exchange_ids_to_init:
+            try:
+                exchanges["bitget"] = ccxt.bitget({
+                    'apiKey': bitget_api_key,
+                    'secret': bitget_api_secret,
+                    'password': bitget_api_passphrase,
+                    'enableRateLimit': True,
+                    'proxies': proxies,
+                })
+                logger.info("Bitget交易所初始化成功")
+            except Exception as e:
+                error_msg = f"Bitget交易所初始化失败: {e}"
+                logger.error(error_msg)
+                logger.error(traceback.format_exc())
+                errors["bitget"] = error_msg
             
         # Binance配置
-        if args.spot_exchange == "binance" or args.future_exchange == "binance":
-            exchanges["binance"] = ccxt.binance({
-                'apiKey': binance_api_key,
-                'secret': binance_api_secret,
-                'enableRateLimit': True,
-                'proxies': proxies,
-                'options': {
-                    'defaultType': 'future', # 使用合约API
-                }
-            })
+        if "binance" in exchange_ids_to_init:
+            try:
+                # 检查Binance API配置是否存在
+                if not binance_api_key or not binance_api_secret:
+                    raise ValueError("Binance API密钥或密钥未配置")
+                
+                exchanges["binance"] = ccxt.binance({
+                    'apiKey': binance_api_key,
+                    'secret': binance_api_secret,
+                    'enableRateLimit': True,
+                    'proxies': proxies,
+                    'options': {
+                        'defaultType': 'future',  # 使用合约API
+                    }
+                })
+                # 测试连接
+                exchanges["binance"].load_markets()
+                logger.info("Binance交易所初始化成功")
+            except Exception as e:
+                error_msg = f"Binance交易所初始化失败: {e}"
+                logger.error(error_msg)
+                logger.error(traceback.format_exc())
+                errors["binance"] = error_msg
             
         # OKX配置
-        if args.spot_exchange == "okx" or args.future_exchange == "okx":
-            exchanges["okx"] = ccxt.okx({
-                'apiKey': okx_api_key,
-                'secret': okx_api_secret,
-                'password': okx_api_passphrase,
-                'enableRateLimit': True,
-                'proxies': proxies,
-            })
+        if "okx" in exchange_ids_to_init:
+            try:
+                if 'okx_api_key' not in globals() or 'okx_api_secret' not in globals() or 'okx_api_passphrase' not in globals():
+                    raise ValueError("OKX API配置未导入或未定义")
+                
+                exchanges["okx"] = ccxt.okx({
+                    'apiKey': okx_api_key,
+                    'secret': okx_api_secret,
+                    'password': okx_api_passphrase,
+                    'enableRateLimit': True,
+                    'proxies': proxies,
+                })
+                logger.info("OKX交易所初始化成功")
+            except Exception as e:
+                error_msg = f"OKX交易所初始化失败: {e}"
+                logger.error(error_msg)
+                logger.error(traceback.format_exc())
+                errors["okx"] = error_msg
             
         # Bybit配置
-        if args.spot_exchange == "bybit" or args.future_exchange == "bybit":
-            exchanges["bybit"] = ccxt.bybit({
-                'apiKey': bybit_api_key,
-                'secret': bybit_api_secret,
-                'enableRateLimit': True,
-                'proxies': proxies,
-            })
+        if "bybit" in exchange_ids_to_init:
+            try:
+                if 'bybit_api_key' not in globals() or 'bybit_api_secret' not in globals():
+                    raise ValueError("Bybit API配置未导入或未定义")
+                
+                exchanges["bybit"] = ccxt.bybit({
+                    'apiKey': bybit_api_key,
+                    'secret': bybit_api_secret,
+                    'enableRateLimit': True,
+                    'proxies': proxies,
+                })
+                logger.info("Bybit交易所初始化成功")
+            except Exception as e:
+                error_msg = f"Bybit交易所初始化失败: {e}"
+                logger.error(error_msg)
+                logger.error(traceback.format_exc())
+                errors["bybit"] = error_msg
+
+        # 检查关键交易所是否初始化成功（只在非测试模式下执行）
+        if not test_mode:
+            if args.spot_exchange not in exchanges:
+                error_msg = f"现货交易所 {args.spot_exchange} 初始化失败"
+                if args.spot_exchange in errors:
+                    error_msg += f": {errors[args.spot_exchange]}"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+                
+            if args.future_exchange not in exchanges:
+                error_msg = f"合约交易所 {args.future_exchange} 初始化失败"
+                if args.future_exchange in errors:
+                    error_msg += f": {errors[args.future_exchange]}"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
 
         logger.info("交易所API初始化成功")
         return exchanges
     except Exception as e:
         logger.error(f"初始化交易所API失败: {e}")
+        logger.error(traceback.format_exc())
         raise
 
 

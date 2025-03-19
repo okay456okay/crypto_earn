@@ -299,11 +299,20 @@ def main():
     # 配置日志
     setup_test_logger()
     
+    # 定义要测试的交易所
+    exchange_ids = ["gateio", "bitget", "binance", "okx", "bybit"]
+    
+    # 如果指定了单个交易所，则只测试该交易所
+    if args.exchange != "all":
+        exchange_ids = [args.exchange]
+    
     # 创建一个模拟的args对象用于初始化交易所
+    # 关键修改：确保指定的交易所都会被初始化
     mock_args = argparse.Namespace(
         symbol=args.symbol,
-        spot_exchange="gateio",  # 这些值不会影响我们的测试结果
-        future_exchange="bitget",
+        # 根据要测试的交易所设置spot_exchange和future_exchange
+        spot_exchange=exchange_ids[0],  # 使用第一个交易所作为现货交易所
+        future_exchange=exchange_ids[0],  # 使用第一个交易所作为合约交易所
         by_amount=True,
         quantity=100,
         trade_type="spot_buy_future_short",
@@ -317,32 +326,79 @@ def main():
         retry_delay=1,
         log_file="",
         enable_notification=False,
-        webhook_url=""
+        webhook_url="",
+        test_mode=True  # 添加测试模式标记
     )
     
     try:
         logger.info(f"开始测试交易所余额获取功能，交易对: {args.symbol}")
         
-        # 初始化所有交易所连接
-        exchanges = init_exchanges(mock_args)
+        # 初始化所有需要测试的交易所连接
+        try:
+            # 修改init_exchanges的行为，确保所有指定的交易所都被初始化
+            # 通过创建一个临时的args对象，我们可以让init_exchanges初始化所有交易所
+            all_exchanges_args = argparse.Namespace(
+                spot_exchange="all_exchanges",  # 这是一个特殊标记
+                future_exchange="all_exchanges",  # 这是一个特殊标记
+                test_mode=True
+            )
+            
+            # 修改init_exchanges函数，使其能够理解all_exchanges标记
+            # 如果不想修改init_exchanges，可以在这里直接构建exchanges字典
+            exchanges = {}
+            
+            # 为每个要测试的交易所创建一个实例
+            for exchange_id in exchange_ids:
+                logger.info(f"初始化 {exchange_id} 交易所...")
+                try:
+                    # 创建一个特定于当前交易所的args对象
+                    single_exchange_args = argparse.Namespace(
+                        spot_exchange=exchange_id,
+                        future_exchange=exchange_id,
+                        test_mode=True
+                    )
+                    
+                    # 调用init_exchanges初始化当前交易所
+                    exchange_dict = init_exchanges(single_exchange_args)
+                    
+                    # 将初始化的交易所添加到总字典中
+                    for key, value in exchange_dict.items():
+                        exchanges[key] = value
+                        
+                except Exception as e:
+                    logger.error(f"{exchange_id} 交易所初始化失败: {e}")
+                    logger.error(traceback.format_exc())
+            
+        except Exception as e:
+            logger.error(f"初始化交易所连接失败: {e}")
+            logger.error(traceback.format_exc())
+            exchanges = {}  # 确保exchanges被定义
         
-        # 定义要测试的交易所
-        exchange_ids = ["gateio", "bitget", "binance", "okx", "bybit"]
-        
-        # 如果指定了单个交易所，则只测试该交易所
-        if args.exchange != "all":
-            exchange_ids = [args.exchange]
+        # 显示所有可用的交易所
+        available_exchanges = list(exchanges.keys())
+        logger.info(f"成功初始化的交易所: {available_exchanges}")
         
         # 测试每个交易所
         for exchange_id in exchange_ids:
             logger.info(f"\n{'=' * 50}")
             logger.info(f"开始测试 {exchange_id} 交易所")
             
-            # 测试余额获取
-            test_single_exchange(exchange_id, args.symbol, exchanges)
+            # 检查交易所是否初始化成功
+            if exchange_id not in exchanges:
+                logger.error(f"交易所 {exchange_id} 未在exchanges字典中找到，可能初始化失败")
+                logger.info(f"跳过测试 {exchange_id} 交易所")
+                logger.info(f"{'=' * 50}\n")
+                continue
             
-            # 测试持仓信息
-            test_positions(exchange_id, args.symbol, exchanges)
+            try:
+                # 测试余额获取
+                test_single_exchange(exchange_id, args.symbol, exchanges)
+                
+                # 测试持仓信息
+                test_positions(exchange_id, args.symbol, exchanges)
+            except Exception as e:
+                logger.error(f"测试 {exchange_id} 交易所时发生错误: {e}")
+                logger.error(traceback.format_exc())
             
             logger.info(f"完成测试 {exchange_id} 交易所")
             logger.info(f"{'=' * 50}\n")
