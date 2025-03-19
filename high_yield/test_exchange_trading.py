@@ -504,10 +504,97 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
                     logger.error(traceback.format_exc())
                     return False
         else:
-            # 其他交易所的代码保持不变
-            # ... 执行开多操作 ...
-            # ... 执行平多操作 ...
-            # ... 验证交易结果 ...
+            # 其他交易所的代码
+            # 4. 执行开多(市价买入)操作
+            buy_params = {}
+            if exchange_id == "binance":
+                if position_mode == "hedge":
+                    # 对冲模式需要指定仓位方向
+                    buy_params = {"positionSide": "LONG"}
+                    logger.info("使用对冲模式开仓，指定LONG仓位")
+                else:
+                    # 单向模式不需要指定
+                    buy_params = {}
+                    logger.info("使用单向模式开仓")
+            elif exchange_id == "okx":
+                buy_params = {'instType': 'SWAP', 'tdMode': margin_mode}
+            elif exchange_id == "bybit":
+                buy_params = {'category': 'linear', 'positionIdx': 0}
+            
+            logger.info(f"执行合约市价买入(开多)，参数: {buy_params}")
+            buy_order = exchange.create_market_buy_order(contract_symbol, quantity, params=buy_params)
+            
+            if not buy_order:
+                logger.error("开多订单创建失败")
+                return False
+                
+            logger.info(f"开多订单执行结果: {buy_order}")
+            time.sleep(2)  # 等待订单完成
+            
+            # 5. 获取实际成交数量
+            filled_amount = 0
+            
+            # 尝试从订单信息中获取成交数量
+            if 'filled' in buy_order and buy_order['filled'] is not None:
+                filled_amount = float(buy_order['filled'])
+            elif 'amount' in buy_order and buy_order['amount'] is not None:
+                filled_amount = float(buy_order['amount'])
+            elif 'info' in buy_order and 'filled' in buy_order['info'] and buy_order['info']['filled'] is not None:
+                filled_amount = float(buy_order['info']['filled'])
+            
+            # 如果仍然无法获取，使用下单数量
+            if filled_amount <= 0:
+                filled_amount = quantity
+                logger.warning(f"无法获取实际成交数量，将使用原始下单数量: {filled_amount}")
+            
+            logger.info(f"实际开多数量: {filled_amount}")
+            
+            # 确认持仓是否已建立
+            try:
+                # 获取当前持仓
+                positions_params = {}
+                if exchange_id == "bybit":
+                    positions_params = {'category': 'linear'}
+                elif exchange_id == "okx":
+                    positions_params = {'instType': 'SWAP'}
+                    
+                positions = exchange.fetch_positions([contract_symbol], params=positions_params)
+                logger.info(f"当前持仓: {positions}")
+                
+                long_position = None
+                for pos in positions:
+                    if pos['side'] == 'long' and float(pos.get('contracts', 0)) > 0:
+                        long_position = pos
+                        break
+                        
+                if not long_position:
+                    logger.warning("未检测到多头持仓，但将继续尝试平仓")
+            except Exception as e:
+                logger.error(f"获取持仓信息失败: {e}")
+                logger.error(traceback.format_exc())
+            
+            # 6. 执行平多(市价卖出)操作
+            sell_params = buy_params.copy()
+            if exchange_id == "bybit":
+                sell_params['reduceOnly'] = True  # ByBit平仓需要设置reduceOnly
+            
+            # 对于Binance，确保平仓参数与开仓一致
+            if exchange_id == "binance" and "positionSide" in sell_params:
+                # 在对冲模式下，平仓时必须使用相同的positionSide
+                logger.info(f"使用对冲模式平仓，指定 {sell_params['positionSide']} 仓位")
+            
+            logger.info(f"执行合约市价卖出(平多)，数量: {filled_amount}，参数: {sell_params}")
+            sell_order = exchange.create_market_sell_order(contract_symbol, filled_amount, params=sell_params)
+            
+            logger.info(f"平多订单执行结果: {sell_order}")
+            
+            # 7. 验证交易结果
+            if buy_order and sell_order:
+                logger.info(f"{exchange_id} 合约交易测试成功！")
+                return True
+            else:
+                logger.error(f"{exchange_id} 合约交易测试失败！")
+                return False
     
     except Exception as e:
         logger.error(f"测试 {exchange_id} 合约交易失败: {e}")
