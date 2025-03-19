@@ -299,194 +299,120 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
         
         # 为 Bitget 特别处理
         if exchange_id == "bitget":
-            logger.info(f"Bitget合约交易 - 使用V2 API调用")
+            logger.info(f"Bitget合约交易 - 使用标准CCXT接口")
             
-            # 获取交易对名称 (对于Bitget需要特殊格式)
-            symbol_name = contract_symbol.split(':')[0]  # 获取DOGE/USDT部分
-            symbol_name = symbol_name.replace('/', '')   # 转换为DOGEUSDT格式
-            logger.info(f"处理后的交易对名称: {symbol_name}")
-            
-            # 尝试使用CCXT内置方法
             try:
                 # 确保使用合约API
                 exchange.options['defaultType'] = 'swap'
                 
-                # 1. 尝试查找Bitget V2 API方法
-                v2_api_method = None
-                for method_name in dir(exchange):
-                    if 'privateMixPostV2MixOrderPlace' in method_name:
-                        v2_api_method = method_name
+                # 确认交易对格式正确（合约交易对应该有后缀）
+                # 如果合约交易对没有:USDT后缀，添加它
+                if ':USDT' not in contract_symbol:
+                    contract_symbol = f"{contract_symbol}:USDT"
+                logger.info(f"最终合约交易对: {contract_symbol}")
+                
+                # 检查账户余额
+                balance = exchange.fetch_balance()
+                logger.info(f"USDT余额: {balance.get('USDT', {}).get('free', 'unknown')}")
+                
+                # 1. 开仓 - 使用标准CCXT接口下单
+                # 执行市价买入（开多）操作
+                side = 'buy'  # 买入开多
+                type = 'market'  # 市价单
+                
+                logger.info(f"创建{type}订单，{side} {quantity}个{contract_symbol}合约")
+                buy_order = exchange.create_order(
+                    symbol=contract_symbol,
+                    type=type,
+                    side=side,
+                    amount=int(quantity)  # Bitget合约要求整数
+                )
+                logger.info(f"开仓订单创建结果: {buy_order}")
+                
+                # 获取订单ID
+                order_id = buy_order.get('id')
+                logger.info(f"开仓订单ID: {order_id}")
+                
+                # 等待订单完成
+                if order_id:
+                    time.sleep(3)  # 给Bitget API一些处理时间
+                    
+                    # 查询订单状态 
+                    order_status = exchange.fetch_order(order_id, contract_symbol)
+                    logger.info(f"开仓订单状态: {order_status}")
+                
+                # 查询当前持仓
+                positions = exchange.fetch_positions([contract_symbol])
+                logger.info(f"当前持仓: {positions}")
+                
+                # 找到与我们交易合约相符的多头持仓
+                long_position = None
+                for pos in positions:
+                    if pos['symbol'] == contract_symbol and pos['side'] == 'long' and float(pos.get('contracts', 0)) > 0:
+                        long_position = pos
                         break
-                        
-                logger.info(f"找到API方法: {v2_api_method or '未找到V2方法'}")
                 
-                if v2_api_method:
-                    # 使用CCXT内置方法
-                    api_func = getattr(exchange, v2_api_method)
+                if long_position:
+                    logger.info(f"找到多头持仓: {long_position}")
                     
-                    # 开仓参数
-                    open_params = {
-                        'symbol': symbol_name,
-                        'productType': 'USDT-FUTURES',
-                        'marginMode': margin_mode,
-                        'marginCoin': 'USDT',
-                        'size': str(int(quantity)),
-                        'side': 'buy',
-                        'tradeSide': 'open',
-                        'orderType': 'market'
-                    }
+                    # 获取持仓数量
+                    position_qty = float(long_position.get('contracts', quantity))
+                    logger.info(f"持仓数量: {position_qty}")
                     
-                    logger.info(f"使用内置方法开仓，参数: {open_params}")
-                    open_response = api_func(open_params)
-                    logger.info(f"开仓响应: {open_response}")
+                    # 2. 平仓 - 卖出平多
+                    side = 'sell'  # 卖出平多
+                    close_qty = position_qty  # 平掉全部持仓
                     
-                    # 等待持仓建立
-                    time.sleep(3)
+                    logger.info(f"创建{type}订单，{side} {close_qty}个{contract_symbol}合约平仓")
+                    sell_order = exchange.create_order(
+                        symbol=contract_symbol,
+                        type=type,
+                        side=side,
+                        amount=int(close_qty),  # Bitget合约要求整数
+                        params={'reduceOnly': True}  # 确保是平仓操作
+                    )
+                    logger.info(f"平仓订单创建结果: {sell_order}")
                     
-                    # 平仓参数
-                    close_params = {
-                        'symbol': symbol_name,
-                        'productType': 'USDT-FUTURES',
-                        'marginMode': margin_mode,
-                        'marginCoin': 'USDT',
-                        'size': str(int(quantity)),
-                        'side': 'sell',
-                        'tradeSide': 'close',
-                        'orderType': 'market'
-                    }
+                    # 获取平仓订单ID
+                    close_order_id = sell_order.get('id')
+                    logger.info(f"平仓订单ID: {close_order_id}")
                     
-                    logger.info(f"使用内置方法平仓，参数: {close_params}")
-                    close_response = api_func(close_params)
-                    logger.info(f"平仓响应: {close_response}")
-                    
-                    logger.info(f"{exchange_id} 合约交易测试成功！")
-                    return True
-                else:
-                    # 使用通用方法，但需要正确构建签名
-                    # 开仓 - 使用 fetch2 方法代替 request 构建正确的请求和签名
-                    logger.info("使用fetch2方法构建请求")
-                    
-                    # 使用CCXT内部方法构建请求
-                    path = 'v2/mix/order/place-order'
-                    api = 'private'
-                    method = 'POST'
-                    
-                    # 开仓参数
-                    open_params = {
-                        'symbol': symbol_name,
-                        'productType': 'USDT-FUTURES',
-                        'marginMode': margin_mode,
-                        'marginCoin': 'USDT',
-                        'size': str(int(quantity)),
-                        'side': 'buy',
-                        'tradeSide': 'open',
-                        'orderType': 'market',
-                        'clientOid': f'test_open_{int(time.time() * 1000)}'
-                    }
-                    
-                    logger.info(f"开仓参数: {open_params}")
-                    
-                    # 使用fetch2方法构建和发送请求
-                    open_response = exchange.fetch2(path, api, method, open_params)
-                    logger.info(f"开仓响应: {open_response}")
-                    
-                    # 等待持仓建立
-                    time.sleep(3)
-                    
-                    # 平仓参数
-                    close_params = {
-                        'symbol': symbol_name,
-                        'productType': 'USDT-FUTURES',
-                        'marginMode': margin_mode,
-                        'marginCoin': 'USDT',
-                        'size': str(int(quantity)),
-                        'side': 'sell',
-                        'tradeSide': 'close',
-                        'orderType': 'market',
-                        'clientOid': f'test_close_{int(time.time() * 1000)}'
-                    }
-                    
-                    logger.info(f"平仓参数: {close_params}")
-                    
-                    # 再次使用fetch2方法
-                    close_response = exchange.fetch2(path, api, method, close_params)
-                    logger.info(f"平仓响应: {close_response}")
-                    
-                    logger.info(f"{exchange_id} 合约交易测试成功！")
-                    return True
-                    
-            except Exception as e:
-                logger.error(f"V2 API调用失败: {e}")
-                logger.error(traceback.format_exc())
-                
-                # 尝试使用标准接口和交易类型
-                logger.info("尝试使用标准CCXT接口...")
-                try:
-                    # 确保使用合约API
-                    exchange.options['defaultType'] = 'swap'
-                    
-                    # 使用标准CCXT方法通过参数设置开仓/平仓
-                    open_params = {
-                        'positionSide': 'long',
-                        'marginMode': margin_mode,
-                        'marginCoin': 'USDT'
-                    }
-                    
-                    logger.info(f"使用标准接口开仓，参数: {open_params}")
-                    buy_order = exchange.create_market_buy_order(contract_symbol, quantity, params=open_params)
-                    logger.info(f"开仓结果: {buy_order}")
-                    
-                    # 等待持仓建立
-                    time.sleep(3)
-                    
-                    # 平仓
-                    close_params = {
-                        'positionSide': 'long',
-                        'reduceOnly': True,
-                        'marginMode': margin_mode,
-                        'marginCoin': 'USDT'
-                    }
-                    
-                    logger.info(f"使用标准接口平仓，参数: {close_params}")
-                    sell_order = exchange.create_market_sell_order(contract_symbol, quantity, params=close_params)
-                    logger.info(f"平仓结果: {sell_order}")
-                    
-                    logger.info(f"{exchange_id} 标准接口合约交易测试完成！")
-                    return True
-                except Exception as e2:
-                    logger.error(f"标准接口也失败: {e2}")
-                    logger.error(traceback.format_exc())
-                    
-                    # 最后一种尝试，使用单向持仓模式
-                    logger.info("尝试最后方法：单向持仓模式...")
-                    try:
-                        # 使用单向持仓模式（简化参数）
-                        basic_open_params = {
-                            'marginMode': margin_mode,
-                        }
+                    # 等待平仓订单完成
+                    if close_order_id:
+                        time.sleep(2)
                         
-                        logger.info(f"简化参数开仓: {basic_open_params}")
-                        buy_order = exchange.create_market_buy_order(contract_symbol, quantity, params=basic_open_params)
-                        logger.info(f"开仓结果: {buy_order}")
-                        
-                        # 等待持仓建立
-                        time.sleep(3)
-                        
-                        # 简化平仓
-                        basic_close_params = {
-                            'marginMode': margin_mode,
-                        }
-                        
-                        logger.info(f"简化参数平仓: {basic_close_params}")
-                        sell_order = exchange.create_market_sell_order(contract_symbol, quantity, params=basic_close_params)
-                        logger.info(f"平仓结果: {sell_order}")
-                        
-                        logger.info(f"{exchange_id} 简化参数合约交易测试完成！")
+                        # 查询平仓订单状态
+                        close_status = exchange.fetch_order(close_order_id, contract_symbol)
+                        logger.info(f"平仓订单状态: {close_status}")
+                    
+                    # 再次查询持仓，确认已平仓
+                    final_positions = exchange.fetch_positions([contract_symbol])
+                    long_pos_closed = True
+                    
+                    for pos in final_positions:
+                        if pos['symbol'] == contract_symbol and pos['side'] == 'long' and float(pos.get('contracts', 0)) > 0:
+                            long_pos_closed = False
+                            logger.warning(f"持仓未完全平掉: {pos}")
+                            break
+                    
+                    if long_pos_closed:
+                        logger.info("多头持仓已完全平掉")
+                    
+                    # 判断测试是否成功
+                    if buy_order and sell_order:
+                        logger.info(f"{exchange_id} 合约交易测试成功！")
                         return True
-                    except Exception as e3:
-                        logger.error(f"所有方法都失败: {e3}")
-                        logger.error(traceback.format_exc())
+                    else:
+                        logger.error(f"{exchange_id} 合约交易测试失败！")
                         return False
+                else:
+                    logger.error("未能建立多头持仓")
+                    return False
+            
+            except Exception as e:
+                logger.error(f"Bitget 合约交易测试失败: {e}")
+                logger.error(traceback.format_exc())
+                return False
         else:
             # 其他交易所的代码
             # 4. 执行开多(市价买入)操作
