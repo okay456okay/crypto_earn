@@ -128,12 +128,54 @@ def test_spot_trading(exchange, exchange_id, symbol, amount):
             return False
         
         logger.info(f"买入订单执行结果: {buy_order}")
-        time.sleep(2)  # 等待订单完成
+        
+        # 对于Bitget，需要额外获取订单详情来获取实际成交量
+        if exchange_id == "bitget" and buy_order.get('id'):
+            logger.info(f"Bitget交易所：正在获取订单 {buy_order['id']} 的详细信息...")
+            time.sleep(3)  # Bitget可能需要更多时间处理订单
+            
+            try:
+                # 获取订单详情
+                order_detail = exchange.fetch_order(buy_order['id'], symbol)
+                logger.info(f"订单详情: {order_detail}")
+                
+                # 更新买入订单信息
+                buy_order = order_detail
+            except Exception as e:
+                logger.warning(f"获取Bitget订单详情失败: {e}，将尝试使用预估数量继续测试")
+        else:
+            time.sleep(2)  # 其他交易所等待订单完成
         
         # 4. 获取实际成交数量
-        filled_amount = float(buy_order.get('filled', 0))
+        filled_amount = 0
+        
+        # 尝试从订单信息中获取成交数量
+        if 'filled' in buy_order and buy_order['filled'] is not None:
+            filled_amount = float(buy_order['filled'])
+        elif 'amount' in buy_order and buy_order['amount'] is not None:
+            filled_amount = float(buy_order['amount'])
+        elif 'info' in buy_order and 'filled' in buy_order['info'] and buy_order['info']['filled'] is not None:
+            filled_amount = float(buy_order['info']['filled'])
+        
+        # 如果仍然无法获取实际成交数量，使用估算值
         if filled_amount <= 0:
-            filled_amount = float(buy_order.get('amount', quantity))
+            # 使用估算值（按USDT金额/当前价格）
+            logger.warning(f"无法获取实际成交数量，将使用估算值")
+            filled_amount = quantity
+            
+            # 对于Bitget，尝试通过查询余额来确定实际购买数量
+            if exchange_id == "bitget":
+                try:
+                    # 查询当前余额
+                    balance = exchange.fetch_balance()
+                    if base_currency in balance:
+                        current_balance = float(balance[base_currency]['free'])
+                        logger.info(f"当前 {base_currency} 余额: {current_balance}")
+                        
+                        # 使用余额作为实际购买数量（简化处理，实际情况可能更复杂）
+                        filled_amount = current_balance
+                except Exception as e:
+                    logger.warning(f"获取Bitget余额失败: {e}")
         
         logger.info(f"实际买入数量: {filled_amount} {base_currency}")
         
@@ -147,8 +189,21 @@ def test_spot_trading(exchange, exchange_id, symbol, amount):
                 fee_amount = fee_cost
                 logger.info(f"扣除基础货币手续费: {fee_amount} {base_currency}")
         
+        # 对于Bitget，估算手续费（如果无法从订单中获取）
+        if exchange_id == "bitget" and fee_amount == 0:
+            # 假设手续费率为0.1%（实际应根据用户等级和交易所规则调整）
+            estimated_fee = filled_amount * 0.001
+            logger.info(f"估算 Bitget 手续费: {estimated_fee} {base_currency}")
+            fee_amount = estimated_fee
+        
         # 计算实际可卖出数量（减去手续费后）
         sell_amount = filled_amount - fee_amount
+        
+        # 确保卖出数量为正值
+        if sell_amount <= 0:
+            logger.error(f"计算的卖出数量非正值: {sell_amount}，终止测试")
+            return False
+            
         logger.info(f"实际可卖出数量: {sell_amount} {base_currency} (已扣除手续费)")
         
         # 5. 执行市价卖出
