@@ -15,8 +15,7 @@ import xml.etree.cElementTree as ET
 import socket
 from Crypto.Cipher import AES
 
-import ierror
-
+from wework_position_app import ierror
 
 """
 关于Crypto.Cipher模块，ImportError: No module named 'Crypto'解决方案

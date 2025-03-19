@@ -6,6 +6,9 @@ import numpy as np
 import sys
 import os
 import argparse  # 添加命令行参数解析支持
+import requests  # 添加requests库引用
+import json
+import traceback
 
 
 # 获取当前脚本的目录
@@ -27,9 +30,10 @@ from tools.logger import logger
 # load_dotenv()
 
 # 交易配置
-SYMBOL = "PROS/USDT"
-QUANTITY = 100
-THRESHOLD = 0.1  # 价格差异阈值
+SYMBOL = "SAFE/USDT"
+QUANTITY = 500
+BY_AMOUNT = True  # 新增: True表示按金额交易，False表示按数量交易
+THRESHOLD = -0.1  # 价格差异阈值
 RETRY_DELAY = 1  # 重试延迟(秒)
 LEVERAGE = 10  # 杠杆倍数
 MARGIN_MODE = "cross"  # 全仓模式
@@ -58,58 +62,70 @@ FUTURE_EXCHANGE = "bitget"  # 合约交易所: gateio, bitget, bybit, binance, o
 #   4. 这种模式是对冲策略的平仓操作，实现利润
 TRADE_TYPE = "spot_buy_future_short"  # 交易类型: spot_buy_future_short, spot_sell_future_cover
 
+# 添加企业微信机器人配置
+WEBHOOK_URL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=6b190b76-009e-464e-9f5b-413555b453e8"
+ENABLE_NOTIFICATION = True  # 是否启用通知
+
 
 # 命令行参数解析
 def parse_arguments():
     parser = argparse.ArgumentParser(description='对冲套利交易脚本')
     
     # 交易对参数
-    parser.add_argument('--symbol', type=str, default="PROS/USDT",
+    parser.add_argument('--symbol', type=str, default=SYMBOL,
                         help='交易对，例如 BTC/USDT')
     
-    # 交易数量参数
-    parser.add_argument('--quantity', type=float, default=100,
-                        help='交易数量')
+    # 交易数量或金额参数
+    parser.add_argument('--quantity', type=float, default=QUANTITY,
+                        help='交易数量或金额(取决于by-amount参数)')
+    parser.add_argument('--by-amount', action='store_true', default=BY_AMOUNT,
+                        help='按金额交易(True)或按数量交易(False)')
     
     # 交易所参数
-    parser.add_argument('--spot-exchange', type=str, default="gateio",
+    parser.add_argument('--spot-exchange', type=str, default=SPOT_EXCHANGE,
                         choices=["gateio", "bitget", "binance", "okx", "bybit"],
                         help='现货交易所')
-    parser.add_argument('--future-exchange', type=str, default="bitget",
+    parser.add_argument('--future-exchange', type=str, default=FUTURE_EXCHANGE,
                         choices=["gateio", "bitget", "binance", "okx", "bybit"],
                         help='合约交易所')
     
     # 交易类型参数
-    parser.add_argument('--trade-type', type=str, default="spot_buy_future_short",
+    parser.add_argument('--trade-type', type=str, default=TRADE_TYPE,
                         choices=["spot_buy_future_short", "spot_sell_future_cover"],
                         help='交易类型: 买入现货做空合约，或卖出现货平仓合约')
     
     # 套利阈值参数
-    parser.add_argument('--threshold', type=float, default=0.01,
+    parser.add_argument('--threshold', type=float, default=THRESHOLD,
                         help='价格差异阈值(百分比)，超过此值才执行套利')
     
     # 杠杆设置
-    parser.add_argument('--leverage', type=int, default=10,
+    parser.add_argument('--leverage', type=int, default=LEVERAGE,
                         help='合约杠杆倍数')
-    parser.add_argument('--margin-mode', type=str, default="cross",
+    parser.add_argument('--margin-mode', type=str, default=MARGIN_MODE,
                         choices=["cross", "isolated"],
                         help='保证金模式: cross(全仓)或isolated(逐仓)')
     
     # 拆分订单设置
-    parser.add_argument('--split-orders', action='store_true', default=True,
+    parser.add_argument('--split-orders', action='store_true', default=SPLIT_ORDERS,
                         help='是否拆分订单')
-    parser.add_argument('--split-by-value', action='store_true', default=True,
+    parser.add_argument('--split-by-value', action='store_true', default=SPLIT_BY_VALUE,
                         help='按金额拆分(True)或按数量拆分(False)')
-    parser.add_argument('--split-size', type=float, default=100,
+    parser.add_argument('--split-size', type=float, default=SPLIT_SIZE,
                         help='拆分大小(金额或数量)')
-    parser.add_argument('--split-delay', type=float, default=0.5,
+    parser.add_argument('--split-delay', type=float, default=SPLIT_DELAY,
                         help='拆分订单之间的延迟(秒)')
     
     # 其他设置
-    parser.add_argument('--retry-delay', type=float, default=1,
+    parser.add_argument('--retry-delay', type=float, default=RETRY_DELAY,
                         help='重试延迟(秒)')
     parser.add_argument('--log-file', type=str, default="",
                         help='日志文件路径，不指定则使用默认日志')
+    
+    # 通知设置
+    parser.add_argument('--enable-notification', action='store_true', default=ENABLE_NOTIFICATION,
+                        help='是否启用企业微信通知')
+    parser.add_argument('--webhook-url', type=str, default=WEBHOOK_URL,
+                        help='企业微信机器人Webhook URL')
     
     # 使用try-except捕获参数解析错误
     try:
@@ -369,7 +385,7 @@ def calculate_price_difference(spot_price, future_price, args):
     return difference
 
 
-# 检查余额是否足够
+# 检查余额是否足够 - 添加对GateIO的特殊处理
 def check_balances(exchanges, args):
     """
     检查交易所账户余额是否足够执行交易
@@ -407,11 +423,42 @@ def check_balances(exchanges, args):
                 return False, message
             
             # 检查合约账户保证金是否足够
-            future_balances = future_exchange.fetch_balance()
-            
-            # 不同交易所可能使用不同的保证金货币，一般是USDT
+            future_margin_balance = 0
             margin_currency = quote_currency
-            future_margin_balance = future_balances.get(margin_currency, {}).get('free', 0)
+            
+            # 特别处理Bitget合约账户余额获取 - 只使用方法1
+            if args.future_exchange == "bitget":
+                # 使用type=swap参数获取合约账户余额
+                contract_balance = future_exchange.fetch_balance({'type': 'swap'})
+                
+                # 获取free值
+                if margin_currency in contract_balance and 'free' in contract_balance[margin_currency]:
+                    future_margin_balance = contract_balance[margin_currency]['free']
+                    logger.info(f"Bitget合约账户{margin_currency}余额: free={future_margin_balance}")
+                else:
+                    logger.error(f"无法从Bitget合约账户获取{margin_currency}的free值")
+                    future_margin_balance = 0
+            
+            # 特别处理GateIO合约账户余额获取
+            elif args.future_exchange == "gateio":
+                try:
+                    # 使用结算货币参数获取合约账户余额
+                    contract_balance = future_exchange.fetch_balance({'settle': margin_currency})
+                    
+                    # 检查是否获取到合约账户信息
+                    if 'info' in contract_balance and isinstance(contract_balance['info'], dict) and 'available' in contract_balance['info']:
+                        future_margin_balance = float(contract_balance['info'].get('available', 0))
+                        logger.info(f"GateIO合约账户{margin_currency}余额: available={future_margin_balance}")
+                    else:
+                        logger.error(f"无法从GateIO合约账户获取{margin_currency}的可用余额")
+                        future_margin_balance = 0
+                except Exception as e:
+                    logger.error(f"获取GateIO合约账户余额失败: {e}")
+                    future_margin_balance = 0
+            else:
+                # 其他交易所使用标准方法
+                future_balances = future_exchange.fetch_balance()
+                future_margin_balance = future_balances.get(margin_currency, {}).get('free', 0)
             
             # 计算开空所需的保证金 (考虑杠杆)
             required_margin = (required_quote_amount / args.leverage) * 1.05  # 增加5%的安全边际
@@ -708,7 +755,23 @@ def execute_trades(exchanges, symbol, spot_price, future_price):
         spot_exchange = exchanges[SPOT_EXCHANGE]
         future_exchange = exchanges[FUTURE_EXCHANGE]
         contract_symbol = get_contract_symbol(FUTURE_EXCHANGE, symbol)
-        contract_quantity = QUANTITY / LEVERAGE  # 考虑杠杆的合约数量
+        
+        # 如果是按金额交易，需要计算数量
+        if BY_AMOUNT:
+            # 获取现货市场价格来估算交易数量
+            try:
+                ticker = spot_exchange.fetch_ticker(symbol)
+                current_price = ticker['last']  # 最新成交价
+                estimated_quantity = QUANTITY / current_price
+                logger.info(f"按金额交易: {QUANTITY} USDT, 预估数量: {estimated_quantity:.6f} {base_currency}")
+                actual_quantity = estimated_quantity  # 初始设置为预估数量
+            except Exception as e:
+                logger.error(f"获取市场价格失败，无法计算交易数量: {e}")
+                return None, None
+        else:
+            actual_quantity = QUANTITY  # 按数量交易直接使用指定数量
+            
+        contract_quantity = actual_quantity / LEVERAGE  # 考虑杠杆的合约数量
         
         # 每次交易前都检查余额并详细记录
         spot_balances = spot_exchange.fetch_balance()
@@ -738,24 +801,36 @@ def execute_trades(exchanges, symbol, spot_price, future_price):
         # 正式检查交易所需的余额是否足够
         args = argparse.Namespace(
             symbol=symbol, 
-            quantity=QUANTITY, 
+            quantity=QUANTITY,
+            by_amount=BY_AMOUNT,  # 添加按金额交易标志
             spot_exchange=SPOT_EXCHANGE, 
             future_exchange=FUTURE_EXCHANGE,
             trade_type=TRADE_TYPE,
-            leverage=LEVERAGE
+            leverage=LEVERAGE,
+            threshold=THRESHOLD,
+            split_orders=SPLIT_ORDERS,
+            split_by_value=SPLIT_BY_VALUE,
+            split_size=SPLIT_SIZE,
+            split_delay=SPLIT_DELAY
         )
         balances_ok, message = check_balances(exchanges, args)
         if not balances_ok:
             logger.error(f"余额检查失败，无法执行交易: {message}")
+            # 添加失败通知
+            send_wechat_notification(f"❌ 套利交易余额检查失败\n交易对: {symbol}\n原因: {message}", is_success=False)
             return None, None
         else:
             logger.info(f"余额检查通过: {message}")
         
         theoretical_profit = 0
         
-        # 进行估计值计算，无论按数量还是金额拆分都需要
-        spot_value = QUANTITY * spot_price
-        future_value = contract_quantity * future_price
+        # 进行估计值计算
+        if BY_AMOUNT:
+            spot_value = QUANTITY  # 按金额交易直接使用指定金额
+            future_value = QUANTITY / LEVERAGE  # 合约按比例减少
+        else:
+            spot_value = QUANTITY * spot_price
+            future_value = contract_quantity * future_price
         
         if TRADE_TYPE == "spot_buy_future_short":
             # 判断是否需要拆分，需要考虑金额或数量
@@ -774,7 +849,7 @@ def execute_trades(exchanges, symbol, spot_price, future_price):
             if need_spot_split:
                 # 每个批次交易前都重新检查余额
                 spot_orders, spot_cost, spot_avg_price, spot_completed = execute_split_buy_orders(
-                    spot_exchange, future_exchange, symbol, contract_symbol, QUANTITY, spot_price, future_price)
+                    spot_exchange, future_exchange, symbol, contract_symbol, QUANTITY, spot_price, future_price, args)
                 spot_order = {"orders": spot_orders, "totalCost": spot_cost, "avgPrice": spot_avg_price, "completed": spot_completed}
                 logger.info(f"{SPOT_EXCHANGE}拆分买入订单执行情况: 完成状态={spot_completed}, 平均成交价={spot_avg_price:.4f}")
                 
@@ -785,30 +860,84 @@ def execute_trades(exchanges, symbol, spot_price, future_price):
                     # 重新计算对应的合约数量
                     contract_quantity = actual_quantity / LEVERAGE
                     logger.info(f"由于现货交易未完成，调整合约交易数量为: {contract_quantity}")
+                
+                # 现货交易结果通知
+                if spot_completed:
+                    send_wechat_notification(f"✅ {SPOT_EXCHANGE}拆分买入\n交易对: {symbol}\n总成交: {sum([float(order.get('filled', 0)) for order in spot_orders])}\n总成本: {spot_cost:.4f} USDT\n平均价格: {spot_avg_price:.6f}")
+                else:
+                    send_wechat_notification(f"⚠️ {SPOT_EXCHANGE}拆分买入部分完成\n交易对: {symbol}\n总成交: {sum([float(order.get('filled', 0)) for order in spot_orders])}\n总成本: {spot_cost:.4f} USDT")
+                
             else:
                 # 如果不需要拆分，则直接执行单个订单
-                spot_order = spot_exchange.create_market_buy_order(
-                    symbol,
-                    QUANTITY
-                )
+                params = {}
+                if SPOT_EXCHANGE == "binance":
+                    params = {"quoteOrderQty": QUANTITY}
+                elif SPOT_EXCHANGE == "okx":
+                    params = {"notional": QUANTITY}
+                elif SPOT_EXCHANGE == "gateio":
+                    params = {"cost": QUANTITY}
+                elif SPOT_EXCHANGE == "bitget":
+                    params = {"amount": QUANTITY}
+                elif SPOT_EXCHANGE == "bybit":
+                    params = {"orderAmount": QUANTITY}
+                
+                spot_order = spot_exchange.create_market_buy_order(symbol, None, params=params)
                 logger.info(f"{SPOT_EXCHANGE}买入订单执行成功: {spot_order}")
                 spot_avg_price = spot_price  # 使用预估价格
                 spot_completed = True
+                
+                # 现货单笔交易结果通知
+                filled = float(spot_order.get('filled', 0))
+                cost = float(spot_order.get('cost', 0))
+                send_wechat_notification(f"✅ {SPOT_EXCHANGE}买入\n交易对: {symbol}\n数量: {filled}\n成本: {cost:.4f} USDT\n价格: {cost/filled if filled > 0 else 0:.6f}")
 
             # 在合约交易所开空之前，再次检查余额
-            future_balances = future_exchange.fetch_balance()
-            future_quote_balance = future_balances.get(quote_currency, {}).get('free', 0)
-            logger.info(f"执行合约交易前再次检查合约账户余额: {quote_currency}={future_quote_balance}")
+            future_quote_balance = 0
+            logger.info(f"执行合约交易前再次检查合约账户余额...")
+
+            # 获取Bitget或GateIO合约账户余额 - 使用特殊方法
+            if FUTURE_EXCHANGE == "bitget":
+                # 使用type=swap参数获取合约账户余额
+                contract_balance = future_exchange.fetch_balance({'type': 'swap'})
+                
+                # 获取free值
+                if quote_currency in contract_balance and 'free' in contract_balance[quote_currency]:
+                    future_quote_balance = contract_balance[quote_currency]['free']
+                    logger.info(f"Bitget合约账户{quote_currency}余额: free={future_quote_balance}")
+                else:
+                    logger.error(f"无法从Bitget合约账户获取{quote_currency}的free值")
+                    future_quote_balance = 0
+            elif FUTURE_EXCHANGE == "gateio":
+                try:
+                    # 使用结算货币参数获取合约账户余额
+                    contract_balance = future_exchange.fetch_balance({'settle': quote_currency})
+                    
+                    # 检查是否获取到合约账户信息
+                    if 'info' in contract_balance and isinstance(contract_balance['info'], dict) and 'available' in contract_balance['info']:
+                        future_quote_balance = float(contract_balance['info'].get('available', 0))
+                        logger.info(f"GateIO合约账户{quote_currency}余额: available={future_quote_balance}")
+                    else:
+                        logger.error(f"无法从GateIO合约账户获取{quote_currency}的可用余额")
+                        future_quote_balance = 0
+                except Exception as e:
+                    logger.error(f"获取GateIO合约账户余额失败: {e}")
+                    future_quote_balance = 0
+            else:
+                future_balances = future_exchange.fetch_balance()
+                future_quote_balance = future_balances.get(quote_currency, {}).get('free', 0)
+                logger.info(f"执行合约交易前再次检查合约账户余额: {quote_currency}={future_quote_balance}")
             
             # 计算所需保证金，考虑5%的安全边际
             required_margin = (contract_quantity * future_price) * 1.05
             if future_quote_balance < required_margin:
                 logger.error(f"合约账户保证金不足，无法执行卖空操作。需要: {required_margin:.4f}, 可用: {future_quote_balance:.4f}")
+                send_wechat_notification(f"❌ {FUTURE_EXCHANGE}合约账户保证金不足\n需要: {required_margin:.4f}, 可用: {future_quote_balance:.4f}", is_success=False)
                 return spot_order, None
             
             # 在合约交易所卖空
             if contract_quantity <= 0:
                 logger.warning("由于现货交易未完成，没有合约需要交易")
+                send_wechat_notification(f"⚠️ {FUTURE_EXCHANGE}没有执行合约交易\n原因: 现货交易未完成", is_success=False)
                 future_order = None
                 future_avg_price = 0
                 future_completed = False
@@ -817,6 +946,12 @@ def execute_trades(exchanges, symbol, spot_price, future_price):
                     future_exchange, spot_exchange, contract_symbol, symbol, contract_quantity, spot_price, future_price)
                 future_order = {"orders": future_orders, "totalProceeds": future_proceeds, "avgPrice": future_avg_price, "completed": future_completed}
                 logger.info(f"{FUTURE_EXCHANGE}拆分卖出订单执行情况: 完成状态={future_completed}, 平均成交价={future_avg_price:.4f}")
+                
+                # 合约交易结果通知
+                if future_completed:
+                    send_wechat_notification(f"✅ {FUTURE_EXCHANGE}拆分卖出(做空)成功\n合约: {contract_symbol}\n总成交: {sum([float(order.get('filled', 0)) for order in future_orders])}\n总收入: {future_proceeds:.4f} USDT\n平均价格: {future_avg_price:.6f}")
+                else:
+                    send_wechat_notification(f"⚠️ {FUTURE_EXCHANGE}拆分卖出(做空)部分完成\n合约: {contract_symbol}\n总成交: {sum([float(order.get('filled', 0)) for order in future_orders])}\n总收入: {future_proceeds:.4f} USDT", is_success=False)
             else:
                 # 如果不需要拆分，则直接执行单个订单
                 future_order = future_exchange.create_market_sell_order(
@@ -826,8 +961,13 @@ def execute_trades(exchanges, symbol, spot_price, future_price):
                 logger.info(f"{FUTURE_EXCHANGE}卖出(做空)订单执行成功 ({LEVERAGE}倍杠杆): {future_order}")
                 future_avg_price = future_price  # 使用预估价格
                 future_completed = True
+                
+                # 合约单笔交易结果通知
+                filled = float(future_order.get('filled', 0))
+                proceeds = float(future_order.get('cost', 0))
+                send_wechat_notification(f"✅ {FUTURE_EXCHANGE}卖出(做空)成功\n合约: {contract_symbol}\n数量: {filled}\n收入: {proceeds:.4f} USDT\n价格: {proceeds/filled if filled > 0 else 0:.6f}")
 
-            # 计算实际利润 (使用实际成交价格)
+            # 计算实际利润并通知
             if spot_order and future_order:
                 actual_spot_price = spot_avg_price if isinstance(spot_order, dict) and "avgPrice" in spot_order else spot_price
                 actual_future_price = future_avg_price if isinstance(future_order, dict) and "avgPrice" in future_order else future_price
@@ -836,16 +976,27 @@ def execute_trades(exchanges, symbol, spot_price, future_price):
                 if isinstance(spot_order, dict) and "orders" in spot_order:
                     actual_quantity = sum([float(order.get('filled', 0)) for order in spot_order["orders"]])
                 else:
-                    actual_quantity = float(spot_order.get('filled', QUANTITY))
+                    actual_quantity = float(spot_order.get('filled', estimated_quantity))
                 
                 theoretical_profit = (actual_future_price - actual_spot_price) * actual_quantity
                 logger.info(f"理论利润: {theoretical_profit:.4f} USDT (基于实际交易数量: {actual_quantity})")
+                
+                # 发送套利完成总结通知
+                profit_message = f"🎉 套利交易完成\n" + \
+                                f"交易对: {symbol}\n" + \
+                                f"现货买入: {actual_quantity} @ {actual_spot_price:.6f}\n" + \
+                                f"合约卖空: {contract_quantity} @ {actual_future_price:.6f}\n" + \
+                                f"理论利润: {theoretical_profit:.4f} USDT\n" + \
+                                f"价差: {((actual_future_price - actual_spot_price) / actual_spot_price * 100):.4f}%"
+                
+                send_wechat_notification(profit_message)
             
             # 检查是否两边都完成
             if (isinstance(spot_order, dict) and spot_order.get("completed", False) == False) or \
                (isinstance(future_order, dict) and future_order.get("completed", False) == False):
                 logger.warning("交易未完全执行，可能需要手动处理剩余部分")
-            
+                send_wechat_notification("⚠️ 套利交易部分完成\n可能需要手动处理剩余部分", is_success=False)
+        
         elif TRADE_TYPE == "spot_sell_future_cover":
             # 再次详细检查持仓情况
             try:
@@ -863,9 +1014,11 @@ def execute_trades(exchanges, symbol, spot_price, future_price):
                 
                 if short_position is None:
                     logger.error(f"未找到{contract_symbol}的空头持仓，无法执行平仓操作")
+                    send_wechat_notification(f"❌ 合约检查失败\n未找到{contract_symbol}的空头持仓，无法执行平仓操作", is_success=False)
                     return None, None
             except Exception as e:
                 logger.error(f"获取合约持仓信息失败: {e}")
+                send_wechat_notification(f"❌ 合约检查失败\n获取合约持仓信息失败: {str(e)}", is_success=False)
                 return None, None
                 
             # 判断是否需要拆分，需要考虑金额或数量
@@ -913,11 +1066,13 @@ def execute_trades(exchanges, symbol, spot_price, future_price):
             required_balance = (contract_quantity * future_price) * 1.05
             if future_quote_balance < required_balance:
                 logger.error(f"合约账户余额不足，无法执行平仓操作。需要: {required_balance:.4f}, 可用: {future_quote_balance:.4f}")
+                send_wechat_notification(f"❌ {FUTURE_EXCHANGE}合约账户余额不足\n需要: {required_balance:.4f}, 可用: {future_quote_balance:.4f}", is_success=False)
                 return spot_order, None
             
             # 在合约交易所买入平仓
             if contract_quantity <= 0:
                 logger.warning("由于现货交易未完成，没有合约需要交易")
+                send_wechat_notification(f"⚠️ {FUTURE_EXCHANGE}没有执行合约交易\n原因: 现货交易未完成", is_success=False)
                 future_order = None
                 future_avg_price = 0
                 future_completed = False
@@ -936,7 +1091,7 @@ def execute_trades(exchanges, symbol, spot_price, future_price):
                 future_avg_price = future_price  # 使用预估价格
                 future_completed = True
 
-            # 计算实际利润 (使用实际成交价格)
+            # 计算实际利润并通知
             if spot_order and future_order:
                 actual_spot_price = spot_avg_price if isinstance(spot_order, dict) and "avgPrice" in spot_order else spot_price
                 actual_future_price = future_avg_price if isinstance(future_order, dict) and "avgPrice" in future_order else future_price
@@ -945,15 +1100,26 @@ def execute_trades(exchanges, symbol, spot_price, future_price):
                 if isinstance(spot_order, dict) and "orders" in spot_order:
                     actual_quantity = sum([float(order.get('filled', 0)) for order in spot_order["orders"]])
                 else:
-                    actual_quantity = float(spot_order.get('filled', QUANTITY))
+                    actual_quantity = float(spot_order.get('filled', estimated_quantity))
                 
                 theoretical_profit = (actual_spot_price - actual_future_price) * actual_quantity
                 logger.info(f"理论利润: {theoretical_profit:.4f} USDT (基于实际交易数量: {actual_quantity})")
+                
+                # 发送套利完成总结通知
+                profit_message = f"🎉 套利交易完成\n" + \
+                                f"交易对: {symbol}\n" + \
+                                f"现货买入: {actual_quantity} @ {actual_spot_price:.6f}\n" + \
+                                f"合约平仓: {contract_quantity} @ {actual_future_price:.6f}\n" + \
+                                f"理论利润: {theoretical_profit:.4f} USDT\n" + \
+                                f"价差: {((actual_future_price - actual_spot_price) / actual_spot_price * 100):.4f}%"
+                
+                send_wechat_notification(profit_message)
             
             # 检查是否两边都完成
             if (isinstance(spot_order, dict) and spot_order.get("completed", False) == False) or \
                (isinstance(future_order, dict) and future_order.get("completed", False) == False):
                 logger.warning("交易未完全执行，可能需要手动处理剩余部分")
+                send_wechat_notification("⚠️ 套利交易部分完成\n可能需要手动处理剩余部分", is_success=False)
         
         # 交易完成后，再次检查账户余额并记录
         try:
@@ -980,9 +1146,11 @@ def execute_trades(exchanges, symbol, spot_price, future_price):
         return spot_order, future_order
         
     except Exception as e:
-        logger.error(f"执行交易失败: {e}")
-        import traceback
+        error_msg = f"执行交易失败: {e}"
+        logger.error(error_msg)
         logger.error(traceback.format_exc())
+        # 添加交易失败通知
+        send_wechat_notification(f"❌ 套利交易执行异常\n交易对: {symbol}\n错误: {str(e)}", is_success=False)
         return None, None
 
 
@@ -1001,6 +1169,183 @@ def is_arbitrage_condition_met(spot_price, future_price):
     return False
 
 
+# 发送企业微信通知函数
+def send_wechat_notification(message, is_success=True):
+    """
+    发送企业微信机器人通知
+    
+    Args:
+        message: 通知消息内容
+        is_success: 是否成功消息，用于设置关键字颜色
+    """
+    if not ENABLE_NOTIFICATION:
+        return
+    
+    try:
+        # 设置关键字的颜色
+        success_color = "#91cc75"  # 成功状态的绿色
+        failure_color = "#ee6666"  # 失败状态的红色
+        highlight_color = "#f5a31a"  # 高亮信息的橙色(用于金额、价格等关键数据)
+        
+        # 根据消息内容和状态处理颜色标记
+        # 替换表情符号和状态标记
+        if "✅" in message:
+            message = message.replace("✅", f"<font color='{success_color}'>✅ 成功</font>")
+        elif "❌" in message:
+            message = message.replace("❌", f"<font color='{failure_color}'>❌ 失败</font>")
+        elif "⚠️" in message:
+            message = message.replace("⚠️", f"<font color='{highlight_color}'>⚠️ 警告</font>")
+        elif "🎉" in message:
+            message = message.replace("🎉", f"<font color='{success_color}'>🎉 完成</font>")
+        elif "🚀" in message:
+            message = message.replace("🚀", f"<font color='{highlight_color}'>🚀</font>")
+        elif "📈" in message:
+            message = message.replace("📈", f"<font color='{highlight_color}'>📈 机会</font>")
+        elif "🏁" in message:
+            message = message.replace("🏁", f"<font color='{success_color}'>🏁</font>")
+        
+        # 高亮处理关键数据和错误信息
+        if "理论利润:" in message:
+            # 提取利润值并高亮显示
+            parts = message.split("理论利润:")
+            if len(parts) > 1:
+                profit_part = parts[1].split("\n")[0].strip()
+                message = message.replace(f"理论利润:{profit_part}", 
+                                         f"理论利润:<font color='{highlight_color}'>{profit_part}</font>")
+        
+        if "价差:" in message:
+            # 提取价差值并高亮显示
+            parts = message.split("价差:")
+            if len(parts) > 1:
+                diff_part = parts[1].split("\n")[0].strip()
+                message = message.replace(f"价差:{diff_part}", 
+                                         f"价差:<font color='{highlight_color}'>{diff_part}</font>")
+        
+        if "错误:" in message:
+            # 提取错误信息并高亮显示
+            parts = message.split("错误:")
+            if len(parts) > 1:
+                error_part = parts[1].split("\n")[0].strip()
+                message = message.replace(f"错误:{error_part}", 
+                                         f"错误:<font color='{failure_color}'>{error_part}</font>")
+
+        # 构建请求数据
+        data = {
+            "msgtype": "markdown",
+            "markdown": {
+                "content": message
+            }
+        }
+        
+        # 发送请求
+        response = requests.post(
+            WEBHOOK_URL,
+            data=json.dumps(data),
+            headers={"Content-Type": "application/json"}
+        )
+        
+        # 检查响应
+        if response.status_code == 200:
+            result = response.json()
+            if result.get("errcode") == 0:
+                logger.info(f"企业微信通知发送成功")
+            else:
+                logger.error(f"企业微信通知发送失败: {result.get('errmsg')}")
+        else:
+            logger.error(f"企业微信通知发送失败，状态码: {response.status_code}")
+    
+    except Exception as e:
+        logger.error(f"发送企业微信通知失败: {e}")
+        logger.error(traceback.format_exc())
+
+
+# 更新启动时检查账户余额函数
+def check_accounts_on_startup(exchanges, args):
+    """
+    在程序启动时检查现货和合约账户余额，并打印详细日志
+    
+    Args:
+        exchanges: 交易所API对象字典
+        args: 命令行参数对象
+    """
+    try:
+        logger.info("========== 启动时账户余额检查 ==========")
+        
+        # 解析交易对，获取基础货币和报价货币
+        base_currency, quote_currency = args.symbol.split('/')
+        spot_exchange = exchanges[args.spot_exchange]
+        future_exchange = exchanges[args.future_exchange]
+        
+        # 检查现货账户余额
+        logger.info(f"正在获取{args.spot_exchange}现货账户余额...")
+        spot_balances = spot_exchange.fetch_balance()
+        spot_base_balance = spot_balances.get(base_currency, {}).get('free', 0)
+        spot_quote_balance = spot_balances.get(quote_currency, {}).get('free', 0)
+        logger.info(f"{args.spot_exchange}现货账户余额: {base_currency}={spot_base_balance}, {quote_currency}={spot_quote_balance}")
+        
+        # 检查合约账户余额
+        if args.future_exchange == "bitget":
+            # 只使用方法1获取Bitget合约余额
+            logger.info(f"正在获取{args.future_exchange}合约账户余额...")
+            contract_balance = future_exchange.fetch_balance({'type': 'swap'})
+            
+            if quote_currency in contract_balance:
+                contract_quote_free = contract_balance[quote_currency].get('free', 0)
+                contract_quote_used = contract_balance[quote_currency].get('used', 0)
+                contract_quote_total = contract_balance[quote_currency].get('total', 0)
+                logger.info(f"{args.future_exchange}合约账户余额: {quote_currency} free={contract_quote_free}, used={contract_quote_used}, total={contract_quote_total}")
+            else:
+                logger.warning(f"无法获取{quote_currency}余额")
+        
+        elif args.future_exchange == "gateio":
+            # 使用特殊方法获取GateIO合约余额
+            logger.info(f"正在获取{args.future_exchange}合约账户余额...")
+            try:
+                contract_balance = future_exchange.fetch_balance({'settle': quote_currency})
+                
+                # 检查是否获取到合约账户信息
+                if 'info' in contract_balance and isinstance(contract_balance['info'], dict):
+                    available = contract_balance['info'].get('available', 0)
+                    total = contract_balance['info'].get('total', 0)
+                    unrealised_pnl = contract_balance['info'].get('unrealised_pnl', 0)
+                    
+                    logger.info(f"{args.future_exchange}合约账户余额: {quote_currency} available={available}, total={total}, unrealised_pnl={unrealised_pnl}")
+                else:
+                    logger.warning(f"无法获取{args.future_exchange}合约账户详细信息")
+            except Exception as e:
+                logger.error(f"获取{args.future_exchange}合约账户余额失败: {e}")
+        
+        else:
+            # 其他交易所使用标准方法
+            logger.info(f"正在获取{args.future_exchange}合约账户余额...")
+            future_balances = future_exchange.fetch_balance()
+            future_quote_balance = future_balances.get(quote_currency, {}).get('free', 0)
+            logger.info(f"{args.future_exchange}合约账户余额: {quote_currency}={future_quote_balance}")
+        
+        # 检查合约账户持仓情况
+        try:
+            contract_symbol = get_contract_symbol(args.future_exchange, args.symbol)
+            logger.info(f"正在获取{args.future_exchange}合约持仓情况，合约交易对: {contract_symbol}...")
+            positions = future_exchange.fetch_positions([contract_symbol])
+            
+            if positions and len(positions) > 0:
+                logger.info(f"合约持仓信息: {positions}")
+                for position in positions:
+                    if position['symbol'] == contract_symbol:
+                        logger.info(f"合约{contract_symbol}持仓: 方向={position['side']}, "
+                                   f"数量={position['contracts']}, 名义价值={position['notional']}, "
+                                   f"杠杆={position['leverage']}")
+            else:
+                logger.info(f"合约{contract_symbol}无持仓")
+        except Exception as e:
+            logger.error(f"获取合约持仓信息失败: {e}")
+        
+        logger.info("========== 账户余额检查完成 ==========")
+    except Exception as e:
+        logger.error(f"启动时账户余额检查失败: {e}")
+        logger.error(traceback.format_exc())
+
+
 # 主函数
 def main():
     # 解析命令行参数
@@ -1015,10 +1360,12 @@ def main():
     # 更新全局变量（可选，也可以直接使用args对象）
     global SYMBOL, QUANTITY, THRESHOLD, RETRY_DELAY, LEVERAGE, MARGIN_MODE
     global SPLIT_ORDERS, SPLIT_BY_VALUE, SPLIT_SIZE, SPLIT_DELAY
-    global SPOT_EXCHANGE, FUTURE_EXCHANGE, TRADE_TYPE
+    global SPOT_EXCHANGE, FUTURE_EXCHANGE, TRADE_TYPE, BY_AMOUNT
+    global ENABLE_NOTIFICATION, WEBHOOK_URL  # 添加通知相关全局变量
     
     SYMBOL = args.symbol
     QUANTITY = args.quantity
+    BY_AMOUNT = args.by_amount
     THRESHOLD = args.threshold
     RETRY_DELAY = args.retry_delay
     LEVERAGE = args.leverage
@@ -1031,11 +1378,26 @@ def main():
     FUTURE_EXCHANGE = args.future_exchange
     TRADE_TYPE = args.trade_type
     
+    ENABLE_NOTIFICATION = args.enable_notification
+    WEBHOOK_URL = args.webhook_url
+    
     # 配置日志
     setup_logger(args)
     
+    start_message = f"🚀 开始套利交易程序\n类型: {TRADE_TYPE}\n交易所: {SPOT_EXCHANGE}/{FUTURE_EXCHANGE}\n"
+    if BY_AMOUNT:
+        start_message += f"交易对: {SYMBOL}\n金额: {QUANTITY} USDT\n价差阈值: {THRESHOLD}%"
+    else:
+        start_message += f"交易对: {SYMBOL}\n数量: {QUANTITY}\n价差阈值: {THRESHOLD}%"
+    
+    # 发送开始执行的通知
+    send_wechat_notification(start_message)
+    
     logger.info(f"开始套利交易程序 - {TRADE_TYPE} - {SPOT_EXCHANGE}/{FUTURE_EXCHANGE}")
-    logger.info(f"交易对: {SYMBOL}, 数量: {QUANTITY}, 价差阈值: {THRESHOLD}%")
+    if BY_AMOUNT:
+        logger.info(f"交易对: {SYMBOL}, 金额: {QUANTITY} USDT, 价差阈值: {THRESHOLD}%")
+    else:
+        logger.info(f"交易对: {SYMBOL}, 数量: {QUANTITY}, 价差阈值: {THRESHOLD}%")
     
     try:
         # 初始化交易所
@@ -1044,6 +1406,9 @@ def main():
         if SPOT_EXCHANGE not in exchanges or FUTURE_EXCHANGE not in exchanges:
             logger.error(f"交易所初始化失败: {SPOT_EXCHANGE}或{FUTURE_EXCHANGE}不存在")
             return
+            
+        # 启动时检查账户余额 (新增)
+        check_accounts_on_startup(exchanges, args)
 
         # 设置合约交易参数
         if not setup_contract_settings(exchanges[FUTURE_EXCHANGE], FUTURE_EXCHANGE, SYMBOL, args):
@@ -1079,6 +1444,13 @@ def main():
                 continue
 
             # 满足套利条件，执行交易
+            condition_message = f"📈 检测到套利机会\n" + \
+                                f"交易对: {SYMBOL}\n" + \
+                                f"价格差异: {price_difference:.6f}%\n" + \
+                                f"阈值: {THRESHOLD}%\n" + \
+                                f"准备执行交易"
+            send_wechat_notification(condition_message)
+            
             logger.info(f"价格差异 {price_difference:.6f}% 满足阈值 {THRESHOLD}%，执行交易")
 
             # 执行交易
@@ -1086,21 +1458,26 @@ def main():
 
             if spot_order and future_order:
                 logger.info("套利交易成功完成")
+                send_wechat_notification("🎯 套利交易全部完成")
                 break
             else:
                 logger.error("交易执行失败，等待重试...")
+                send_wechat_notification("❌ 交易执行失败，等待重试...", is_success=False)
                 time.sleep(RETRY_DELAY)
 
     except Exception as e:
-        logger.error(f"程序执行错误: {e}")
-        import traceback
+        error_msg = f"程序执行错误: {e}"
+        logger.error(error_msg)
         logger.error(traceback.format_exc())
+        # 发送错误通知
+        send_wechat_notification(f"❌ 程序执行错误\n{error_msg}", is_success=False)
         # 出错时也打印帮助信息
         print("\n程序执行过程中发生错误。请检查参数和配置是否正确。")
         parser.print_help()
 
     finally:
         logger.info("套利交易程序结束")
+        send_wechat_notification("🏁 套利交易程序结束")
 
 
 if __name__ == "__main__":
