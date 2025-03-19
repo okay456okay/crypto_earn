@@ -22,8 +22,8 @@ from config import (
     proxies, bitget_api_key, bitget_api_secret, bitget_api_passphrase,
     gateio_api_secret, gateio_api_key, binance_api_key, binance_api_secret,
     # 需要在config.py中添加以下密钥
-    # okx_api_key, okx_api_secret, okx_api_passphrase,
-    # bybit_api_key, bybit_api_secret
+    okx_api_key, okx_api_secret, okx_api_passphrase,
+    bybit_api_key, bybit_api_secret
 )
 from tools.logger import logger
 
@@ -553,6 +553,27 @@ def check_balances(exchanges, args):
                     logger.error(f"获取GateIO合约账户余额失败: {e}")
                     logger.error(traceback.format_exc())
                     future_margin_balance = 0
+                    
+            # 特别处理OKX合约账户余额获取
+            elif args.future_exchange == "okx":
+                try:
+                    # OKX需要特殊参数来获取SWAP合约账户余额
+                    params = {
+                        'instType': 'SWAP'  # 永续合约
+                    }
+                    contract_balance = future_exchange.fetch_balance(params)
+                    
+                    if margin_currency in contract_balance and 'free' in contract_balance[margin_currency]:
+                        future_margin_balance = contract_balance[margin_currency]['free']
+                        logger.info(f"OKX合约账户{margin_currency}余额: free={future_margin_balance}")
+                    else:
+                        logger.error(f"无法从OKX合约账户获取{margin_currency}的free值")
+                        future_margin_balance = 0
+                except Exception as e:
+                    logger.error(f"获取OKX合约账户余额失败: {e}")
+                    logger.error(traceback.format_exc())
+                    future_margin_balance = 0
+            
             else:
                 # 其他交易所使用标准方法
                 future_balances = future_exchange.fetch_balance()
@@ -588,9 +609,14 @@ def check_balances(exchanges, args):
             try:
                 # 获取合约账户当前持仓
                 contract_symbol = get_contract_symbol(args.future_exchange, args.symbol)
-                positions = future_exchange.fetch_positions([contract_symbol])
                 
-                # 查找相关合约的空头头寸
+                # OKX需要特殊处理持仓获取
+                if args.future_exchange == "okx":
+                    params = {'instType': 'SWAP'}  # 永续合约
+                    positions = future_exchange.fetch_positions([contract_symbol], params=params)
+                else:
+                    positions = future_exchange.fetch_positions([contract_symbol])
+                
                 short_position = None
                 for position in positions:
                     # 检查是否是对应的合约和空头方向
@@ -993,7 +1019,7 @@ def execute_trades(exchanges, symbol, spot_price, future_price):
             future_quote_balance = 0
             logger.info(f"执行合约交易前再次检查合约账户余额...")
 
-            # 获取Bitget或GateIO合约账户余额 - 使用特殊方法
+            # 获取各交易所合约账户余额 - 使用特殊方法
             if FUTURE_EXCHANGE == "bitget":
                 # 使用type=swap参数获取合约账户余额
                 contract_balance = future_exchange.fetch_balance({'type': 'swap'})
@@ -1009,6 +1035,22 @@ def execute_trades(exchanges, symbol, spot_price, future_price):
                 # 使用专用函数获取GateIO合约余额
                 future_margin_balance = get_gateio_futures_balance(future_exchange, quote_currency)
                 logger.info(f"{FUTURE_EXCHANGE}合约账户余额: {quote_currency}={future_margin_balance}")
+            elif FUTURE_EXCHANGE == "okx":
+                # OKX需要特殊参数来获取SWAP合约账户余额
+                try:
+                    params = {'instType': 'SWAP'}  # 永续合约
+                    contract_balance = future_exchange.fetch_balance(params)
+                    
+                    if quote_currency in contract_balance and 'free' in contract_balance[quote_currency]:
+                        future_quote_balance = contract_balance[quote_currency]['free']
+                        logger.info(f"OKX合约账户{quote_currency}余额: free={future_quote_balance}")
+                    else:
+                        logger.error(f"无法从OKX合约账户获取{quote_currency}的free值")
+                        future_quote_balance = 0
+                except Exception as e:
+                    logger.error(f"获取OKX合约账户余额失败: {e}")
+                    logger.error(traceback.format_exc())
+                    future_quote_balance = 0
             else:
                 future_balances = future_exchange.fetch_balance()
                 future_quote_balance = future_balances.get(quote_currency, {}).get('free', 0)
@@ -1021,24 +1063,36 @@ def execute_trades(exchanges, symbol, spot_price, future_price):
                 send_wechat_notification(f"❌ {FUTURE_EXCHANGE}合约账户保证金不足\n需要: {required_margin:.4f}, 可用: {future_quote_balance:.4f}", is_success=False)
                 return spot_order, None
             
-            # 在合约交易所卖空
-            if contract_quantity <= 0:
-                logger.warning("由于现货交易未完成，没有合约需要交易")
-                send_wechat_notification(f"⚠️ {FUTURE_EXCHANGE}没有执行合约交易\n原因: 现货交易未完成", is_success=False)
-                future_order = None
-                future_avg_price = 0
-                future_completed = False
-            elif need_future_split and contract_quantity > SPLIT_SIZE / LEVERAGE:
-                future_orders, future_proceeds, future_avg_price, future_completed = execute_split_sell_orders(
-                    future_exchange, spot_exchange, contract_symbol, symbol, contract_quantity, spot_price, future_price)
-                future_order = {"orders": future_orders, "totalProceeds": future_proceeds, "avgPrice": future_avg_price, "completed": future_completed}
-                logger.info(f"{FUTURE_EXCHANGE}拆分卖出订单执行情况: 完成状态={future_completed}, 平均成交价={future_avg_price:.4f}")
+            # 在合约交易所卖空（处理 OKX 特殊情况）
+            if FUTURE_EXCHANGE == "okx" and contract_quantity > 0:
+                # OKX 需要添加额外参数
+                params = {
+                    'instType': 'SWAP',     # 永续合约
+                    'tdMode': MARGIN_MODE,  # 全仓或逐仓模式
+                }
                 
-                # 合约交易结果通知
-                if future_completed:
-                    send_wechat_notification(f"✅ {FUTURE_EXCHANGE}拆分卖出(做空)成功\n合约: {contract_symbol}\n总成交: {sum([float(order.get('filled', 0)) for order in future_orders])}\n总收入: {future_proceeds:.4f} USDT\n平均价格: {future_avg_price:.6f}")
+                # 根据是否拆分执行不同的下单逻辑
+                if need_future_split and contract_quantity > SPLIT_SIZE / LEVERAGE:
+                    future_orders, future_proceeds, future_avg_price, future_completed = execute_split_sell_orders(
+                        future_exchange, spot_exchange, contract_symbol, symbol, contract_quantity, spot_price, future_price, args)
+                    future_order = {"orders": future_orders, "totalProceeds": future_proceeds, "avgPrice": future_avg_price, "completed": future_completed}
+                    logger.info(f"{FUTURE_EXCHANGE}拆分卖出订单执行情况: 完成状态={future_completed}, 平均成交价={future_avg_price:.4f}")
+                    
+                    # 合约交易结果通知
+                    if future_completed:
+                        send_wechat_notification(f"✅ {FUTURE_EXCHANGE}拆分卖出(做空)成功\n合约: {contract_symbol}\n总成交: {sum([float(order.get('filled', 0)) for order in future_orders])}\n总收入: {future_proceeds:.4f} USDT\n平均价格: {future_avg_price:.6f}")
+                    else:
+                        send_wechat_notification(f"⚠️ {FUTURE_EXCHANGE}拆分卖出(做空)部分完成\n合约: {contract_symbol}\n总成交: {sum([float(order.get('filled', 0)) for order in future_orders])}\n总收入: {future_proceeds:.4f} USDT", is_success=False)
                 else:
-                    send_wechat_notification(f"⚠️ {FUTURE_EXCHANGE}拆分卖出(做空)部分完成\n合约: {contract_symbol}\n总成交: {sum([float(order.get('filled', 0)) for order in future_orders])}\n总收入: {future_proceeds:.4f} USDT", is_success=False)
+                    # 如果不需要拆分，则直接执行单个订单
+                    future_order = future_exchange.create_market_sell_order(
+                        contract_symbol,
+                        contract_quantity,
+                        params=params
+                    )
+                    logger.info(f"{FUTURE_EXCHANGE}卖出(做空)订单执行成功 ({LEVERAGE}倍杠杆): {future_order}")
+                    future_avg_price = future_price  # 使用预估价格
+                    future_completed = True
             else:
                 # 如果不需要拆分，则直接执行单个订单
                 future_order = future_exchange.create_market_sell_order(
@@ -1389,6 +1443,24 @@ def check_accounts_on_startup(exchanges, args):
             future_margin_balance = get_gateio_futures_balance(future_exchange, quote_currency)
             logger.info(f"{args.future_exchange}合约账户余额: {quote_currency}={future_margin_balance}")
         
+        elif args.future_exchange == "okx":
+            # OKX 需要特殊处理
+            logger.info(f"正在获取{args.future_exchange}合约账户余额...")
+            try:
+                params = {'instType': 'SWAP'}  # 永续合约
+                contract_balance = future_exchange.fetch_balance(params)
+                
+                if quote_currency in contract_balance:
+                    contract_quote_free = contract_balance[quote_currency].get('free', 0)
+                    contract_quote_used = contract_balance[quote_currency].get('used', 0)
+                    contract_quote_total = contract_balance[quote_currency].get('total', 0)
+                    logger.info(f"{args.future_exchange}合约账户余额: {quote_currency} free={contract_quote_free}, used={contract_quote_used}, total={contract_quote_total}")
+                else:
+                    logger.warning(f"无法获取{quote_currency}余额")
+            except Exception as e:
+                logger.error(f"获取OKX合约账户余额失败: {e}")
+                logger.error(traceback.format_exc())
+        
         else:
             # 其他交易所使用标准方法
             logger.info(f"正在获取{args.future_exchange}合约账户余额...")
@@ -1400,7 +1472,13 @@ def check_accounts_on_startup(exchanges, args):
         try:
             contract_symbol = get_contract_symbol(args.future_exchange, args.symbol)
             logger.info(f"正在获取{args.future_exchange}合约持仓情况，合约交易对: {contract_symbol}...")
-            positions = future_exchange.fetch_positions([contract_symbol])
+            
+            # OKX 需要特殊处理持仓获取
+            if args.future_exchange == "okx":
+                params = {'instType': 'SWAP'}  # 永续合约
+                positions = future_exchange.fetch_positions([contract_symbol], params=params)
+            else:
+                positions = future_exchange.fetch_positions([contract_symbol])
             
             if positions and len(positions) > 0:
                 logger.info(f"合约持仓信息: {positions}")

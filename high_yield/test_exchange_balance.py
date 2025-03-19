@@ -214,7 +214,21 @@ def test_positions(exchange_id, symbol, exchanges):
         
         # 尝试获取持仓信息
         try:
-            positions = exchange.fetch_positions([contract_symbol]) if contract_symbol else exchange.fetch_positions()
+            # ByBit 特殊处理：需要添加 category 参数
+            if exchange_id == "bybit":
+                # ByBit 的 API 需要 category 参数，对于 USDT 永续合约使用 'linear'
+                params = {
+                    'category': 'linear'  # 对于 USDT 永续合约
+                }
+                
+                # 如果是反向合约（如 BTC/USD），使用 'inverse'
+                if symbol.endswith('/USD'):
+                    params['category'] = 'inverse'
+                
+                logger.info(f"使用 ByBit 特定参数: {params}")
+                positions = exchange.fetch_positions([contract_symbol], params=params) if contract_symbol else exchange.fetch_positions(params=params)
+            else:
+                positions = exchange.fetch_positions([contract_symbol]) if contract_symbol else exchange.fetch_positions()
             
             if positions and len(positions) > 0:
                 logger.info(f"找到 {len(positions)} 个持仓:")
