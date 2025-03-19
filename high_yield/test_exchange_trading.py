@@ -273,6 +273,10 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
         elif exchange_id == "bybit":
             params = {'category': 'linear'}
             ticker = exchange.fetch_ticker(contract_symbol, params=params)
+        elif exchange_id == "bitget":
+            # Bitget合约需要设置合约类型
+            exchange.options['defaultType'] = 'swap'
+            ticker = exchange.fetch_ticker(contract_symbol)
         else:
             ticker = exchange.fetch_ticker(contract_symbol)
             
@@ -287,6 +291,12 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
         # 调整为合约要求的精度
         if exchange_id == "binance":
             # Binance USDT合约通常有精度要求
+            market = exchange.market(contract_symbol)
+            if 'precision' in market and 'amount' in market['precision']:
+                precision = market['precision']['amount']
+                quantity = round(quantity, precision) if isinstance(precision, int) else float(int(quantity))
+        elif exchange_id == "bitget":
+            # Bitget 合约也可能有精度要求
             market = exchange.market(contract_symbol)
             if 'precision' in market and 'amount' in market['precision']:
                 precision = market['precision']['amount']
@@ -325,7 +335,14 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
         elif exchange_id == "bybit":
             buy_params = {'category': 'linear', 'positionIdx': 0}
         elif exchange_id == "bitget":
-            buy_params = {'marginMode': margin_mode}
+            # Bitget 特殊参数
+            # 单向持仓模式下指定持仓方向
+            buy_params = {
+                'marginMode': margin_mode,  # 保证金模式（cross/isolated）
+                'holdSide': 'long',  # 持仓方向
+                'holdMode': 'single_hold'  # 单向持仓模式
+            }
+            logger.info(f"Bitget合约特殊处理: 使用单向持仓模式，持仓方向为long")
         
         logger.info(f"执行合约市价买入(开多)，参数: {buy_params}")
         buy_order = exchange.create_market_buy_order(contract_symbol, quantity, params=buy_params)
@@ -338,9 +355,20 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
         time.sleep(2)  # 等待订单完成
         
         # 5. 获取实际成交数量
-        filled_amount = float(buy_order.get('filled', 0))
+        filled_amount = 0
+        
+        # 尝试从订单信息中获取成交数量
+        if 'filled' in buy_order and buy_order['filled'] is not None:
+            filled_amount = float(buy_order['filled'])
+        elif 'amount' in buy_order and buy_order['amount'] is not None:
+            filled_amount = float(buy_order['amount'])
+        elif 'info' in buy_order and 'filled' in buy_order['info'] and buy_order['info']['filled'] is not None:
+            filled_amount = float(buy_order['info']['filled'])
+        
+        # 如果仍然无法获取，使用下单数量
         if filled_amount <= 0:
-            filled_amount = float(buy_order.get('amount', quantity))
+            filled_amount = quantity
+            logger.warning(f"无法获取实际成交数量，将使用原始下单数量: {filled_amount}")
         
         logger.info(f"实际开多数量: {filled_amount}")
         
@@ -352,6 +380,8 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
                 positions_params = {'category': 'linear'}
             elif exchange_id == "okx":
                 positions_params = {'instType': 'SWAP'}
+            elif exchange_id == "bitget":
+                positions_params = {}  # Bitget可能不需要特殊参数
                 
             positions = exchange.fetch_positions([contract_symbol], params=positions_params)
             logger.info(f"当前持仓: {positions}")
@@ -372,6 +402,9 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
         sell_params = buy_params.copy()
         if exchange_id == "bybit":
             sell_params['reduceOnly'] = True  # ByBit平仓需要设置reduceOnly
+        elif exchange_id == "bitget":
+            # Bitget平仓特殊参数
+            sell_params['reduceOnly'] = True  # 平仓标志
         
         # 对于Binance，确保平仓参数与开仓一致
         if exchange_id == "binance" and "positionSide" in sell_params:
