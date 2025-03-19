@@ -9,6 +9,8 @@ import argparse  # 添加命令行参数解析支持
 import requests  # 添加requests库引用
 import json
 import traceback
+import hashlib
+import hmac
 
 
 # 获取当前脚本的目录
@@ -439,21 +441,28 @@ def check_balances(exchanges, args):
                     logger.error(f"无法从Bitget合约账户获取{margin_currency}的free值")
                     future_margin_balance = 0
             
-            # 特别处理GateIO合约账户余额获取
+            # 特别处理GateIO合约账户余额获取 - 使用直接请求方法
             elif args.future_exchange == "gateio":
                 try:
-                    # 使用结算货币参数获取合约账户余额
-                    contract_balance = future_exchange.fetch_balance({'settle': margin_currency})
+                    # 直接使用底层HTTP请求访问官方API端点
+                    raw_response = future_exchange.request('GET', 'futures/usdt/accounts')
                     
-                    # 检查是否获取到合约账户信息
-                    if 'info' in contract_balance and isinstance(contract_balance['info'], dict) and 'available' in contract_balance['info']:
-                        future_margin_balance = float(contract_balance['info'].get('available', 0))
-                        logger.info(f"GateIO合约账户{margin_currency}余额: available={future_margin_balance}")
+                    # 解析响应找到对应的货币
+                    if isinstance(raw_response, list):
+                        for account in raw_response:
+                            if account.get('currency') == margin_currency:
+                                future_margin_balance = float(account.get('available', 0))
+                                logger.info(f"GateIO合约账户{margin_currency}余额: available={future_margin_balance}")
+                                break
+                        else:
+                            logger.error(f"在GateIO合约账户响应中未找到{margin_currency}货币")
+                            future_margin_balance = 0
                     else:
-                        logger.error(f"无法从GateIO合约账户获取{margin_currency}的可用余额")
+                        logger.error(f"GateIO合约账户响应格式不是列表: {raw_response}")
                         future_margin_balance = 0
                 except Exception as e:
                     logger.error(f"获取GateIO合约账户余额失败: {e}")
+                    logger.error(traceback.format_exc())
                     future_margin_balance = 0
             else:
                 # 其他交易所使用标准方法
@@ -1298,22 +1307,9 @@ def check_accounts_on_startup(exchanges, args):
                 logger.warning(f"无法获取{quote_currency}余额")
         
         elif args.future_exchange == "gateio":
-            # 使用特殊方法获取GateIO合约余额
-            logger.info(f"正在获取{args.future_exchange}合约账户余额...")
-            try:
-                contract_balance = future_exchange.fetch_balance({'settle': quote_currency})
-                
-                # 检查是否获取到合约账户信息
-                if 'info' in contract_balance and isinstance(contract_balance['info'], dict):
-                    available = contract_balance['info'].get('available', 0)
-                    total = contract_balance['info'].get('total', 0)
-                    unrealised_pnl = contract_balance['info'].get('unrealised_pnl', 0)
-                    
-                    logger.info(f"{args.future_exchange}合约账户余额: {quote_currency} available={available}, total={total}, unrealised_pnl={unrealised_pnl}")
-                else:
-                    logger.warning(f"无法获取{args.future_exchange}合约账户详细信息")
-            except Exception as e:
-                logger.error(f"获取{args.future_exchange}合约账户余额失败: {e}")
+            # 使用专用函数获取GateIO合约余额
+            future_margin_balance = get_gateio_futures_balance(future_exchange, quote_currency)
+            logger.info(f"{args.future_exchange}合约账户余额: {quote_currency}={future_margin_balance}")
         
         else:
             # 其他交易所使用标准方法
@@ -1482,3 +1478,44 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def get_gateio_futures_balance(exchange, quote_currency='USDT'):
+    """
+    使用官方API方式获取GateIO USDT合约账户余额
+    
+    Args:
+        exchange: GateIO交易所实例
+        quote_currency: 结算货币，默认为USDT
+    
+    Returns:
+        float: 可用余额
+    """
+    try:
+        # 尝试使用CCXT内置的API调用方法
+        if hasattr(exchange, 'request'):
+            try:
+                # 直接使用底层HTTP请求访问官方API端点
+                response = exchange.request('GET', 'futures/usdt/accounts')
+                
+                # 响应直接就是账户对象，不是列表
+                if response.get('currency') == quote_currency:
+                    # 使用cross_available作为可用余额
+                    cross_available = float(response.get('cross_available', 0))
+                    total = float(response.get('total', 0))
+                    logger.info(f"GateIO {quote_currency}合约账户余额: cross_available={cross_available}, total={total}")
+                    return cross_available
+                else:
+                    logger.warning(f"GateIO合约账户响应不包含{quote_currency}货币")
+                    return 0
+            except Exception as e:
+                logger.error(f"使用request方法获取GateIO合约账户余额失败: {e}")
+                logger.error(traceback.format_exc())
+                return 0
+        else:
+            logger.error("GateIO交易所对象不支持request方法")
+            return 0
+    except Exception as e:
+        logger.error(f"获取GateIO合约账户余额失败: {e}")
+        logger.error(traceback.format_exc())
+        return 0
