@@ -662,18 +662,19 @@ class ExchangeAPI:
             if response.status_code != 200:
                 logger.error(f"gateio get future failed, url: {url}, status: {response.status_code}, response: {response.text}")
             data = response.json()
-            fundingIntervalHours = int(data['funding_interval']/60/60)
-            return {
-                "exchange": exchange,
-                'fundingTime': int(data["funding_next_apply"]) * 1000,
-                'fundingRate': float(data["funding_rate"]) * 100,  # 转换为百分比
-                'markPrice': float(data["mark_price"]),
-                'fundingIntervalHours': fundingIntervalHours,
-                'fundingIntervalHoursText': fundingIntervalHours,
-            }
+            if data['in_delisting'] is False:
+                fundingIntervalHours = int(data['funding_interval']/60/60)
+                return {
+                    "exchange": exchange,
+                    'fundingTime': int(data["funding_next_apply"]) * 1000,
+                    'fundingRate': float(data["funding_rate"]) * 100,  # 转换为百分比
+                    'markPrice': float(data["mark_price"]),
+                    'fundingIntervalHours': fundingIntervalHours,
+                    'fundingIntervalHoursText': fundingIntervalHours,
+                }
         except Exception as e:
             logger.error(f"获取{exchange} {token}合约资金费率时出错: {str(e)}")
-            return {}
+        return {}
 
     def get_okx_futures_funding_rate(self, token):
         """
@@ -753,8 +754,8 @@ if __name__ == "__main__":
     token = 'SUKUUSDT'
     start = 1739318400000
     end = 1741939200000
-    # print(api.get_gateio_futures_funding_rate(token))
-    print(api.get_gateio_flexible_products())
+    print(api.get_gateio_futures_funding_rate(token))
+    # print(api.get_gateio_flexible_products())
     # print(api.get_bitget_futures_funding_rate_history(token, startTime=start, endTime=end)[0])
     # print(api.get_bybit_futures_funding_rate_history(token, startTime=start, endTime=end)[0])
     # print(api.get_okx_futures_funding_rate_history(token, startTime=start, endTime=end)[0])
