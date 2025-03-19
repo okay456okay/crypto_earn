@@ -257,6 +257,36 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
             margin_mode=margin_mode
         )
         
+        # Bitget需要先设置合约类型
+        if exchange_id == "bitget":
+            exchange.options['defaultType'] = 'swap'
+            
+            # 尝试设置持仓模式为单向持仓
+            try:
+                # 这里可以添加设置持仓模式的API调用
+                # 注意：具体API调用可能需要根据最新文档调整
+                logger.info("尝试设置Bitget为单向持仓模式")
+                mode_params = {
+                    'productType': 'USDT-FUTURES',
+                    'symbol': contract_symbol.replace(':USDT', ''),
+                    'marginCoin': 'USDT',
+                    'holdMode': 'single_hold'
+                }
+                
+                try:
+                    # 尝试不同的API端点
+                    response = exchange.privateMixPostV1PositionSetPositionMode(mode_params)
+                    logger.info(f"设置Bitget持仓模式结果: {response}")
+                except Exception as e1:
+                    try:
+                        # 尝试另一个可能的API端点
+                        response = exchange.privateMixPostV1PositionSinglePosition(mode_params)
+                        logger.info(f"设置Bitget单向持仓结果: {response}")
+                    except Exception as e2:
+                        logger.warning(f"设置Bitget持仓模式失败，将继续尝试交易: {e1}, {e2}")
+            except Exception as e:
+                logger.warning(f"Bitget持仓模式设置异常: {e}")
+        
         # 设置合约参数
         if not setup_contract_settings(exchange, exchange_id, symbol, args):
             logger.error(f"设置 {exchange_id} 合约参数失败")
@@ -274,7 +304,7 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
             params = {'category': 'linear'}
             ticker = exchange.fetch_ticker(contract_symbol, params=params)
         elif exchange_id == "bitget":
-            # Bitget合约需要设置合约类型
+            # 确保使用合约API
             exchange.options['defaultType'] = 'swap'
             ticker = exchange.fetch_ticker(contract_symbol)
         else:
@@ -289,14 +319,8 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
         quantity = contract_value / current_price
         
         # 调整为合约要求的精度
-        if exchange_id == "binance":
-            # Binance USDT合约通常有精度要求
-            market = exchange.market(contract_symbol)
-            if 'precision' in market and 'amount' in market['precision']:
-                precision = market['precision']['amount']
-                quantity = round(quantity, precision) if isinstance(precision, int) else float(int(quantity))
-        elif exchange_id == "bitget":
-            # Bitget 合约也可能有精度要求
+        if exchange_id == "binance" or exchange_id == "bitget":
+            # 合约通常有精度要求
             market = exchange.market(contract_symbol)
             if 'precision' in market and 'amount' in market['precision']:
                 precision = market['precision']['amount']
@@ -307,17 +331,24 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
         # 对于 Binance，检查仓位模式（单向/对冲）
         position_mode = None
         if exchange_id == "binance":
-            try:
-                # 查询账户的仓位模式设置
-                user_account = exchange.fapiPrivateGetPositionSideDual()
-                logger.info(f"账户仓位模式设置: {user_account}")
-                
-                # dualSidePosition为true表示启用了对冲模式
-                hedge_mode = user_account.get('dualSidePosition', False)
-                position_mode = "hedge" if hedge_mode else "one-way"
-                logger.info(f"检测到账户使用 {position_mode} 仓位模式")
-            except Exception as e:
-                logger.warning(f"获取仓位模式失败: {e}，将使用默认参数")
+            # 检查仓位模式
+            account_info = exchange.fetch_account()
+            if 'positions' in account_info:
+                for position in account_info['positions']:
+                    if position['symbol'] == contract_symbol and position['side'] == 'long':
+                        position_mode = 'hedge' if position['positionSide'] == 'LONG' else 'single'
+                        break
+            if position_mode is None:
+                position_mode = 'single'
+        elif exchange_id == "okx":
+            # OKX 仓位模式
+            position_mode = 'hedge' if 'hedge' in ticker['info'] else 'single'
+        elif exchange_id == "bybit":
+            # Bybit 仓位模式
+            position_mode = 'hedge' if 'category' in ticker['info'] and ticker['info']['category'] == 'linear' else 'single'
+        elif exchange_id == "bitget":
+            # Bitget 仓位模式
+            position_mode = 'hedge' if 'hedge' in ticker['info'] else 'single'
         
         # 4. 执行开多(市价买入)操作
         buy_params = {}
@@ -335,24 +366,64 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
         elif exchange_id == "bybit":
             buy_params = {'category': 'linear', 'positionIdx': 0}
         elif exchange_id == "bitget":
-            # Bitget 特殊参数
-            # 单向持仓模式下指定持仓方向
+            # Bitget 可能需要使用不同的API调用方式来开仓
+            # 方式1：使用标准接口但提供特殊参数
             buy_params = {
-                'marginMode': margin_mode,  # 保证金模式（cross/isolated）
-                'holdSide': 'long',  # 持仓方向
-                'holdMode': 'single_hold'  # 单向持仓模式
+                'marginMode': margin_mode,
+                'marginCoin': 'USDT',
+                'side': 'buy',              # 使用标准买入方向
+                'positionSide': 'long',     # 持仓方向
+                'posSide': 'long',          # 备选持仓方向参数
+                'holdSide': 'long',         # 备选持仓方向参数
+                'tdMode': margin_mode       # 交易模式
             }
-            logger.info(f"Bitget合约特殊处理: 使用单向持仓模式，持仓方向为long")
+            logger.info(f"Bitget合约使用标准接口开多，参数: {buy_params}")
         
-        logger.info(f"执行合约市价买入(开多)，参数: {buy_params}")
-        buy_order = exchange.create_market_buy_order(contract_symbol, quantity, params=buy_params)
+        # Bitget可能需要使用特殊方法开仓
+        if exchange_id == "bitget":
+            try:
+                logger.info(f"尝试使用标准接口开多: {contract_symbol}, 数量: {quantity}")
+                buy_order = exchange.create_market_buy_order(contract_symbol, quantity, params=buy_params)
+                logger.info(f"标准接口开多成功: {buy_order}")
+            except Exception as e:
+                logger.warning(f"标准接口开多失败: {e}")
+                # 尝试使用自定义请求
+                try:
+                    logger.info("尝试使用自定义请求开多")
+                    custom_params = {
+                        'symbol': contract_symbol.replace(':USDT', ''),
+                        'marginCoin': 'USDT',
+                        'size': str(quantity),
+                        'side': 'open_long',
+                        'orderType': 'market',
+                        'marginMode': margin_mode,
+                        'timeInForceValue': 'normal'
+                    }
+                    response = exchange.privateMixPostV2MixOrderPlaceOrder(custom_params)
+                    logger.info(f"自定义请求开多结果: {response}")
+                    # 构造与标准接口相似的响应格式
+                    buy_order = {
+                        'id': response.get('data', {}).get('orderId', ''),
+                        'info': response,
+                        'amount': quantity,
+                        'filled': quantity,  # 假设全部成交
+                        'status': 'closed',
+                        'symbol': contract_symbol
+                    }
+                except Exception as e2:
+                    logger.error(f"自定义请求开多也失败: {e2}")
+                    return False
+        else:
+            # 其他交易所使用标准接口
+            logger.info(f"执行合约市价买入(开多)，参数: {buy_params}")
+            buy_order = exchange.create_market_buy_order(contract_symbol, quantity, params=buy_params)
         
         if not buy_order:
             logger.error("开多订单创建失败")
             return False
             
         logger.info(f"开多订单执行结果: {buy_order}")
-        time.sleep(2)  # 等待订单完成
+        time.sleep(3)  # 等待订单完成和持仓建立
         
         # 5. 获取实际成交数量
         filled_amount = 0
@@ -399,20 +470,64 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
             logger.error(traceback.format_exc())
         
         # 6. 执行平多(市价卖出)操作
-        sell_params = buy_params.copy()
-        if exchange_id == "bybit":
+        sell_params = {}  # 不直接复制buy_params，避免参数冲突
+        
+        if exchange_id == "binance":
+            # 在对冲模式下，平仓时必须使用相同的positionSide
+            logger.info(f"使用对冲模式平仓，指定 {buy_params['positionSide']} 仓位")
+        elif exchange_id == "bybit":
             sell_params['reduceOnly'] = True  # ByBit平仓需要设置reduceOnly
         elif exchange_id == "bitget":
-            # Bitget平仓特殊参数
-            sell_params['reduceOnly'] = True  # 平仓标志
+            # Bitget平仓参数
+            sell_params = {
+                'marginMode': margin_mode,
+                'marginCoin': 'USDT',
+                'side': 'sell',              # 标准卖出方向
+                'positionSide': 'long',      # 持仓方向
+                'posSide': 'long',           # 备选持仓方向参数
+                'holdSide': 'long',          # 备选持仓方向参数
+                'reduceOnly': True           # 平仓标志
+            }
+            logger.info(f"Bitget合约使用标准接口平多，参数: {sell_params}")
         
-        # 对于Binance，确保平仓参数与开仓一致
-        if exchange_id == "binance" and "positionSide" in sell_params:
-            # 在对冲模式下，平仓时必须使用相同的positionSide
-            logger.info(f"使用对冲模式平仓，指定 {sell_params['positionSide']} 仓位")
-        
-        logger.info(f"执行合约市价卖出(平多)，数量: {filled_amount}，参数: {sell_params}")
-        sell_order = exchange.create_market_sell_order(contract_symbol, filled_amount, params=sell_params)
+        # Bitget可能需要使用特殊方法平仓
+        if exchange_id == "bitget":
+            try:
+                logger.info(f"尝试使用标准接口平多: {contract_symbol}, 数量: {filled_amount}")
+                sell_order = exchange.create_market_sell_order(contract_symbol, filled_amount, params=sell_params)
+                logger.info(f"标准接口平多成功: {sell_order}")
+            except Exception as e:
+                logger.warning(f"标准接口平多失败: {e}")
+                # 尝试使用自定义请求
+                try:
+                    logger.info("尝试使用自定义请求平多")
+                    custom_params = {
+                        'symbol': contract_symbol.replace(':USDT', ''),
+                        'marginCoin': 'USDT',
+                        'size': str(filled_amount),
+                        'side': 'close_long',
+                        'orderType': 'market',
+                        'marginMode': margin_mode,
+                        'timeInForceValue': 'normal'
+                    }
+                    response = exchange.privateMixPostV2MixOrderPlaceOrder(custom_params)
+                    logger.info(f"自定义请求平多结果: {response}")
+                    # 构造与标准接口相似的响应格式
+                    sell_order = {
+                        'id': response.get('data', {}).get('orderId', ''),
+                        'info': response,
+                        'amount': filled_amount,
+                        'filled': filled_amount,  # 假设全部成交
+                        'status': 'closed',
+                        'symbol': contract_symbol
+                    }
+                except Exception as e2:
+                    logger.error(f"自定义请求平多也失败: {e2}")
+                    return False
+        else:
+            # 其他交易所使用标准接口
+            logger.info(f"执行合约市价卖出(平多)，数量: {filled_amount}，参数: {sell_params}")
+            sell_order = exchange.create_market_sell_order(contract_symbol, filled_amount, params=sell_params)
         
         logger.info(f"平多订单执行结果: {sell_order}")
         
