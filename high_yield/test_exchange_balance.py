@@ -80,7 +80,30 @@ def test_single_exchange(exchange_id, symbol, exchanges):
         
         # 测试现货账户余额
         logger.info(f"获取 {exchange_id} 现货账户余额...")
-        spot_balance = exchange.fetch_balance()
+        
+        # 针对Binance特殊处理现货账户余额获取
+        if exchange_id == "binance":
+            try:
+                # 临时设置defaultType为spot来获取现货账户余额
+                original_options = exchange.options.copy() if hasattr(exchange, 'options') else {}
+                
+                # 设置为现货模式
+                exchange.options['defaultType'] = 'spot'
+                logger.info("已设置Binance API为现货模式(spot)")
+                
+                # 获取现货余额
+                spot_balance = exchange.fetch_balance()
+                
+                # 恢复原来的设置
+                exchange.options = original_options
+                logger.info("已恢复Binance API原始设置")
+            except Exception as e:
+                logger.error(f"获取Binance现货余额失败: {e}")
+                logger.error(traceback.format_exc())
+                spot_balance = {}
+        else:
+            # 其他交易所使用默认方法
+            spot_balance = exchange.fetch_balance()
         
         # 打印主要货币的余额
         spot_base = spot_balance.get(base_currency, {}).get('free', 0)
@@ -121,10 +144,14 @@ def test_single_exchange(exchange_id, symbol, exchanges):
                 logger.info(f"GateIO {quote_currency}合约账户可用余额: {futures_balance}")
             
         elif exchange_id == "binance":
-            # Binance可能需要特殊选项 
+            # Binance需要特殊设置获取合约账户余额 
             try:
-                # 尝试不同的API选项
-                contract_balance = exchange.fetch_balance({'type': 'future'})
+                # 设置为合约模式
+                exchange.options['defaultType'] = 'future'
+                logger.info("已设置Binance API为合约模式(future)")
+                
+                # 获取合约余额
+                contract_balance = exchange.fetch_balance()
                 
                 if quote_currency in contract_balance:
                     logger.info(f"{exchange_id} 合约账户余额: {quote_currency}={contract_balance[quote_currency].get('free', 0)}")
