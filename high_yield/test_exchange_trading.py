@@ -317,22 +317,45 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
             
             # 如果找到了可用的方法
             if available_methods:
-                api_method = available_methods[0]
+                # 优先使用V1版本的API
+                api_method = None
+                for method in available_methods:
+                    if 'v1' in method.lower():
+                        api_method = method
+                        break
+                
+                # 如果没找到V1 API，使用第一个找到的方法
+                if not api_method:
+                    api_method = available_methods[0]
+                
                 logger.info(f"使用API方法: {api_method}")
                 api_func = getattr(exchange, api_method)
                 
                 try:
-                    # 构造开仓参数
-                    open_params = {
-                        'symbol': symbol_name,
-                        'productType': 'USDT-FUTURES',
-                        'marginMode': margin_mode,
-                        'marginCoin': 'USDT',
-                        'size': str(int(quantity)),
-                        'side': 'buy',
-                        'orderType': 'market',
-                        'clientOid': f'test_open_{int(time.time() * 1000)}'
-                    }
+                    # 根据API版本决定参数格式
+                    if 'v1' in api_method.lower():
+                        # V1 API使用不同的side参数
+                        open_params = {
+                            'symbol': symbol_name,
+                            'marginCoin': 'USDT',
+                            'size': str(int(quantity)),
+                            'side': 'open_long',  # V1 API使用open_long
+                            'orderType': 'market',
+                            'marginMode': margin_mode
+                        }
+                    else:
+                        # V2 API使用不同格式
+                        open_params = {
+                            'symbol': symbol_name,
+                            'productType': 'USDT-FUTURES',
+                            'marginMode': margin_mode,
+                            'marginCoin': 'USDT',
+                            'size': str(int(quantity)),
+                            'side': 'buy',
+                            'tradeSide': 'open',  # V2 API需要额外的tradeSide参数
+                            'orderType': 'market',
+                            'clientOid': f'test_open_{int(time.time() * 1000)}'
+                        }
                     
                     logger.info(f"使用API方法开仓，参数: {open_params}")
                     open_response = api_func(open_params)
@@ -341,17 +364,28 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
                     # 等待持仓建立
                     time.sleep(3)
                     
-                    # 平仓
-                    close_params = {
-                        'symbol': symbol_name,
-                        'productType': 'USDT-FUTURES',
-                        'marginMode': margin_mode,
-                        'marginCoin': 'USDT',
-                        'size': str(int(quantity)),
-                        'side': 'sell',
-                        'orderType': 'market',
-                        'clientOid': f'test_close_{int(time.time() * 1000)}'
-                    }
+                    # 平仓参数也根据API版本决定
+                    if 'v1' in api_method.lower():
+                        close_params = {
+                            'symbol': symbol_name,
+                            'marginCoin': 'USDT',
+                            'size': str(int(quantity)),
+                            'side': 'close_long',  # V1 API使用close_long
+                            'orderType': 'market',
+                            'marginMode': margin_mode
+                        }
+                    else:
+                        close_params = {
+                            'symbol': symbol_name,
+                            'productType': 'USDT-FUTURES',
+                            'marginMode': margin_mode,
+                            'marginCoin': 'USDT',
+                            'size': str(int(quantity)),
+                            'side': 'sell',
+                            'tradeSide': 'close',  # V2 API需要额外的tradeSide参数
+                            'orderType': 'market',
+                            'clientOid': f'test_close_{int(time.time() * 1000)}'
+                        }
                     
                     logger.info(f"使用API方法平仓，参数: {close_params}")
                     close_response = api_func(close_params)
@@ -363,7 +397,8 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
                     logger.error(f"API方法调用失败: {e}")
                     logger.error(traceback.format_exc())
                     
-                    # 使用通用请求方法作为备选
+                    # 直接尝试使用通用请求方法作为备选
+                    logger.info("尝试使用通用请求方法...")
                     return try_generic_request_method(exchange, symbol_name, margin_mode, quantity, exchange_id)
             else:
                 logger.error("未找到合适的API方法")
@@ -464,6 +499,66 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
     
     except Exception as e:
         logger.error(f"测试 {exchange_id} 合约交易失败: {e}")
+        logger.error(traceback.format_exc())
+        return False
+
+def try_generic_request_method(exchange, symbol_name, margin_mode, quantity, exchange_id):
+    """使用通用请求方法尝试执行合约交易"""
+    logger.info("尝试使用通用请求方法")
+    try:
+        api_endpoint = "/api/mix/v1/order/placeOrder"
+        
+        # 开仓参数 - 对于V1 API，使用 open_long 和 close_long
+        open_params = {
+            'symbol': symbol_name,
+            'marginCoin': 'USDT',
+            'size': str(int(quantity)),
+            'side': 'open_long',  # V1 API使用open_long而不是buy
+            'orderType': 'market',
+            'marginMode': margin_mode
+        }
+        
+        logger.info(f"开仓参数: {open_params}")
+        
+        # 使用exchange.request方法
+        open_response = exchange.request(
+            'POST', 
+            api_endpoint, 
+            headers=exchange.sign(api_endpoint, open_params),
+            body=json.dumps(open_params)
+        )
+        
+        logger.info(f"开仓响应: {open_response}")
+        
+        # 等待持仓建立
+        time.sleep(3)
+        
+        # 平仓参数
+        close_params = {
+            'symbol': symbol_name,
+            'marginCoin': 'USDT',
+            'size': str(int(quantity)),
+            'side': 'close_long',  # V1 API使用close_long而不是sell
+            'orderType': 'market',
+            'marginMode': margin_mode
+        }
+        
+        logger.info(f"平仓参数: {close_params}")
+        
+        # 发送平仓请求
+        close_response = exchange.request(
+            'POST', 
+            api_endpoint, 
+            headers=exchange.sign(api_endpoint, close_params),
+            body=json.dumps(close_params)
+        )
+        
+        logger.info(f"平仓响应: {close_response}")
+        
+        logger.info(f"{exchange_id} 通用请求方法合约交易测试完成！")
+        return True
+    except Exception as e:
+        logger.error(f"通用请求方法失败: {e}")
         logger.error(traceback.format_exc())
         return False
 
