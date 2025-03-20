@@ -509,7 +509,7 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
                 logger.info(f"最终合约交易对: {contract_symbol}")
                 
                 # 检查账户余额
-                balance = exchange.fetch_balance({'type': 'futures'})  # 指定是期货账户
+                balance = exchange.fetch_balance({'type': 'swap'})  # 指定是期货账户
                 logger.info(f"USDT余额: {balance.get('USDT', {}).get('free', 'unknown')}")
                 
                 # 1. 开仓 - 使用标准CCXT接口下单
