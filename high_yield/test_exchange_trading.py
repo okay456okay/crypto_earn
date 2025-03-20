@@ -305,27 +305,32 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
         
         # Binance 特殊处理 - 为了解决 "supports linear and inverse contracts only" 错误
         if exchange_id == "binance":
-            logger.info(f"使用 Binance 原生 API 方法设置合约参数")
+            logger.info(f"使用自适应的 Binance 合约交易测试")
             try:
                 # 确保使用合约API
                 exchange.options['defaultType'] = 'future'
                 
-                # 设置杠杆倍数 (直接使用 Binance API 方法)
+                # 1. 查询当前持仓模式
                 try:
-                    response = exchange.fapiPrivate_post_leverage({
-                        'symbol': contract_symbol,
-                        'leverage': leverage
-                    })
+                    position_mode_info = exchange.fapiPrivateGetPositionSideDual()
+                    dual_side_position = position_mode_info.get('dualSidePosition', False)
+                    logger.info(f"当前账户持仓模式: {'双向模式(Hedge Mode)' if dual_side_position else '单向模式(One-way Mode)'}")
+                except Exception as e:
+                    logger.warning(f"获取持仓模式失败，假设使用双向模式: {e}")
+                    dual_side_position = True  # 您确认是双向模式
+                
+                # 2. 设置杠杆
+                try:
+                    leverage_params = {'symbol': contract_symbol, 'leverage': leverage}
+                    response = exchange.fapiPrivatePostLeverage(leverage_params)
                     logger.info(f"设置杠杆结果: {response}")
                 except Exception as e:
-                    logger.warning(f"设置杠杆出错 (可能已设置): {e}")
+                    logger.warning(f"设置杠杆出错: {e}")
                 
-                # 查询当前价格
+                # 3. 获取当前价格和计算数量
                 ticker = exchange.fetch_ticker(contract_symbol)
                 current_price = ticker['last']
-                logger.info(f"当前 {contract_symbol} 价格: {current_price}")
                 
-                # 计算数量
                 base_currency, quote_currency = symbol.split('/')
                 contract_value = amount * leverage
                 quantity = contract_value / current_price
@@ -338,23 +343,59 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
                 
                 logger.info(f"计划开多数量: {quantity}")
                 
-                # 开仓 (尽量使用简单的参数)
-                buy_order = exchange.create_market_buy_order(contract_symbol, quantity)
+                # 4. 根据持仓模式设置参数
+                if dual_side_position:
+                    # 双向模式
+                    buy_params = {'positionSide': 'LONG'}
+                    sell_params = {'positionSide': 'LONG', 'reduceOnly': True}
+                else:
+                    # 单向模式
+                    buy_params = {'positionSide': 'BOTH'}
+                    sell_params = {'positionSide': 'BOTH', 'reduceOnly': True}
+                
+                logger.info(f"开仓参数: {buy_params}")
+                
+                # 5. 开仓
+                buy_order = exchange.create_market_buy_order(contract_symbol, quantity, params=buy_params)
                 logger.info(f"开仓结果: {buy_order}")
                 
                 time.sleep(3)
                 
-                # 平仓
-                sell_order = exchange.create_market_sell_order(contract_symbol, quantity, {'reduceOnly': True})
+                # 6. 查询持仓以确认开仓成功
+                positions = exchange.fetch_positions([contract_symbol])
+                logger.info(f"当前持仓: {positions}")
+                
+                # 找到目标持仓
+                target_position = None
+                for pos in positions:
+                    if pos['symbol'] == contract_symbol:
+                        # 在双向模式下，需要检查是否是多头持仓
+                        if dual_side_position and pos.get('side') != 'long':
+                            continue
+                        if float(pos.get('contracts', 0)) > 0:
+                            target_position = pos
+                            break
+                
+                # 获取实际持仓数量
+                position_size = quantity
+                if target_position:
+                    logger.info(f"找到持仓: {target_position}")
+                    position_size = float(target_position.get('contracts', quantity))
+                    logger.info(f"使用实际持仓数量: {position_size}")
+                
+                # 7. 平仓
+                logger.info(f"平仓参数: {sell_params}, 平仓数量: {position_size}")
+                sell_order = exchange.create_market_sell_order(contract_symbol, position_size, params=sell_params)
                 logger.info(f"平仓结果: {sell_order}")
                 
+                # 8. 验证结果
                 if buy_order and sell_order:
                     logger.info("Binance 合约交易测试成功！")
                     return True
                 else:
                     logger.error("Binance 合约交易测试失败！")
                     return False
-            
+                
             except Exception as e:
                 logger.error(f"Binance 合约交易测试失败: {e}")
                 logger.error(traceback.format_exc())
