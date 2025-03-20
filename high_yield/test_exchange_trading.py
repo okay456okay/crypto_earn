@@ -509,7 +509,7 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
                 logger.info(f"最终合约交易对: {contract_symbol}")
                 
                 # 检查账户余额
-                balance = exchange.fetch_balance()
+                balance = exchange.fetch_balance({'type': 'futures'})  # 指定是期货账户
                 logger.info(f"USDT余额: {balance.get('USDT', {}).get('free', 'unknown')}")
                 
                 # 1. 开仓 - 使用标准CCXT接口下单
@@ -622,9 +622,12 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
                 market = exchange.market(contract_symbol)
                 logger.info(f"GateIO 合约市场信息: {market}")
                 
-                # 查询当前账户信息
-                balance = exchange.fetch_balance()
-                logger.info(f"GateIO 合约账户余额: {balance.get('USDT', {}).get('free', 'unknown')} USDT")
+                # 查询当前账户信息 - 修复余额查询问题
+                try:
+                    balance = exchange.fetch_balance({'type': 'futures'})  # 明确指定是期货账户
+                    logger.info(f"GateIO 合约账户余额: {balance.get('USDT', {}).get('free', 'unknown')} USDT")
+                except Exception as balance_error:
+                    logger.warning(f"获取GateIO合约账户余额失败: {balance_error}，将继续交易测试")
                 
                 # 1. 开仓 - 市价买入多头
                 buy_params = {
