@@ -188,6 +188,24 @@ def test_spot_trading(exchange, exchange_id, symbol, amount):
                 fee_amount = fee_cost
                 logger.info(f"扣除基础货币手续费: {fee_amount} {base_currency}")
         
+        # 检查是否有多个费用条目
+        if 'fees' in buy_order and buy_order['fees'] is not None:
+            for fee in buy_order['fees']:
+                if fee['currency'] == base_currency and fee['cost'] > 0:
+                    fee_amount += float(fee['cost'])
+                    logger.info(f"从fees数组中扣除额外手续费: {fee['cost']} {base_currency}")
+
+        # 对于GateIO，需要额外检查费用信息
+        if exchange_id == "gateio" and 'info' in buy_order and 'fee' in buy_order['info']:
+            info_fee = float(buy_order['info'].get('fee', 0))
+            info_fee_currency = buy_order['info'].get('fee_currency', '')
+            
+            if info_fee_currency == base_currency and info_fee > 0:
+                # 确保不重复计算
+                if fee_amount < info_fee:
+                    logger.info(f"从info中更新手续费: {info_fee} {base_currency}")
+                    fee_amount = info_fee
+
         # 对于Bitget，估算手续费（如果无法从订单中获取）
         if exchange_id == "bitget" and fee_amount == 0:
             # 假设手续费率为0.1%（实际应根据用户等级和交易所规则调整）
@@ -198,12 +216,41 @@ def test_spot_trading(exchange, exchange_id, symbol, amount):
         # 计算实际可卖出数量（减去手续费后）
         sell_amount = filled_amount - fee_amount
         
-        # 确保卖出数量为正值
+        # 确保卖出数量为正值，同时添加额外的安全裕度
         if sell_amount <= 0:
             logger.error(f"计算的卖出数量非正值: {sell_amount}，终止测试")
             return False
             
-        logger.info(f"实际可卖出数量: {sell_amount} {base_currency} (已扣除手续费)")
+        # 额外查询当前余额，确保卖出数量不超过实际可用余额
+        try:
+            current_balance = exchange.fetch_balance()
+            if base_currency in current_balance:
+                available_amount = float(current_balance[base_currency]['free'])
+                logger.info(f"当前可用 {base_currency} 余额: {available_amount}")
+                
+                # 如果计算的卖出数量大于实际可用余额，调整卖出数量
+                if sell_amount > available_amount:
+                    logger.warning(f"计算的卖出数量 {sell_amount} 大于可用余额 {available_amount}，将调整为可用余额")
+                    sell_amount = available_amount
+                    
+                # 为了安全，再减去一点点（避免小数精度问题）
+                sell_amount = sell_amount * 0.999
+        except Exception as e:
+            logger.warning(f"获取当前余额失败: {e}，将使用计算的卖出数量并添加安全裕度")
+            # 添加额外安全裕度，减少1%以避免余额不足
+            sell_amount = sell_amount * 0.99
+
+        # 确保卖出数量为市场允许的精度
+        try:
+            if 'precision' in market and 'amount' in market['precision']:
+                precision = market['precision']['amount']
+                if isinstance(precision, int):
+                    sell_amount = round(sell_amount, precision)
+                    logger.info(f"根据市场精度调整卖出数量: {sell_amount} {base_currency}")
+        except Exception as e:
+            logger.warning(f"调整精度失败: {e}")
+        
+        logger.info(f"最终卖出数量: {sell_amount} {base_currency} (已扣除手续费和安全裕度)")
         
         # 5. 执行市价卖出
         logger.info(f"执行市价卖出，数量: {sell_amount} {base_currency}")
@@ -257,9 +304,148 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
         )
         
         # 设置合约参数
-        if not setup_contract_settings(exchange, exchange_id, symbol, args):
-            logger.error(f"设置 {exchange_id} 合约参数失败")
-            return False
+        if exchange_id == "gateio":
+            logger.info(f"GateIO合约交易 - 简化健壮实现")
+            
+            try:
+                # 1. 准备基本变量
+                base_currency, quote_currency = symbol.split('/')
+                logger.info(f"交易基础货币: {base_currency}, 报价货币: {quote_currency}")
+                
+                # 定义可能的合约格式
+                possible_contract_formats = [
+                    f"{base_currency}/{quote_currency}",  # 标准格式 (DOGE/USDT)
+                    f"{base_currency}/{quote_currency}:USDT",  # 带后缀格式 (DOGE/USDT:USDT)
+                    f"{base_currency}{quote_currency}",  # 无分隔符格式 (DOGEUSDT)
+                    f"{base_currency}_{quote_currency}",  # 下划线分隔符格式 (DOGE_USDT)
+                    f"{base_currency.lower()}/{quote_currency.lower()}",  # 小写格式
+                    f"{base_currency.lower()}{quote_currency.lower()}"  # 小写无分隔符格式
+                ]
+                
+                # 2. 加载市场
+                logger.info("加载 GateIO 市场信息...")
+                exchange.load_markets(True)  # 强制重新加载市场数据
+                
+                # 3. 寻找支持的合约类型
+                for contract_type in ['swap', 'futures', 'delivery']:
+                    exchange.options['defaultType'] = contract_type
+                    logger.info(f"尝试合约类型: {contract_type}")
+                    
+                    # 尝试不同的合约格式
+                    for format_contract in possible_contract_formats:
+                        try:
+                            exchange.load_markets(False)  # 使用缓存的市场数据
+                            
+                            # 尝试获取市场信息
+                            if format_contract in exchange.markets:
+                                contract_symbol = format_contract
+                                market = exchange.markets[contract_symbol]
+                                logger.info(f"成功找到合约: {contract_symbol}, 类型: {market['type']}")
+                                
+                                # 4. 获取市场数据
+                                ticker = exchange.fetch_ticker(contract_symbol)
+                                current_price = ticker['last']
+                                logger.info(f"当前价格: {current_price}")
+                                
+                                # 5. 计算交易数量
+                                quantity = (amount * leverage) / current_price
+                                
+                                # 根据市场精度调整
+                                if 'precision' in market and 'amount' in market['precision']:
+                                    precision = market['precision']['amount']
+                                    if isinstance(precision, int):
+                                        quantity = round(quantity, precision)
+                                    else:
+                                        quantity = float(int(quantity))
+                                
+                                logger.info(f"计划交易数量: {quantity} (价值 {amount * leverage} USDT)")
+                                
+                                # 6. 执行开仓操作
+                                open_params = {
+                                    'leverage': leverage,
+                                    'marginMode': margin_mode
+                                }
+                                
+                                logger.info(f"开仓参数: {open_params}")
+                                open_order = exchange.create_market_buy_order(
+                                    symbol=contract_symbol,
+                                    amount=quantity,
+                                    params=open_params
+                                )
+                                
+                                logger.info(f"开仓订单结果: {open_order}")
+                                
+                                # 等待订单处理
+                                time.sleep(3)
+                                
+                                # 7. 执行平仓操作
+                                close_params = open_params.copy()
+                                close_params['reduceOnly'] = True
+                                
+                                logger.info(f"平仓参数: {close_params}")
+                                close_order = exchange.create_market_sell_order(
+                                    symbol=contract_symbol,
+                                    amount=quantity,
+                                    params=close_params
+                                )
+                                
+                                logger.info(f"平仓订单结果: {close_order}")
+                                
+                                # 8. 验证交易结果
+                                if open_order and close_order:
+                                    logger.info(f"GateIO 合约交易测试成功!")
+                                    return True
+                                else:
+                                    logger.error(f"GateIO 合约交易测试失败 - 订单未完成")
+                                    return False
+                            
+                        except Exception as format_error:
+                            logger.warning(f"合约格式 {format_contract} 不可用: {format_error}")
+                            continue
+                
+                # 如果所有尝试都失败
+                logger.error(f"无法找到合适的GateIO合约格式，尝试使用直接方法")
+                
+                # 最后尝试 - 直接使用原始合约符号
+                try:
+                    exchange.options['defaultType'] = 'swap'  # 使用永续合约
+                    
+                    # 尝试使用标准CCXT方法
+                    open_order = exchange.create_market_buy_order(
+                        symbol=contract_symbol,
+                        amount=quantity,
+                        params={'leverage': leverage}
+                    )
+                    
+                    logger.info(f"直接方法开仓结果: {open_order}")
+                    
+                    time.sleep(3)
+                    
+                    close_order = exchange.create_market_sell_order(
+                        symbol=contract_symbol,
+                        amount=quantity,
+                        params={'reduceOnly': True}
+                    )
+                    
+                    logger.info(f"直接方法平仓结果: {close_order}")
+                    
+                    logger.info("GateIO 合约交易测试（直接方法）成功!")
+                    return True
+                    
+                except Exception as direct_error:
+                    logger.error(f"直接方法也失败: {direct_error}")
+                    logger.error(traceback.format_exc())
+                    return False
+            
+            except Exception as e:
+                logger.error(f"GateIO 合约交易初始化失败: {e}")
+                logger.error(traceback.format_exc())
+                return False
+        else:
+            # 其他交易所正常设置合约参数
+            if not setup_contract_settings(exchange, exchange_id, symbol, args):
+                logger.error(f"设置 {exchange_id} 合约参数失败")
+                return False
         
         # 2. 获取当前市场价格
         ticker = None
@@ -414,96 +600,74 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
                 logger.error(traceback.format_exc())
                 return False
         else:
-            # 其他交易所的代码
-            # 4. 执行开多(市价买入)操作
-            buy_params = {}
-            if exchange_id == "binance":
-                if position_mode == "hedge":
-                    # 对冲模式需要指定仓位方向
-                    buy_params = {"positionSide": "LONG"}
-                    logger.info("使用对冲模式开仓，指定LONG仓位")
-                else:
-                    # 单向模式不需要指定
-                    buy_params = {}
-                    logger.info("使用单向模式开仓")
-            elif exchange_id == "okx":
-                buy_params = {'instType': 'SWAP', 'tdMode': margin_mode}
-            elif exchange_id == "bybit":
-                buy_params = {'category': 'linear', 'positionIdx': 0}
+            # GateIO 合约交易特殊处理 - 可以放在 Bitget 特殊处理部分之后
+            logger.info(f"GateIO合约交易 - 使用特殊处理")
             
-            logger.info(f"执行合约市价买入(开多)，参数: {buy_params}")
-            buy_order = exchange.create_market_buy_order(contract_symbol, quantity, params=buy_params)
-            
-            if not buy_order:
-                logger.error("开多订单创建失败")
-                return False
-                
-            logger.info(f"开多订单执行结果: {buy_order}")
-            time.sleep(2)  # 等待订单完成
-            
-            # 5. 获取实际成交数量
-            filled_amount = 0
-            
-            # 尝试从订单信息中获取成交数量
-            if 'filled' in buy_order and buy_order['filled'] is not None:
-                filled_amount = float(buy_order['filled'])
-            elif 'amount' in buy_order and buy_order['amount'] is not None:
-                filled_amount = float(buy_order['amount'])
-            elif 'info' in buy_order and 'filled' in buy_order['info'] and buy_order['info']['filled'] is not None:
-                filled_amount = float(buy_order['info']['filled'])
-            
-            # 如果仍然无法获取，使用下单数量
-            if filled_amount <= 0:
-                filled_amount = quantity
-                logger.warning(f"无法获取实际成交数量，将使用原始下单数量: {filled_amount}")
-            
-            logger.info(f"实际开多数量: {filled_amount}")
-            
-            # 确认持仓是否已建立
             try:
-                # 获取当前持仓
-                positions_params = {}
-                if exchange_id == "bybit":
-                    positions_params = {'category': 'linear'}
-                elif exchange_id == "okx":
-                    positions_params = {'instType': 'SWAP'}
-                    
-                positions = exchange.fetch_positions([contract_symbol], params=positions_params)
-                logger.info(f"当前持仓: {positions}")
+                # 确保使用期货API
+                exchange.options['defaultType'] = 'delivery'  # 或者 'futures'，取决于 GateIO 的配置
                 
+                # 获取市场信息以确认交易对可用
+                market = exchange.market(contract_symbol)
+                logger.info(f"GateIO 合约市场信息: {market}")
+                
+                # 查询当前账户信息
+                balance = exchange.fetch_balance()
+                logger.info(f"GateIO 合约账户余额: {balance.get('USDT', {}).get('free', 'unknown')} USDT")
+                
+                # 1. 开仓 - 市价买入多头
+                buy_params = {
+                    'leverage': leverage,  # 指定杠杆
+                    'margin_mode': margin_mode,  # cross 或 isolated
+                    'settle': 'usdt',  # 结算货币
+                }
+                
+                logger.info(f"GateIO 开仓参数: {buy_params}")
+                buy_order = exchange.create_market_buy_order(contract_symbol, quantity, params=buy_params)
+                logger.info(f"GateIO 开仓结果: {buy_order}")
+                
+                # 等待订单处理
+                time.sleep(3)
+                
+                # 查询持仓
+                positions = exchange.fetch_positions([contract_symbol])
+                logger.info(f"GateIO 当前持仓: {positions}")
+                
+                # 确认多头持仓
                 long_position = None
                 for pos in positions:
-                    if pos['side'] == 'long' and float(pos.get('contracts', 0)) > 0:
+                    if pos.get('symbol') == contract_symbol and pos.get('side') == 'long' and float(pos.get('contracts', 0)) > 0:
                         long_position = pos
                         break
-                        
-                if not long_position:
-                    logger.warning("未检测到多头持仓，但将继续尝试平仓")
+                
+                if long_position:
+                    logger.info(f"GateIO 多头持仓确认: {long_position}")
+                    
+                    # 获取实际持仓数量
+                    position_size = float(long_position.get('contracts', quantity))
+                    
+                    # 2. 平仓 - 市价卖出
+                    sell_params = buy_params.copy()
+                    sell_params['reduce_only'] = True  # 确保是平仓操作
+                    
+                    logger.info(f"GateIO 平仓参数: {sell_params}, 数量: {position_size}")
+                    sell_order = exchange.create_market_sell_order(contract_symbol, position_size, params=sell_params)
+                    logger.info(f"GateIO 平仓结果: {sell_order}")
+                    
+                    # 检查平仓结果
+                    if buy_order and sell_order:
+                        logger.info(f"GateIO 合约交易测试成功！")
+                        return True
+                    else:
+                        logger.error(f"GateIO 合约交易测试失败！")
+                        return False
+                else:
+                    logger.error("GateIO 未能确认多头持仓，交易测试失败")
+                    return False
+            
             except Exception as e:
-                logger.error(f"获取持仓信息失败: {e}")
+                logger.error(f"GateIO 合约交易测试失败: {e}")
                 logger.error(traceback.format_exc())
-            
-            # 6. 执行平多(市价卖出)操作
-            sell_params = buy_params.copy()
-            if exchange_id == "bybit":
-                sell_params['reduceOnly'] = True  # ByBit平仓需要设置reduceOnly
-            
-            # 对于Binance，确保平仓参数与开仓一致
-            if exchange_id == "binance" and "positionSide" in sell_params:
-                # 在对冲模式下，平仓时必须使用相同的positionSide
-                logger.info(f"使用对冲模式平仓，指定 {sell_params['positionSide']} 仓位")
-            
-            logger.info(f"执行合约市价卖出(平多)，数量: {filled_amount}，参数: {sell_params}")
-            sell_order = exchange.create_market_sell_order(contract_symbol, filled_amount, params=sell_params)
-            
-            logger.info(f"平多订单执行结果: {sell_order}")
-            
-            # 7. 验证交易结果
-            if buy_order and sell_order:
-                logger.info(f"{exchange_id} 合约交易测试成功！")
-                return True
-            else:
-                logger.error(f"{exchange_id} 合约交易测试失败！")
                 return False
     
     except Exception as e:
