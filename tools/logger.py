@@ -20,7 +20,7 @@ logging.basicConfig(
             maxBytes=10 * 1024 * 1024,  # 10MB
             backupCount=20,  # 保留20个文件
         ),
-        # logging.StreamHandler()
+        logging.StreamHandler()
     ]
 )
 
