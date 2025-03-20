@@ -449,7 +449,11 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
                 logger.error(f"Binance 合约交易测试失败: {e}")
                 logger.error(traceback.format_exc())
                 return False
-        # 其他交易所正常设置合约参数        
+        # 其他交易所正常设置合约参数 (GateIO 特殊处理)  
+        elif exchange_id == "gateio":
+            # GateIO 不需要通过 setup_contract_settings 函数设置参数，直接跳过
+            logger.info(f"GateIO 无需预先设置合约参数，将在交易时直接指定")
+            pass
         elif not setup_contract_settings(exchange, exchange_id, symbol, args):
             logger.error(f"设置 {exchange_id} 合约参数失败")
             return False
