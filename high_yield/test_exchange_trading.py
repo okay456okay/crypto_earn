@@ -305,19 +305,19 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
         
         # Binance 特殊处理 - 为了解决 "supports linear and inverse contracts only" 错误
         if exchange_id == "binance":
-            logger.info(f"使用自适应的 Binance 合约交易测试")
+            logger.info(f"使用增强的 Binance 合约交易测试 (适用于双向持仓模式)")
             try:
                 # 确保使用合约API
                 exchange.options['defaultType'] = 'future'
                 
                 # 1. 查询当前持仓模式
+                dual_side_position = True  # 默认假设为双向模式 (您已确认)
                 try:
                     position_mode_info = exchange.fapiPrivateGetPositionSideDual()
-                    dual_side_position = position_mode_info.get('dualSidePosition', False)
+                    dual_side_position = position_mode_info.get('dualSidePosition', True)
                     logger.info(f"当前账户持仓模式: {'双向模式(Hedge Mode)' if dual_side_position else '单向模式(One-way Mode)'}")
                 except Exception as e:
-                    logger.warning(f"获取持仓模式失败，假设使用双向模式: {e}")
-                    dual_side_position = True  # 您确认是双向模式
+                    logger.warning(f"获取持仓模式失败，使用默认双向模式: {e}")
                 
                 # 2. 设置杠杆
                 try:
@@ -343,35 +343,55 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
                 
                 logger.info(f"计划开多数量: {quantity}")
                 
-                # 4. 根据持仓模式设置参数
-                if dual_side_position:
-                    # 双向模式
-                    buy_params = {'positionSide': 'LONG'}
-                    sell_params = {'positionSide': 'LONG', 'reduceOnly': True}
-                else:
-                    # 单向模式
-                    buy_params = {'positionSide': 'BOTH'}
-                    sell_params = {'positionSide': 'BOTH', 'reduceOnly': True}
+                # 4. 执行开仓操作
+                # 尝试多种参数组合，直到成功
+                buy_order = None
+                try_methods = [
+                    # 方法1: 仅指定positionSide为LONG (双向模式标准做法)
+                    {"description": "双向模式标准参数", "params": {'positionSide': 'LONG'}},
+                    
+                    # 方法2: 不指定额外参数
+                    {"description": "无额外参数", "params": {}},
+                    
+                    # 方法3: 单向模式参数 (以防万一)
+                    {"description": "单向模式参数", "params": {'positionSide': 'BOTH'}}
+                ]
                 
-                logger.info(f"开仓参数: {buy_params}")
+                for method in try_methods:
+                    try:
+                        logger.info(f"尝试开仓方法: {method['description']}, 参数: {method['params']}")
+                        buy_order = exchange.create_market_buy_order(
+                            contract_symbol, 
+                            quantity, 
+                            params=method['params']
+                        )
+                        logger.info(f"开仓成功: {buy_order}")
+                        # 保存成功的方法
+                        successful_buy_method = method
+                        break
+                    except Exception as e:
+                        logger.warning(f"开仓方法失败: {e}")
+                        continue
                 
-                # 5. 开仓
-                buy_order = exchange.create_market_buy_order(contract_symbol, quantity, params=buy_params)
-                logger.info(f"开仓结果: {buy_order}")
+                if not buy_order:
+                    logger.error("所有开仓方法均失败")
+                    return False
                 
                 time.sleep(3)
                 
-                # 6. 查询持仓以确认开仓成功
+                # 5. 查询持仓以确认开仓成功
                 positions = exchange.fetch_positions([contract_symbol])
                 logger.info(f"当前持仓: {positions}")
                 
-                # 找到目标持仓
+                # 根据成功的开仓方法参数，找到对应的持仓
                 target_position = None
                 for pos in positions:
                     if pos['symbol'] == contract_symbol:
-                        # 在双向模式下，需要检查是否是多头持仓
-                        if dual_side_position and pos.get('side') != 'long':
+                        position_side = successful_buy_method['params'].get('positionSide', 'BOTH')
+                        # 如果是LONG持仓方向，检查side是否为long
+                        if position_side == 'LONG' and pos.get('side') != 'long':
                             continue
+                        # 确认有仓位
                         if float(pos.get('contracts', 0)) > 0:
                             target_position = pos
                             break
@@ -382,11 +402,40 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
                     logger.info(f"找到持仓: {target_position}")
                     position_size = float(target_position.get('contracts', quantity))
                     logger.info(f"使用实际持仓数量: {position_size}")
+                else:
+                    logger.warning(f"未找到对应持仓，使用计划数量: {position_size}")
                 
-                # 7. 平仓
+                # 6. 执行平仓操作
+                # 根据开仓成功的方法，选择合适的平仓参数
+                sell_params = {}
+                if 'positionSide' in successful_buy_method['params']:
+                    sell_params['positionSide'] = successful_buy_method['params']['positionSide']
+                
+                # 记录平仓参数，但不添加reduceOnly (已知会导致错误)
                 logger.info(f"平仓参数: {sell_params}, 平仓数量: {position_size}")
+                
+                # 执行平仓
                 sell_order = exchange.create_market_sell_order(contract_symbol, position_size, params=sell_params)
                 logger.info(f"平仓结果: {sell_order}")
+                
+                # 7. 确认平仓成功
+                time.sleep(2)
+                final_positions = exchange.fetch_positions([contract_symbol])
+                
+                # 检查是否还有对应的持仓
+                position_closed = True
+                for pos in final_positions:
+                    if pos['symbol'] == contract_symbol:
+                        position_side = successful_buy_method['params'].get('positionSide', 'BOTH')
+                        if position_side == 'LONG' and pos.get('side') != 'long':
+                            continue
+                        if float(pos.get('contracts', 0)) > 0.01:  # 允许有极小的余量
+                            position_closed = False
+                            logger.warning(f"持仓未完全平掉: {pos}")
+                            break
+                
+                if position_closed:
+                    logger.info("持仓已成功平掉")
                 
                 # 8. 验证结果
                 if buy_order and sell_order:
