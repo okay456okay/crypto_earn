@@ -661,7 +661,7 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
                         
                         # 5. 计算交易数量
                         quantity = int((amount) / current_price)
-                        logger.info(f"计划交易数量: {quantity} (价值 {amount * leverage} USDT)")
+                        logger.info(f"计划交易数量: {quantity} (价值 {amount * 10} USDT)")
                         
                         # 如果找到可用合约，尝试交易
                         if contract_found:
