@@ -611,179 +611,117 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
                 logger.error(traceback.format_exc())
                 return False
         else:
-            # GateIO 合约交易特殊处理 - 可以放在 Bitget 特殊处理部分之后
-            logger.info(f"GateIO合约交易 - 使用特殊处理")
+            # GateIO 合约交易特殊处理
+            logger.info(f"GateIO合约交易 - 简化健壮实现")
             
             try:
-                # 确保使用期货API - 最关键的修复点，需要从'delivery'改为'futures'
-                exchange.options['defaultType'] = 'futures'
+                # 1. 准备基本变量
+                base_currency, quote_currency = symbol.split('/')
+                logger.info(f"交易基础货币: {base_currency}, 报价货币: {quote_currency}")
                 
-                # 设置createMarketBuyOrderRequiresPrice为False，解决市价买入问题
+                # 定义可能的合约格式
+                possible_contract_formats = [
+                    f"{base_currency}/{quote_currency}",           # 标准格式 (DOGE/USDT)
+                    f"{base_currency}/{quote_currency}:USDT",      # 带后缀格式 (DOGE/USDT:USDT)
+                    f"{base_currency}{quote_currency}",            # 无分隔符格式 (DOGEUSDT)
+                    f"{base_currency}_{quote_currency}",           # 下划线分隔符格式 (DOGE_USDT)
+                ]
+                
+                # 2. 加载市场
+                logger.info("加载 GateIO 市场信息...")
+                exchange.load_markets(True)  # 强制重新加载市场数据
+                
+                # 3. 设置为swap类型（永续合约）
+                exchange.options['defaultType'] = 'swap'
+                logger.info(f"尝试合约类型: swap")
+                
+                # 设置createMarketBuyOrderRequiresPrice选项为False
                 exchange.options['createMarketBuyOrderRequiresPrice'] = False
                 
-                # 获取市场信息以确认交易对可用
-                # 一些交易所的合约交易对可能与现货不同，确认格式正确
-                if '/' in contract_symbol:
-                    base, quote = contract_symbol.split('/')
-                    contract_symbol_alt = f"{base}_{quote}"
-                    logger.info(f"GateIO 检查合约交易对格式: {contract_symbol} 或 {contract_symbol_alt}")
+                contract_found = False
+                contract_symbol = None
+                current_price = 0
+                quantity = 0
                 
-                try:
-                    market = exchange.market(contract_symbol)
-                    logger.info(f"GateIO 合约市场信息: {market}")
-                except Exception as e:
-                    logger.warning(f"无法获取合约市场信息: {e}, 将尝试继续")
+                # 尝试不同的合约格式
+                for format_contract in possible_contract_formats:
+                    try:
+                        # 尝试获取市场信息
+                        market = exchange.market(format_contract)
+                        logger.info(f"成功找到合约: {format_contract}, 类型: {market['type']}")
+                        
+                        # 4. 获取市场数据
+                        ticker = exchange.fetch_ticker(format_contract)
+                        current_price = ticker['last']
+                        logger.info(f"当前价格: {current_price}")
+                        
+                        # 合约可用，保存信息并退出循环
+                        contract_symbol = format_contract
+                        contract_found = True
+                        
+                        # 5. 计算交易数量
+                        quantity = int((amount * leverage) / current_price)
+                        logger.info(f"计划交易数量: {quantity} (价值 {amount * leverage} USDT)")
+                        
+                        # 如果找到可用合约，尝试交易
+                        if contract_found:
+                            # 6. 执行开仓操作
+                            open_params = {
+                                'leverage': leverage,
+                                'marginMode': margin_mode
+                            }
+                            
+                            logger.info(f"开仓参数: {open_params}")
+                            try:
+                                open_order = exchange.create_market_buy_order(
+                                    symbol=contract_symbol,
+                                    amount=quantity,
+                                    params=open_params
+                                )
+                                
+                                logger.info(f"开仓订单结果: {open_order}")
+                                
+                                # 成功，继续下一步
+                                break
+                            except Exception as order_error:
+                                logger.warning(f"合约格式 {contract_symbol} 不可用: {order_error}")
+                                continue
+                        
+                    except Exception as format_error:
+                        logger.warning(f"合约格式 {format_contract} 不可用: {format_error}")
+                        continue
                 
-                # 查询当前账户信息
-                try:
-                    # 导入必要的函数，如果在同一个文件中，可以直接调用
-                    from high_yield.test_exchange_balance import test_gateio_futures_balance
-                    
-                    gateio_balance = test_gateio_futures_balance(exchange, 'USDT')
-                    logger.info(f"GateIO 合约账户余额: {gateio_balance} USDT")
-                except Exception as balance_error:
-                    logger.warning(f"获取GateIO合约账户余额失败: {balance_error}，将继续交易测试")
+                if not contract_found or not open_order:
+                    logger.error("无法找到合适的GateIO合约格式或下单失败")
+                    return False
                 
-                # 设置合约参数
-                leverage_set = False
-                try:
-                    # 使用GateIO专用API设置杠杆
-                    leverage_params = {
-                        'settle': 'usdt',
-                        'contract': contract_symbol.replace('/', '_'), # 转换为GateIO的格式
-                        'leverage': str(leverage)
-                    }
-                    
-                    # 记录原始请求URL和参数
-                    logger.info(f"尝试设置GateIO杠杆: {leverage_params}")
-                    
-                    # 设置杠杆
-                    response = exchange.privateFuturesPostSettlePositionsSize(leverage_params)
-                    logger.info(f"设置杠杆响应: {response}")
-                    leverage_set = True
-                except Exception as e:
-                    logger.warning(f"设置GateIO杠杆失败: {e}, 将在订单参数中指定")
+                # 等待订单处理
+                time.sleep(3)
                 
-                # 1. 开仓 - 市价买入多头
-                buy_params = {
-                    'leverage': leverage,     # 指定杠杆
-                    'margin_mode': margin_mode,  # cross 或 isolated
-                    'settle': 'usdt',         # 结算货币
-                    'createMarketBuyOrderRequiresPrice': False,  # 确保不需要价格参数
-                    # 下面这些参数确保交易在合约账户下进行
-                    'type': 'futures',        # 明确指定是期货
-                    'unified': True,          # 统一账户标志
+                # 7. 执行平仓操作
+                close_params = {
+                    'leverage': leverage,
+                    'marginMode': margin_mode,
+                    'reduceOnly': True
                 }
                 
-                # 获取最新价格
-                try:
-                    ticker = exchange.fetch_ticker(contract_symbol)
-                    current_price = ticker['last']
-                    logger.info(f"当前价格: {current_price}")
-                except Exception as e:
-                    logger.warning(f"获取价格失败: {e}")
-                    current_price = 0
+                logger.info(f"平仓参数: {close_params}")
+                close_order = exchange.create_market_sell_order(
+                    symbol=contract_symbol,
+                    amount=quantity,
+                    params=close_params
+                )
                 
-                # 计算数量 - 确保用于合约账户
-                if current_price > 0:
-                    contract_qty = (amount * leverage) / current_price
-                    logger.info(f"计算合约数量: {contract_qty} (价值={amount * leverage})")
+                logger.info(f"平仓订单结果: {close_order}")
+                
+                # 8. 验证交易结果
+                if open_order and close_order:
+                    logger.info(f"GateIO 合约交易测试成功!")
+                    return True
                 else:
-                    contract_qty = amount  # 如果无法获取价格，使用默认值
-                
-                logger.info(f"GateIO 开仓参数: {buy_params}")
-                
-                # 使用专用的futures API端点下单，而不是通用的create_market_buy_order
-                try:
-                    future_order_params = {
-                        'settle': 'usdt',
-                        'contract': contract_symbol.replace('/', '_'),  # DOGE/USDT -> DOGE_USDT
-                        'size': int(contract_qty),  # 合约数量，可能需要转为整数
-                        'price': '0',  # 市价单使用0
-                        'tif': 'ioc',  # 立即成交或取消
-                        'text': 'test_api_order',  # 订单备注
-                        # 其他必要参数
-                        'iceberg': 0,
-                        'close': False,
-                        'reduce_only': False
-                    }
-                    
-                    logger.info(f"创建GateIO合约订单参数: {future_order_params}")
-                    
-                    # 使用专门的futures API下单
-                    buy_order = exchange.privateFuturesPostSettleOrders(future_order_params)
-                    logger.info(f"GateIO 合约开仓结果: {buy_order}")
-                    
-                    # 等待订单处理
-                    time.sleep(3)
-                    
-                    # 查询持仓 - 使用专用API
-                    try:
-                        # 使用专用API查询持仓
-                        positions_params = {
-                            'settle': 'usdt',
-                            'contract': contract_symbol.replace('/', '_'),
-                        }
-                        
-                        # 获取持仓信息
-                        positions_response = exchange.privateFuturesGetSettlePositions(positions_params)
-                        logger.info(f"GateIO 合约持仓查询结果: {positions_response}")
-                        
-                        # 分析持仓信息，确认开仓成功
-                        if positions_response and len(positions_response) > 0:
-                            long_position = None
-                            for pos in positions_response:
-                                if pos.get('size', 0) > 0 and pos.get('side', '') == 'long':
-                                    long_position = pos
-                                    break
-                            
-                            if long_position:
-                                logger.info(f"GateIO 确认多头持仓: {long_position}")
-                                position_size = float(long_position.get('size', contract_qty))
-                                
-                                # 2. 执行平仓操作
-                                close_params = {
-                                    'settle': 'usdt',
-                                    'contract': contract_symbol.replace('/', '_'),
-                                    'size': int(position_size),  # 持仓量
-                                    'price': '0',  # 市价单
-                                    'tif': 'ioc',
-                                    'text': 'test_api_close',
-                                    'iceberg': 0,
-                                    'close': True,  # 平仓标记
-                                    'reduce_only': True  # 仅减仓
-                                }
-                                
-                                logger.info(f"GateIO 平仓参数: {close_params}")
-                                
-                                # 执行平仓
-                                sell_order = exchange.privateFuturesPostSettleOrders(close_params)
-                                logger.info(f"GateIO 平仓结果: {sell_order}")
-                                
-                                # 验证测试结果
-                                if buy_order and sell_order:
-                                    logger.info("GateIO 合约交易测试成功！")
-                                    return True
-                                else:
-                                    logger.error("GateIO 合约交易测试失败！")
-                                    return False
-                            else:
-                                logger.error("未能确认GateIO多头持仓，交易测试失败")
-                                return False
-                        else:
-                            logger.error("未查询到GateIO持仓信息，交易测试失败")
-                            return False
-                    
-                    except Exception as position_error:
-                        logger.error(f"查询GateIO持仓失败: {position_error}")
-                        logger.error(traceback.format_exc())
-                        return False
-                    
-                except Exception as order_error:
-                    logger.error(f"创建GateIO合约订单失败: {order_error}")
-                    logger.error(traceback.format_exc())
+                    logger.error(f"GateIO 合约交易测试失败 - 订单未完成")
                     return False
-            
+                
             except Exception as e:
                 logger.error(f"GateIO 合约交易测试失败: {e}")
                 logger.error(traceback.format_exc())
