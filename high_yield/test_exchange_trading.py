@@ -618,14 +618,20 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
                 # 确保使用期货API
                 exchange.options['defaultType'] = 'delivery'  # 或者 'futures'，取决于 GateIO 的配置
                 
+                # 设置createMarketBuyOrderRequiresPrice为False，解决市价买入问题
+                exchange.options['createMarketBuyOrderRequiresPrice'] = False
+                
                 # 获取市场信息以确认交易对可用
                 market = exchange.market(contract_symbol)
                 logger.info(f"GateIO 合约市场信息: {market}")
                 
-                # 查询当前账户信息 - 修复余额查询问题
+                # 查询当前账户信息 - 使用专门函数获取GateIO合约余额
                 try:
-                    balance = exchange.fetch_balance({'type': 'futures'})  # 明确指定是期货账户
-                    logger.info(f"GateIO 合约账户余额: {balance.get('USDT', {}).get('free', 'unknown')} USDT")
+                    # 导入必要的函数，如果在同一个文件中，可以直接调用
+                    from high_yield.test_exchange_balance import test_gateio_futures_balance
+                    
+                    gateio_balance = test_gateio_futures_balance(exchange, 'USDT')
+                    logger.info(f"GateIO 合约账户余额: {gateio_balance} USDT")
                 except Exception as balance_error:
                     logger.warning(f"获取GateIO合约账户余额失败: {balance_error}，将继续交易测试")
                 
@@ -634,10 +640,17 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
                     'leverage': leverage,  # 指定杠杆
                     'margin_mode': margin_mode,  # cross 或 isolated
                     'settle': 'usdt',  # 结算货币
+                    'createMarketBuyOrderRequiresPrice': False,  # 确保不需要价格参数
                 }
                 
                 logger.info(f"GateIO 开仓参数: {buy_params}")
-                buy_order = exchange.create_market_buy_order(contract_symbol, quantity, params=buy_params)
+                
+                # 市价买入需要特殊处理，直接传入合约价值而不是数量
+                contract_value = amount * leverage  # 使用杠杆后的合约价值
+                logger.info(f"GateIO 合约价值: {contract_value} USDT (amount={amount}, leverage={leverage})")
+                
+                # 创建市价买入订单，amount参数传入USDT价值而非数量
+                buy_order = exchange.create_market_buy_order(contract_symbol, contract_value, params=buy_params)
                 logger.info(f"GateIO 开仓结果: {buy_order}")
                 
                 # 等待订单处理
