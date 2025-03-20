@@ -303,150 +303,92 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
             margin_mode=margin_mode
         )
         
-        # 设置合约参数
-        if exchange_id == "gateio":
-            logger.info(f"GateIO合约交易 - 简化健壮实现")
-            
+        # Binance 特殊处理 - 为了解决 "supports linear and inverse contracts only" 错误
+        if exchange_id == "binance":
+            logger.info(f"使用特殊方法设置 Binance 合约参数")
             try:
-                # 1. 准备基本变量
-                base_currency, quote_currency = symbol.split('/')
-                logger.info(f"交易基础货币: {base_currency}, 报价货币: {quote_currency}")
+                # 确保使用合约API
+                exchange.options['defaultType'] = 'future'
                 
-                # 定义可能的合约格式
-                possible_contract_formats = [
-                    f"{base_currency}/{quote_currency}",  # 标准格式 (DOGE/USDT)
-                    f"{base_currency}/{quote_currency}:USDT",  # 带后缀格式 (DOGE/USDT:USDT)
-                    f"{base_currency}{quote_currency}",  # 无分隔符格式 (DOGEUSDT)
-                    f"{base_currency}_{quote_currency}",  # 下划线分隔符格式 (DOGE_USDT)
-                    f"{base_currency.lower()}/{quote_currency.lower()}",  # 小写格式
-                    f"{base_currency.lower()}{quote_currency.lower()}"  # 小写无分隔符格式
-                ]
+                # 1. 首先设置杠杆倍数
+                leverage_params = {'symbol': contract_symbol, 'leverage': leverage}
+                leverage_response = exchange.fapiPrivatePostLeverage(leverage_params)
+                logger.info(f"Binance 设置杠杆倍数结果: {leverage_response}")
                 
-                # 2. 加载市场
-                logger.info("加载 GateIO 市场信息...")
-                exchange.load_markets(True)  # 强制重新加载市场数据
+                # 2. 然后设置保证金模式，明确指定合约类型为linear
+                margin_params = {
+                    'symbol': contract_symbol,
+                    'marginType': margin_mode.upper(),  # CROSS 或 ISOLATED
+                    'recvWindow': 60000
+                }
                 
-                # 3. 寻找支持的合约类型
-                for contract_type in ['swap', 'futures', 'delivery']:
-                    exchange.options['defaultType'] = contract_type
-                    logger.info(f"尝试合约类型: {contract_type}")
-                    
-                    # 尝试不同的合约格式
-                    for format_contract in possible_contract_formats:
-                        try:
-                            exchange.load_markets(False)  # 使用缓存的市场数据
-                            
-                            # 尝试获取市场信息
-                            if format_contract in exchange.markets:
-                                contract_symbol = format_contract
-                                market = exchange.markets[contract_symbol]
-                                logger.info(f"成功找到合约: {contract_symbol}, 类型: {market['type']}")
-                                
-                                # 4. 获取市场数据
-                                ticker = exchange.fetch_ticker(contract_symbol)
-                                current_price = ticker['last']
-                                logger.info(f"当前价格: {current_price}")
-                                
-                                # 5. 计算交易数量
-                                quantity = (amount * leverage) / current_price
-                                
-                                # 根据市场精度调整
-                                if 'precision' in market and 'amount' in market['precision']:
-                                    precision = market['precision']['amount']
-                                    if isinstance(precision, int):
-                                        quantity = round(quantity, precision)
-                                    else:
-                                        quantity = float(int(quantity))
-                                
-                                logger.info(f"计划交易数量: {quantity} (价值 {amount * leverage} USDT)")
-                                
-                                # 6. 执行开仓操作
-                                open_params = {
-                                    'leverage': leverage,
-                                    'marginMode': margin_mode
-                                }
-                                
-                                logger.info(f"开仓参数: {open_params}")
-                                open_order = exchange.create_market_buy_order(
-                                    symbol=contract_symbol,
-                                    amount=quantity,
-                                    params=open_params
-                                )
-                                
-                                logger.info(f"开仓订单结果: {open_order}")
-                                
-                                # 等待订单处理
-                                time.sleep(3)
-                                
-                                # 7. 执行平仓操作
-                                close_params = open_params.copy()
-                                close_params['reduceOnly'] = True
-                                
-                                logger.info(f"平仓参数: {close_params}")
-                                close_order = exchange.create_market_sell_order(
-                                    symbol=contract_symbol,
-                                    amount=quantity,
-                                    params=close_params
-                                )
-                                
-                                logger.info(f"平仓订单结果: {close_order}")
-                                
-                                # 8. 验证交易结果
-                                if open_order and close_order:
-                                    logger.info(f"GateIO 合约交易测试成功!")
-                                    return True
-                                else:
-                                    logger.error(f"GateIO 合约交易测试失败 - 订单未完成")
-                                    return False
-                            
-                        except Exception as format_error:
-                            logger.warning(f"合约格式 {format_contract} 不可用: {format_error}")
-                            continue
-                
-                # 如果所有尝试都失败
-                logger.error(f"无法找到合适的GateIO合约格式，尝试使用直接方法")
-                
-                # 最后尝试 - 直接使用原始合约符号
+                # 尝试设置保证金模式，如果已经是该模式则忽略错误
                 try:
-                    exchange.options['defaultType'] = 'swap'  # 使用永续合约
-                    
-                    # 尝试使用标准CCXT方法
-                    open_order = exchange.create_market_buy_order(
-                        symbol=contract_symbol,
-                        amount=quantity,
-                        params={'leverage': leverage}
-                    )
-                    
-                    logger.info(f"直接方法开仓结果: {open_order}")
-                    
-                    time.sleep(3)
-                    
-                    close_order = exchange.create_market_sell_order(
-                        symbol=contract_symbol,
-                        amount=quantity,
-                        params={'reduceOnly': True}
-                    )
-                    
-                    logger.info(f"直接方法平仓结果: {close_order}")
-                    
-                    logger.info("GateIO 合约交易测试（直接方法）成功!")
+                    margin_response = exchange.fapiPrivatePostMarginType(margin_params)
+                    logger.info(f"Binance 设置保证金模式结果: {margin_response}")
+                except Exception as margin_error:
+                    if "No need to change margin type" in str(margin_error):
+                        logger.info(f"Binance 已经是 {margin_mode} 模式，无需更改")
+                    else:
+                        raise margin_error
+                
+                # 3. 获取当前市场价格
+                ticker = exchange.fetch_ticker(contract_symbol)
+                current_price = ticker['last']
+                logger.info(f"当前 {contract_symbol} 价格: {current_price}")
+                
+                # 4. 计算合约数量 (考虑杠杆)
+                base_currency, quote_currency = symbol.split('/')
+                contract_value = amount * leverage
+                quantity = contract_value / current_price
+                
+                # 调整为合约要求的精度
+                market = exchange.market(contract_symbol)
+                if 'precision' in market and 'amount' in market['precision']:
+                    precision = market['precision']['amount']
+                    quantity = round(quantity, precision) if isinstance(precision, int) else float(int(quantity))
+                
+                logger.info(f"计划开多数量: {quantity} (价值约 {contract_value} USDT，实际保证金约 {amount} USDT)")
+                
+                # 5. 开仓 - 市价买入开多
+                buy_params = {
+                    'positionSide': 'BOTH'  # 单向持仓模式
+                }
+                
+                logger.info(f"Binance 开仓参数: {buy_params}")
+                buy_order = exchange.create_market_buy_order(contract_symbol, quantity, params=buy_params)
+                logger.info(f"开仓订单结果: {buy_order}")
+                
+                # 等待订单完成
+                time.sleep(3)
+                
+                # 6. 平仓 - 市价卖出平多
+                sell_params = {
+                    'positionSide': 'BOTH',  # 单向持仓模式
+                    'reduceOnly': True  # 确保是平仓操作
+                }
+                
+                logger.info(f"Binance 平仓参数: {sell_params}")
+                sell_order = exchange.create_market_sell_order(contract_symbol, quantity, params=sell_params)
+                logger.info(f"平仓订单结果: {sell_order}")
+                
+                # 判断测试是否成功
+                if buy_order and sell_order:
+                    logger.info(f"Binance 合约交易测试成功！")
                     return True
-                    
-                except Exception as direct_error:
-                    logger.error(f"直接方法也失败: {direct_error}")
-                    logger.error(traceback.format_exc())
+                else:
+                    logger.error(f"Binance 合约交易测试失败！")
                     return False
-            
+                
             except Exception as e:
-                logger.error(f"GateIO 合约交易初始化失败: {e}")
+                logger.error(f"Binance 合约交易测试失败: {e}")
                 logger.error(traceback.format_exc())
                 return False
-        else:
-            # 其他交易所正常设置合约参数
-            if not setup_contract_settings(exchange, exchange_id, symbol, args):
-                logger.error(f"设置 {exchange_id} 合约参数失败")
-                return False
-        
+        # 其他交易所正常设置合约参数        
+        elif not setup_contract_settings(exchange, exchange_id, symbol, args):
+            logger.error(f"设置 {exchange_id} 合约参数失败")
+            return False
+            
         # 2. 获取当前市场价格
         ticker = None
         if exchange_id == "binance":
@@ -673,6 +615,38 @@ def test_futures_trading(exchange, exchange_id, symbol, amount, leverage):
     except Exception as e:
         logger.error(f"测试 {exchange_id} 合约交易失败: {e}")
         logger.error(traceback.format_exc())
+        return False
+
+def verify_contract_exists(exchange, exchange_id, contract_symbol):
+    """验证合约是否存在并可交易"""
+    try:
+        if exchange_id == "binance":
+            exchange.options['defaultType'] = 'future'
+        elif exchange_id == "okx":
+            exchange.options['defaultType'] = 'swap'
+        elif exchange_id == "bitget":
+            exchange.options['defaultType'] = 'swap'
+        
+        # 加载市场
+        exchange.load_markets(True)
+        
+        # 检查合约是否存在
+        if contract_symbol in exchange.markets:
+            market = exchange.markets[contract_symbol]
+            active = market.get('active', False)
+            
+            if active:
+                logger.info(f"合约 {contract_symbol} 存在且激活")
+                return True
+            else:
+                logger.warning(f"合约 {contract_symbol} 存在但未激活")
+                return False
+        else:
+            logger.warning(f"合约 {contract_symbol} 不存在")
+            return False
+            
+    except Exception as e:
+        logger.error(f"验证合约存在性失败: {e}")
         return False
 
 def main():
