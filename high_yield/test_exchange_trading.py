@@ -16,13 +16,13 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(current_dir, '..'))
 
 from config import proxies  # 从配置中导入代理设置
+from tools.logger import logger
 
 # 导入hedging_trade.py中的相关函数和配置
-from high_yield.hedging_trade import (
+from high_yield.exchange_base import (
     init_exchanges, 
     get_contract_symbol,
     setup_contract_settings,
-    logger
 )
 def setup_test_logger():
     """配置测试用的日志"""
