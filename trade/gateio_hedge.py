@@ -109,9 +109,6 @@ class GateioHedgeTrader:
             self.contract_size = float(contract_spec.get('contractSize', 1))
             logger.info(f"使用合约乘数: {self.contract_size}")
             
-            # 设置合约为全仓模式
-            await self.futures_exchange.set_position_mode(False)
-            
             # 设置合约杠杆
             await self.futures_exchange.set_leverage(self.leverage, self.contract_symbol)
             logger.info(f"设置Gate.io合约杠杆倍数为: {self.leverage}倍")
@@ -331,7 +328,8 @@ class GateioHedgeTrader:
                     amount=futures_amount,
                     params={
                         "reduceOnly": False,
-                        "marginMode": "cross"
+                        "marginMode": "cross",  # 设置为全仓模式
+                        "crossLeverageLimit": self.leverage,  # 设置全仓杠杆
                     }
                 )
             )
