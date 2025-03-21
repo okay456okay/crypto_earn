@@ -77,6 +77,29 @@ class HedgeTrader:
         
         logger.info(f"初始化完成: 交易对={symbol}, 合约对={self.contract_symbol}, "
                    f"最小价差={min_spread*100}%, 杠杆={leverage}倍")
+        
+        # 在初始化时获取并保存账户余额
+        try:
+            self.gateio_usdt, self.bitget_usdt = self.check_balances()
+            
+            # 提前检查余额是否满足交易要求
+            if self.spot_amount is not None:
+                # 获取当前市场价格做预估
+                orderbook = self.gateio.fetch_order_book(self.symbol)
+                current_price = float(orderbook['asks'][0][0])  # 使用卖1价
+                
+                required_usdt = float(self.spot_amount) * current_price * 1.02  # 加2%作为手续费缓冲
+                required_margin = float(self.spot_amount) * current_price / self.leverage * 1.05  # 加5%作为保证金缓冲
+                
+                if required_usdt > self.gateio_usdt:
+                    raise Exception(f"Gate.io USDT余额不足，需要约 {required_usdt:.2f} USDT，当前余额 {self.gateio_usdt:.2f} USDT")
+                if required_margin > self.bitget_usdt:
+                    raise Exception(f"Bitget USDT保证金不足，需要约 {required_margin:.2f} USDT，当前余额 {self.bitget_usdt:.2f} USDT")
+                
+                logger.info(f"账户余额检查通过 - 预估所需Gate.io: {required_usdt:.2f} USDT, Bitget: {required_margin:.2f} USDT")
+        except Exception as e:
+            logger.error(f"初始化账户余额检查失败: {str(e)}")
+            raise
 
     def check_balances(self):
         """
@@ -159,26 +182,23 @@ class HedgeTrader:
             spread_percent, gateio_ask, bitget_bid, gateio_ask_volume, bitget_bid_volume = \
                 self.wait_for_spread()
             
-            # 检查账户余额
-            gateio_usdt, bitget_usdt = self.check_balances()
-            
-            # 使用指定的交易数量
+            # 使用已保存的账户余额检查是否满足交易条件
             trade_amount = self.spot_amount
             
-            # 检查余额是否足够
-            required_usdt = float(trade_amount) * float(gateio_ask) * 1.02  # 加2%作为手续费缓冲
-            if required_usdt > gateio_usdt:
-                raise Exception(f"Gate.io USDT余额不足，需要 {required_usdt} USDT，当前余额 {gateio_usdt} USDT")
+            # 使用最新价格重新检查余额是否足够
+            required_usdt = float(trade_amount) * float(gateio_ask) * 1.02
+            required_margin = float(trade_amount) * float(bitget_bid) / self.leverage * 1.05
             
-            required_margin = float(trade_amount) * float(bitget_bid) / self.leverage * 1.05  # 加5%作为保证金缓冲
-            if required_margin > bitget_usdt:
-                raise Exception(f"Bitget USDT保证金不足，需要 {required_margin} USDT，当前余额 {bitget_usdt} USDT")
+            if required_usdt > self.gateio_usdt:
+                raise Exception(f"Gate.io USDT余额不足，需要 {required_usdt:.2f} USDT，当前余额 {self.gateio_usdt:.2f} USDT")
+            if required_margin > self.bitget_usdt:
+                raise Exception(f"Bitget USDT保证金不足，需要 {required_margin:.2f} USDT，当前余额 {self.bitget_usdt:.2f} USDT")
             
             logger.info(f"计划交易数量: {trade_amount} {self.symbol.split('/')[0]}")
             
-            # 执行Gate.io现货市价买入
+            # 立即执行Gate.io现货市价买入
             cost = float(trade_amount) * float(gateio_ask)
-            logger.info(f"在Gate.io市价买入 {trade_amount} {self.symbol.split('/')[0]}, 预估成本: {cost} USDT")
+            logger.info(f"在Gate.io市价买入 {trade_amount} {self.symbol.split('/')[0]}, 预估成本: {cost:.2f} USDT")
             
             spot_order = self.gateio.create_market_buy_order(
                 symbol=self.symbol,
@@ -307,9 +327,6 @@ def main():
             min_spread=args.min_spread,
             leverage=args.leverage
         )
-        
-        # 检查初始账户状态
-        trader.check_balances()
         
         # 执行对冲交易（包含价差检查和重试逻辑）
         spot_order, contract_order = trader.execute_hedge_trade()
