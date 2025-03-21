@@ -86,8 +86,18 @@ class GateioHedgeTrader:
     async def initialize(self):
         """初始化交易环境，包括设置合约参数和检查账户余额"""
         try:
-            # 获取合约规格并详细打印
-            contract_spec = await self.futures_exchange.fetch_market(self.contract_symbol)
+            # 获取所有市场信息
+            markets = await self.futures_exchange.fetch_markets()
+            # 找到对应的合约市场信息
+            contract_spec = None
+            for market in markets:
+                if market['symbol'] == self.contract_symbol:
+                    contract_spec = market
+                    break
+            
+            if not contract_spec:
+                raise Exception(f"未找到合约 {self.contract_symbol} 的市场信息")
+            
             logger.info("合约规格详情:")
             logger.info(f"- 合约乘数(contractSize): {contract_spec.get('contractSize')}")
             logger.info(f"- 最小下单量(minAmount): {contract_spec.get('limits', {}).get('amount', {}).get('min')}")
