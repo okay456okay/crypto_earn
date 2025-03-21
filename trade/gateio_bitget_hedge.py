@@ -33,7 +33,7 @@ class HedgeTrader:
     现货-合约对冲交易类，实现Gate.io现货买入与Bitget合约空单对冲
     """
     
-    def __init__(self, symbol, spot_amount=None, min_spread=0.001, leverage=20):
+    async def __init__(self, symbol, spot_amount=None, min_spread=0.001, leverage=20):
         """
         初始化对冲交易器
         
@@ -71,7 +71,7 @@ class HedgeTrader:
         # 设置Bitget合约参数
         try:
             # 设置合约杠杆
-            self.bitget.set_leverage(self.leverage, self.contract_symbol)
+            await self.bitget.set_leverage(self.leverage, self.contract_symbol)
             logger.info(f"设置Bitget合约杠杆倍数为: {leverage}倍")
         except Exception as e:
             logger.error(f"设置合约杠杆失败: {str(e)}")
@@ -82,12 +82,12 @@ class HedgeTrader:
         
         # 在初始化时获取并保存账户余额
         try:
-            self.gateio_usdt, self.bitget_usdt = self.check_balances()
+            self.gateio_usdt, self.bitget_usdt = await self.check_balances()
             
             # 提前检查余额是否满足交易要求
             if self.spot_amount is not None:
                 # 获取当前市场价格做预估
-                orderbook = self.gateio.fetch_order_book(self.symbol)
+                orderbook = await self.gateio.fetch_order_book(self.symbol)
                 current_price = float(orderbook['asks'][0][0])  # 使用卖1价
                 
                 required_usdt = float(self.spot_amount) * current_price * 1.02  # 加2%作为手续费缓冲
@@ -103,7 +103,7 @@ class HedgeTrader:
             logger.error(f"初始化账户余额检查失败: {str(e)}")
             raise
 
-    def check_balances(self):
+    async def check_balances(self):
         """
         检查Gate.io和Bitget的账户余额
         
@@ -111,12 +111,13 @@ class HedgeTrader:
             tuple: (gateio_balance, bitget_balance) - 返回两个交易所的USDT余额
         """
         try:
-            # 获取Gate.io现货账户USDT余额
-            gateio_balance = self.gateio.fetch_balance()
-            gateio_usdt = gateio_balance.get('USDT', {}).get('free', 0)
+            # 并行获取两个交易所的余额
+            gateio_balance, bitget_balance = await asyncio.gather(
+                self.gateio.fetch_balance(),
+                self.bitget.fetch_balance({'type': 'swap'})
+            )
             
-            # 获取Bitget合约账户USDT余额
-            bitget_balance = self.bitget.fetch_balance({'type': 'swap'})
+            gateio_usdt = gateio_balance.get('USDT', {}).get('free', 0)
             bitget_usdt = bitget_balance.get('USDT', {}).get('free', 0)
             
             logger.info(f"账户余额 - Gate.io: {gateio_usdt} USDT, Bitget: {bitget_usdt} USDT")
@@ -126,7 +127,7 @@ class HedgeTrader:
             logger.error(f"检查余额时出错: {str(e)}")
             raise
 
-    def check_price_spread(self):
+    async def check_price_spread(self):
         """
         检查Gate.io现货卖1价格和Bitget合约买1价格之间的价差
         
@@ -135,16 +136,17 @@ class HedgeTrader:
                   - 价差百分比, Gate.io卖1价, Bitget买1价, Gate.io卖1量, Bitget买1量
         """
         try:
-            # 获取Gate.io现货订单簿
-            gateio_orderbook = self.gateio.fetch_order_book(self.symbol)
-            gateio_ask = Decimal(str(gateio_orderbook['asks'][0][0]))  # 卖1价
-            gateio_ask_volume = Decimal(str(gateio_orderbook['asks'][0][1]))  # 卖1量
-            self.gateio.fetch_tickers()
+            # 并行获取两个交易所的订单簿
+            gateio_orderbook, bitget_orderbook = await asyncio.gather(
+                self.gateio.fetch_order_book(self.symbol),
+                self.bitget.fetch_order_book(self.contract_symbol)
+            )
             
-            # 获取Bitget合约订单簿
-            bitget_orderbook = self.bitget.fetch_order_book(self.contract_symbol)
-            bitget_bid = Decimal(str(bitget_orderbook['bids'][0][0]))  # 买1价
-            bitget_bid_volume = Decimal(str(bitget_orderbook['bids'][0][1]))  # 买1量
+            gateio_ask = Decimal(str(gateio_orderbook['asks'][0][0]))
+            gateio_ask_volume = Decimal(str(gateio_orderbook['asks'][0][1]))
+            
+            bitget_bid = Decimal(str(bitget_orderbook['bids'][0][0]))
+            bitget_bid_volume = Decimal(str(bitget_orderbook['bids'][0][1]))
             
             # 计算价差
             spread = bitget_bid - gateio_ask
@@ -160,7 +162,7 @@ class HedgeTrader:
             logger.error(f"检查价差时出错: {str(e)}")
             raise
 
-    def wait_for_spread(self):
+    async def wait_for_spread(self):
         """
         等待价差达到要求
         
@@ -168,7 +170,7 @@ class HedgeTrader:
             tuple: (spread_percent, gateio_ask, bitget_bid, gateio_ask_volume, bitget_bid_volume)
         """
         while True:
-            spread_data = self.check_price_spread()
+            spread_data = await self.check_price_spread()
             spread_percent = spread_data[0]
             
             if spread_percent >= self.min_spread:
@@ -176,7 +178,7 @@ class HedgeTrader:
                 return spread_data
             
             logger.info(f"价差条件不满足: {spread_percent*100:.4f}% < {self.min_spread*100:.4f}%, 等待1秒后重试...")
-            time.sleep(1)
+            await asyncio.sleep(1)
 
     async def execute_hedge_trade(self):
         """执行对冲交易：在Gate.io买入现货，同时在Bitget开空单"""
@@ -318,6 +320,15 @@ def parse_arguments():
     return parser.parse_args()
 
 
+async def create_trader(symbol, spot_amount, min_spread, leverage):
+    """
+    创建交易器的工厂函数
+    """
+    trader = HedgeTrader(symbol, spot_amount, min_spread, leverage)
+    await trader.__init__(symbol, spot_amount, min_spread, leverage)
+    return trader
+
+
 async def main():
     """
     异步主函数
@@ -325,7 +336,8 @@ async def main():
     args = parse_arguments()
     
     try:
-        trader = HedgeTrader(
+        # 使用工厂函数创建trader实例
+        trader = await create_trader(
             symbol=args.symbol,
             spot_amount=args.amount,
             min_spread=args.min_spread,
@@ -346,5 +358,10 @@ async def main():
 
 
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    sys.exit(loop.run_until_complete(main())) 
+    # 使用新的事件循环
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        sys.exit(loop.run_until_complete(main()))
+    finally:
+        loop.close() 
