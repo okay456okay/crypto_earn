@@ -162,18 +162,17 @@ class HedgeTrader:
             # 检查账户余额
             gateio_usdt, bitget_usdt = self.check_balances()
             
-            # 计算交易数量
-            if self.spot_amount is None:
-                # 如果未指定数量，计算最大可用数量
-                max_spot_amount = gateio_usdt / gateio_ask * 0.98  # 留出2%作为手续费缓冲
-                max_contract_amount = (bitget_usdt * self.leverage) / bitget_bid * 0.95  # 合约留出5%保证金
-                
-                # 取较小值作为交易数量
-                trade_amount = min(max_spot_amount, max_contract_amount, 
-                                 gateio_ask_volume, bitget_bid_volume)
-                trade_amount = self.gateio.amount_to_precision(self.symbol, trade_amount)
-            else:
-                trade_amount = self.spot_amount
+            # 使用指定的交易数量
+            trade_amount = self.spot_amount
+            
+            # 检查余额是否足够
+            required_usdt = float(trade_amount) * float(gateio_ask) * 1.02  # 加2%作为手续费缓冲
+            if required_usdt > gateio_usdt:
+                raise Exception(f"Gate.io USDT余额不足，需要 {required_usdt} USDT，当前余额 {gateio_usdt} USDT")
+            
+            required_margin = float(trade_amount) * float(bitget_bid) / self.leverage * 1.05  # 加5%作为保证金缓冲
+            if required_margin > bitget_usdt:
+                raise Exception(f"Bitget USDT保证金不足，需要 {required_margin} USDT，当前余额 {bitget_usdt} USDT")
             
             logger.info(f"计划交易数量: {trade_amount} {self.symbol.split('/')[0]}")
             
@@ -288,7 +287,7 @@ def parse_arguments():
     """
     parser = argparse.ArgumentParser(description='Gate.io现货与Bitget合约对冲交易')
     parser.add_argument('-s', '--symbol', type=str, required=True, help='交易对符号，例如 ETH/USDT')
-    parser.add_argument('-a', '--amount', type=float, help='购买的现货数量，不指定则使用最大可用USDT')
+    parser.add_argument('-a', '--amount', type=float, required=True, help='购买的现货数量')
     parser.add_argument('-p', '--min-spread', type=float, default=0.001, help='最小价差要求，默认0.001 (0.1%%)')
     parser.add_argument('-l', '--leverage', type=int, default=20, help='合约杠杆倍数，默认20倍')
     return parser.parse_args()
