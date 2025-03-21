@@ -21,6 +21,9 @@ from decimal import Decimal
 import ccxt.async_support as ccxt  # 使用异步版本的ccxt
 import asyncio
 import aiohttp
+import ccxt.pro as ccxtpro  # 使用 ccxt pro 版本
+from collections import defaultdict
+from typing import Dict, Optional
 
 # 添加项目根目录到系统路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -46,15 +49,15 @@ class HedgeTrader:
         base, quote = symbol.split('/')
         self.contract_symbol = f"{base}/{quote}:{quote}"  # 例如: ETH/USDT:USDT
         
-        # 初始化交易所实例
-        self.gateio = ccxt.gateio({
+        # 使用 ccxt pro 初始化交易所
+        self.gateio = ccxtpro.gateio({
             'apiKey': gateio_api_key,
             'secret': gateio_api_secret,
             'enableRateLimit': True,
             'proxies': proxies,
         })
         
-        self.bitget = ccxt.bitget({
+        self.bitget = ccxtpro.bitget({
             'apiKey': bitget_api_key,
             'secret': bitget_api_secret,
             'password': bitget_api_passphrase,
@@ -64,6 +67,16 @@ class HedgeTrader:
         
         self.gateio_usdt = None
         self.bitget_usdt = None
+        
+        # 用于存储最新订单簿数据
+        self.orderbooks = {
+            'gateio': None,
+            'bitget': None
+        }
+        
+        # 用于控制WebSocket订阅
+        self.ws_running = False
+        self.price_updates = asyncio.Queue()
 
     async def initialize(self):
         """
@@ -123,66 +136,124 @@ class HedgeTrader:
             logger.error(f"检查余额时出错: {str(e)}")
             raise
 
-    async def check_price_spread(self):
-        """
-        检查Gate.io现货卖1价格和Bitget合约买1价格之间的价差
-        
-        Returns:
-            tuple: (spread_percent, gateio_ask, bitget_bid, gateio_ask_volume, bitget_bid_volume)
-                  - 价差百分比, Gate.io卖1价, Bitget买1价, Gate.io卖1量, Bitget买1量
-        """
+    async def subscribe_orderbooks(self):
+        """订阅交易对的订单簿数据"""
         try:
-            # 并行获取两个交易所的订单簿
-            gateio_orderbook, bitget_orderbook = await asyncio.gather(
-                self.gateio.fetch_order_book(self.symbol),
-                self.bitget.fetch_order_book(self.contract_symbol)
-            )
+            self.ws_running = True
+            while self.ws_running:
+                try:
+                    # 并行订阅两个交易所的订单簿
+                    gateio_ob = self.gateio.watch_order_book(self.symbol)
+                    bitget_ob = self.bitget.watch_order_book(self.contract_symbol)
+                    
+                    # 等待任意一个订单簿更新
+                    done, pending = await asyncio.wait(
+                        [gateio_ob, bitget_ob],
+                        return_when=asyncio.FIRST_COMPLETED
+                    )
+                    
+                    # 处理完成的任务
+                    for task in done:
+                        try:
+                            ob = await task
+                            if task == gateio_ob:
+                                self.orderbooks['gateio'] = ob
+                            else:
+                                self.orderbooks['bitget'] = ob
+                            
+                            # 如果两个订单簿都有数据，检查价差
+                            if self.orderbooks['gateio'] and self.orderbooks['bitget']:
+                                await self.check_spread_from_orderbooks()
+                            
+                        except Exception as e:
+                            logger.error(f"处理订单簿数据时出错: {str(e)}")
+                    
+                    # 取消未完成的任务
+                    for task in pending:
+                        task.cancel()
+                        
+                except Exception as e:
+                    logger.error(f"订阅订单簿时出错: {str(e)}")
+                    await asyncio.sleep(1)  # 出错后等待一秒再重试
+                    
+        except Exception as e:
+            logger.error(f"订单簿订阅循环出错: {str(e)}")
+        finally:
+            self.ws_running = False
+
+    async def check_spread_from_orderbooks(self):
+        """从已缓存的订单簿数据中检查价差"""
+        try:
+            gateio_ob = self.orderbooks['gateio']
+            bitget_ob = self.orderbooks['bitget']
             
-            gateio_ask = Decimal(str(gateio_orderbook['asks'][0][0]))
-            gateio_ask_volume = Decimal(str(gateio_orderbook['asks'][0][1]))
+            if not gateio_ob or not bitget_ob:
+                return
             
-            bitget_bid = Decimal(str(bitget_orderbook['bids'][0][0]))
-            bitget_bid_volume = Decimal(str(bitget_orderbook['bids'][0][1]))
+            gateio_ask = Decimal(str(gateio_ob['asks'][0][0]))
+            gateio_ask_volume = Decimal(str(gateio_ob['asks'][0][1]))
             
-            # 计算价差
+            bitget_bid = Decimal(str(bitget_ob['bids'][0][0]))
+            bitget_bid_volume = Decimal(str(bitget_ob['bids'][0][1]))
+            
             spread = bitget_bid - gateio_ask
             spread_percent = spread / gateio_ask
             
-            logger.info(f"价格检查 - Gate.io卖1: {gateio_ask} (量: {gateio_ask_volume}), "
-                        f"Bitget买1: {bitget_bid} (量: {bitget_bid_volume}), "
-                        f"价差: {spread_percent*100:.4f}%")
-            
-            return float(spread_percent), float(gateio_ask), float(bitget_bid), float(gateio_ask_volume), float(bitget_bid_volume)
+            # 将价差数据放入队列
+            spread_data = {
+                'spread_percent': float(spread_percent),
+                'gateio_ask': float(gateio_ask),
+                'bitget_bid': float(bitget_bid),
+                'gateio_ask_volume': float(gateio_ask_volume),
+                'bitget_bid_volume': float(bitget_bid_volume)
+            }
+            await self.price_updates.put(spread_data)
             
         except Exception as e:
-            logger.error(f"检查价差时出错: {str(e)}")
-            raise
+            logger.error(f"检查订单簿价差时出错: {str(e)}")
 
     async def wait_for_spread(self):
-        """
-        等待价差达到要求
-        
-        Returns:
-            tuple: (spread_percent, gateio_ask, bitget_bid, gateio_ask_volume, bitget_bid_volume)
-        """
-        while True:
-            spread_data = await self.check_price_spread()
-            spread_percent = spread_data[0]
+        """等待价差达到要求"""
+        try:
+            # 启动WebSocket订阅
+            subscription_task = asyncio.create_task(self.subscribe_orderbooks())
             
-            if spread_percent >= self.min_spread:
-                logger.info(f"价差条件满足: {spread_percent*100:.4f}% >= {self.min_spread*100:.4f}%")
-                return spread_data
-            
-            logger.info(f"价差条件不满足: {spread_percent*100:.4f}% < {self.min_spread*100:.4f}%, 等待1秒后重试...")
-            await asyncio.sleep(1)
+            while True:
+                # 从队列中获取最新价差数据
+                spread_data = await self.price_updates.get()
+                spread_percent = spread_data['spread_percent']
+                
+                logger.info(f"价格检查 - Gate.io卖1: {spread_data['gateio_ask']} (量: {spread_data['gateio_ask_volume']}), "
+                           f"Bitget买1: {spread_data['bitget_bid']} (量: {spread_data['bitget_bid_volume']}), "
+                           f"价差: {spread_percent*100:.4f}%")
+                
+                if spread_percent >= self.min_spread:
+                    logger.info(f"价差条件满足: {spread_percent*100:.4f}% >= {self.min_spread*100:.4f}%")
+                    # 停止WebSocket订阅
+                    self.ws_running = False
+                    await subscription_task
+                    return (spread_percent, spread_data['gateio_ask'], spread_data['bitget_bid'],
+                           spread_data['gateio_ask_volume'], spread_data['bitget_bid_volume'])
+                
+                logger.info(f"价差条件不满足: {spread_percent*100:.4f}% < {self.min_spread*100:.4f}%")
+                
+        except Exception as e:
+            logger.error(f"等待价差时出错: {str(e)}")
+            raise
+        finally:
+            # 确保WebSocket订阅被停止
+            self.ws_running = False
+            if 'subscription_task' in locals():
+                await subscription_task
 
     async def execute_hedge_trade(self):
-        """执行对冲交易：在Gate.io买入现货，同时在Bitget开空单"""
+        """执行对冲交易"""
         try:
-            # 等待价差满足条件
-            spread_percent, gateio_ask, bitget_bid, gateio_ask_volume, bitget_bid_volume = \
-                await self.wait_for_spread()
+            # 等待价差满足条件（使用WebSocket数据）
+            spread_data = await self.wait_for_spread()
+            spread_percent, gateio_ask, bitget_bid, gateio_ask_volume, bitget_bid_volume = spread_data
             
+            # 立即执行下单，减少延迟
             trade_amount = self.spot_amount
             base_currency = self.symbol.split('/')[0]
             
@@ -205,25 +276,17 @@ class HedgeTrader:
             logger.info(f"在Bitget市价开空单 {contract_amount} {base_currency}")
             
             # 同时发起两个下单请求
-            spot_order_task = self.gateio.create_market_buy_order(
-                symbol=self.symbol,
-                amount=cost,
-                params={
-                    'createMarketBuyOrderRequiresPrice': False,
-                    'quoteOrderQty': True
-                }
-            )
-            
-            contract_order_task = self.bitget.create_market_sell_order(
-                symbol=self.contract_symbol,
-                amount=contract_amount,
-                params={"reduceOnly": False}
-            )
-            
-            # 等待两个订单都完成
             spot_order, contract_order = await asyncio.gather(
-                spot_order_task,
-                contract_order_task
+                self.gateio.create_market_buy_order(
+                    symbol=self.symbol,
+                    amount=cost,
+                    params={'createMarketBuyOrderRequiresPrice': False, 'quoteOrderQty': True}
+                ),
+                self.bitget.create_market_sell_order(
+                    symbol=self.contract_symbol,
+                    amount=contract_amount,
+                    params={"reduceOnly": False}
+                )
             )
             
             logger.info(f"Gate.io现货买入订单执行完成: {spot_order}")
