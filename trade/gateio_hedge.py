@@ -389,10 +389,14 @@ class GateioHedgeTrader:
 def parse_arguments():
     """解析命令行参数"""
     parser = argparse.ArgumentParser(description='Gate.io现货与合约对冲交易')
-    parser.add_argument('-s', '--symbol', type=str, required=True, help='交易对符号，例如 ETH/USDT')
-    parser.add_argument('-a', '--amount', type=float, required=True, help='购买的现货数量')
-    parser.add_argument('-p', '--min-spread', type=float, default=0.001, help='最小价差要求，默认0.001 (0.1%)')
-    parser.add_argument('-l', '--leverage', type=int, default=20, help='合约杠杆倍数，默认20倍')
+    parser.add_argument('-s', '--symbol', type=str, required=True, 
+                       help='交易对符号，例如 ETH/USDT')
+    parser.add_argument('-a', '--amount', type=float, required=True, 
+                       help='购买的现货数量')
+    parser.add_argument('-p', '--min-spread', type=float, default=0.001, 
+                       help='最小价差要求，默认0.001 (0.1%%)')
+    parser.add_argument('-l', '--leverage', type=int, default=20, 
+                       help='合约杠杆倍数，默认20倍')
     return parser.parse_args()
 
 
