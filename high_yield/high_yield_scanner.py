@@ -20,7 +20,7 @@ from high_yield.common import get_percentile
 from high_yield.exchange import ExchangeAPI
 from tools.wechatwork import WeChatWorkBot
 from high_yield.token_manager import TokenManager
-from binance_buy.buy_spot import get_proxy_ip
+from tools.proxy import get_proxy_ip
 from config import leverage_ratio, yield_percentile, buy_apy_threshold, sell_apy_threshold, buy_webhook_url, future_percentile, \
     gold_dog_buy_webhook_url
 from tools.logger import logger
@@ -140,7 +140,7 @@ class CryptoYieldMonitor:
                     gold_dog_wechat_bot = WeChatWorkBot(gold_dog_buy_webhook_url)
                     gold_dog_message = f"🚀 交易所高收益率活期理财产品监控 ({now_str})\n\n"
                     gold_dog_message += (
-                        f"{idx + p * limit}. {notif['token']}({notif['exchange']}) 💰\n"
+                        f"{notif['token']}({notif['exchange']}) \n"
                         f"   • 最新收益率: {notif['apy']:.2f}%\n"
                         f"   • 近1天P{yield_percentile}收益率: {notif['apy_percentile']:.2f}%\n"
                         f"   • 近7天P{yield_percentile}收益率: {d7apy_str}\n"

@@ -48,6 +48,7 @@ def is_gold_dog(sorted_data):
             return False
 
     # 如果所有条件都满足，返回True
+    logger.info(f"检测到金狗，数据如下：{sorted_data}")
     return True
 
 
