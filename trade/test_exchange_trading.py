@@ -4,10 +4,6 @@ import time
 import logging
 import argparse
 import traceback
-import hmac
-import hashlib
-import requests
-import json
 from datetime import datetime
 
 # 获取当前脚本的目录
@@ -15,11 +11,10 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 # 将主项目目录添加到系统路径
 sys.path.append(os.path.join(current_dir, '..'))
 
-from config import proxies  # 从配置中导入代理设置
 from tools.logger import logger
 
 # 导入hedging_trade.py中的相关函数和配置
-from high_yield.exchange_base import (
+from trade.ccxt_exchange import (
     init_exchanges, 
     get_contract_symbol,
     setup_contract_settings,

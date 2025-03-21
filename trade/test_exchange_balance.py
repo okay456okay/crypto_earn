@@ -18,7 +18,7 @@ from config import proxies  # 从配置中导入代理设置
 from tools.logger import logger
 
 # 导入hedging_trade.py中的相关函数和配置
-from high_yield.exchange_base import (
+from trade.ccxt_exchange import (
     init_exchanges, 
 )
 
