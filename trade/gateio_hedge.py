@@ -161,6 +161,9 @@ class GateioHedgeTrader:
                     # 处理完成的任务
                     for task in done:
                         try:
+                            if not self.ws_running:  # 如果ws_running为False，立即退出
+                                break
+                            
                             ob = task.result()
                             if task == tasks[0]:  # 现货订单簿
                                 self.orderbooks['spot'] = ob
@@ -179,21 +182,19 @@ class GateioHedgeTrader:
                     # 取消未完成的任务
                     for task in pending:
                         task.cancel()
-                        try:
-                            await task
-                        except asyncio.CancelledError:
-                            pass
                         
                 except Exception as e:
+                    if isinstance(e, asyncio.CancelledError):
+                        break
                     logger.error(f"订阅订单簿时出错: {str(e)}")
+                    if not self.ws_running:
+                        break
                     await asyncio.sleep(1)  # 出错后等待一秒再重试
                     
         except Exception as e:
             logger.error(f"订单簿订阅循环出错: {str(e)}")
         finally:
             self.ws_running = False
-            # 确保所有WebSocket连接都被关闭
-            await self.close_connections()
 
     async def check_spread_from_orderbooks(self):
         """从订单簿数据中检查价差"""
@@ -236,7 +237,7 @@ class GateioHedgeTrader:
                 try:
                     spread_data = await asyncio.wait_for(
                         self.price_updates.get(),
-                        timeout=10
+                        timeout=30  # 增加超时时间到30秒
                     )
                     
                     spread_percent = spread_data['spread_percent']
@@ -253,12 +254,8 @@ class GateioHedgeTrader:
                     
                 except asyncio.TimeoutError:
                     logger.warning("等待价差数据超时，重新订阅订单簿")
-                    if subscription_task:
+                    if subscription_task and not subscription_task.done():
                         subscription_task.cancel()
-                        try:
-                            await subscription_task
-                        except asyncio.CancelledError:
-                            pass
                     subscription_task = asyncio.create_task(self.subscribe_orderbooks())
                     
         except Exception as e:
@@ -266,7 +263,7 @@ class GateioHedgeTrader:
             raise
         finally:
             self.ws_running = False
-            if subscription_task:
+            if subscription_task and not subscription_task.done():
                 subscription_task.cancel()
                 try:
                     await subscription_task
@@ -378,10 +375,16 @@ class GateioHedgeTrader:
     async def close_connections(self):
         """关闭所有交易所连接"""
         try:
-            await asyncio.gather(
+            self.ws_running = False  # 首先设置ws_running为False
+            await asyncio.sleep(0.5)  # 给一些时间让WebSocket连接优雅关闭
+            
+            # 关闭交易所连接
+            close_tasks = [
                 self.spot_exchange.close(),
                 self.futures_exchange.close()
-            )
+            ]
+            await asyncio.gather(*close_tasks, return_exceptions=True)
+            
         except Exception as e:
             logger.error(f"关闭连接时出错: {str(e)}")
 
