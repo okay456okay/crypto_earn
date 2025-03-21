@@ -33,22 +33,20 @@ class HedgeTrader:
     现货-合约对冲交易类，实现Gate.io现货买入与Bitget合约空单对冲
     """
     
-    async def __init__(self, symbol, spot_amount=None, min_spread=0.001, leverage=20):
+    def __init__(self, symbol, spot_amount=None, min_spread=0.001, leverage=20):
         """
-        初始化对冲交易器
-        
-        Args:
-            symbol (str): 交易对符号，例如 'ETH/USDT'
-            spot_amount (float, optional): 购买的现货数量，若为None则使用最大可用USDT
-            min_spread (float): 最小价差要求，默认0.001 (0.1%)
-            leverage (int): 合约杠杆倍数，默认20倍
+        初始化基本属性
         """
         self.symbol = symbol
         self.spot_amount = spot_amount
         self.min_spread = min_spread
         self.leverage = leverage
         
-        # 使用异步版本初始化交易所
+        # 设置合约交易对
+        base, quote = symbol.split('/')
+        self.contract_symbol = f"{base}/{quote}:{quote}"  # 例如: ETH/USDT:USDT
+        
+        # 初始化交易所实例
         self.gateio = ccxt.gateio({
             'apiKey': gateio_api_key,
             'secret': gateio_api_secret,
@@ -64,34 +62,31 @@ class HedgeTrader:
             'proxies': proxies,
         })
         
-        # 设置合约交易对
-        base, quote = symbol.split('/')
-        self.contract_symbol = f"{base}/{quote}:{quote}"  # 例如: ETH/USDT:USDT
-        
-        # 设置Bitget合约参数
+        self.gateio_usdt = None
+        self.bitget_usdt = None
+
+    async def initialize(self):
+        """
+        异步初始化方法，执行需要网络请求的初始化操作
+        """
         try:
-            # 设置合约杠杆
+            # 设置Bitget合约参数
             await self.bitget.set_leverage(self.leverage, self.contract_symbol)
-            logger.info(f"设置Bitget合约杠杆倍数为: {leverage}倍")
-        except Exception as e:
-            logger.error(f"设置合约杠杆失败: {str(e)}")
-            raise
-        
-        logger.info(f"初始化完成: 交易对={symbol}, 合约对={self.contract_symbol}, "
-                   f"最小价差={min_spread*100}%, 杠杆={leverage}倍")
-        
-        # 在初始化时获取并保存账户余额
-        try:
+            logger.info(f"设置Bitget合约杠杆倍数为: {self.leverage}倍")
+            
+            logger.info(f"初始化完成: 交易对={self.symbol}, 合约对={self.contract_symbol}, "
+                       f"最小价差={self.min_spread*100}%, 杠杆={self.leverage}倍")
+            
+            # 获取并保存账户余额
             self.gateio_usdt, self.bitget_usdt = await self.check_balances()
             
-            # 提前检查余额是否满足交易要求
+            # 检查余额是否满足交易要求
             if self.spot_amount is not None:
-                # 获取当前市场价格做预估
                 orderbook = await self.gateio.fetch_order_book(self.symbol)
-                current_price = float(orderbook['asks'][0][0])  # 使用卖1价
+                current_price = float(orderbook['asks'][0][0])
                 
-                required_usdt = float(self.spot_amount) * current_price * 1.02  # 加2%作为手续费缓冲
-                required_margin = float(self.spot_amount) * current_price / self.leverage * 1.05  # 加5%作为保证金缓冲
+                required_usdt = float(self.spot_amount) * current_price * 1.02
+                required_margin = float(self.spot_amount) * current_price / self.leverage * 1.05
                 
                 if required_usdt > self.gateio_usdt:
                     raise Exception(f"Gate.io USDT余额不足，需要约 {required_usdt:.2f} USDT，当前余额 {self.gateio_usdt:.2f} USDT")
@@ -99,8 +94,9 @@ class HedgeTrader:
                     raise Exception(f"Bitget USDT保证金不足，需要约 {required_margin:.2f} USDT，当前余额 {self.bitget_usdt:.2f} USDT")
                 
                 logger.info(f"账户余额检查通过 - 预估所需Gate.io: {required_usdt:.2f} USDT, Bitget: {required_margin:.2f} USDT")
+                
         except Exception as e:
-            logger.error(f"初始化账户余额检查失败: {str(e)}")
+            logger.error(f"初始化失败: {str(e)}")
             raise
 
     async def check_balances(self):
@@ -251,12 +247,6 @@ class HedgeTrader:
         except Exception as e:
             logger.error(f"执行对冲交易时出错: {str(e)}")
             raise
-        finally:
-            # 确保关闭交易所连接
-            await asyncio.gather(
-                self.gateio.close(),
-                self.bitget.close()
-            )
 
     async def check_positions(self):
         """异步检查交易后的持仓情况"""
@@ -320,15 +310,6 @@ def parse_arguments():
     return parser.parse_args()
 
 
-async def create_trader(symbol, spot_amount, min_spread, leverage):
-    """
-    创建交易器的工厂函数
-    """
-    trader = HedgeTrader(symbol, spot_amount, min_spread, leverage)
-    await trader.__init__(symbol, spot_amount, min_spread, leverage)
-    return trader
-
-
 async def main():
     """
     异步主函数
@@ -336,13 +317,14 @@ async def main():
     args = parse_arguments()
     
     try:
-        # 使用工厂函数创建trader实例
-        trader = await create_trader(
+        # 创建并初始化交易器
+        trader = HedgeTrader(
             symbol=args.symbol,
             spot_amount=args.amount,
             min_spread=args.min_spread,
             leverage=args.leverage
         )
+        await trader.initialize()
         
         spot_order, contract_order = await trader.execute_hedge_trade()
         if spot_order and contract_order:
@@ -353,12 +335,18 @@ async def main():
     except Exception as e:
         logger.error(f"程序执行过程中发生错误: {str(e)}")
         return 1
+    finally:
+        # 确保关闭交易所连接
+        if 'trader' in locals():
+            await asyncio.gather(
+                trader.gateio.close(),
+                trader.bitget.close()
+            )
     
     return 0
 
 
 if __name__ == "__main__":
-    # 使用新的事件循环
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
