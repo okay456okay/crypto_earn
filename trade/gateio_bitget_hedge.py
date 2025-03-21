@@ -203,7 +203,7 @@ class HedgeTrader:
                        f"实际持仓: {actual_position} {base_currency}")
             
             # 计算合约开仓数量，考虑合约费率
-            contract_fee_rate = 0.0008  # Bitget USDT合约费率，请根据实际费率调整
+            contract_fee_rate = 0.001  # Bitget USDT合约费率，请根据实际费率调整
             contract_amount = actual_position * (1 + contract_fee_rate)  # 略微增加合约数量以补偿手续费
             
             # 确保合约数量符合最小精度要求
