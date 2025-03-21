@@ -142,24 +142,28 @@ class HedgeTrader:
             self.ws_running = True
             while self.ws_running:
                 try:
-                    # 并行订阅两个交易所的订单簿
-                    gateio_ob = self.gateio.watch_order_book(self.symbol)
-                    bitget_ob = self.bitget.watch_order_book(self.contract_symbol)
+                    # 创建两个任务来订阅订单簿
+                    tasks = [
+                        asyncio.create_task(self.gateio.watch_order_book(self.symbol)),
+                        asyncio.create_task(self.bitget.watch_order_book(self.contract_symbol))
+                    ]
                     
                     # 等待任意一个订单簿更新
                     done, pending = await asyncio.wait(
-                        [gateio_ob, bitget_ob],
+                        tasks,
                         return_when=asyncio.FIRST_COMPLETED
                     )
                     
                     # 处理完成的任务
                     for task in done:
                         try:
-                            ob = await task
-                            if task == gateio_ob:
+                            ob = task.result()
+                            if task == tasks[0]:  # gateio task
                                 self.orderbooks['gateio'] = ob
-                            else:
+                                logger.debug(f"收到Gate.io订单簿更新")
+                            else:  # bitget task
                                 self.orderbooks['bitget'] = ob
+                                logger.debug(f"收到Bitget订单簿更新")
                             
                             # 如果两个订单簿都有数据，检查价差
                             if self.orderbooks['gateio'] and self.orderbooks['bitget']:
@@ -171,6 +175,10 @@ class HedgeTrader:
                     # 取消未完成的任务
                     for task in pending:
                         task.cancel()
+                        try:
+                            await task
+                        except asyncio.CancelledError:
+                            pass
                         
                 except Exception as e:
                     logger.error(f"订阅订单簿时出错: {str(e)}")
@@ -180,6 +188,14 @@ class HedgeTrader:
             logger.error(f"订单簿订阅循环出错: {str(e)}")
         finally:
             self.ws_running = False
+            # 确保所有WebSocket连接都被关闭
+            try:
+                await asyncio.gather(
+                    self.gateio.close(),
+                    self.bitget.close()
+                )
+            except Exception as e:
+                logger.error(f"关闭WebSocket连接时出错: {str(e)}")
 
     async def check_spread_from_orderbooks(self):
         """从已缓存的订单簿数据中检查价差"""
@@ -214,37 +230,55 @@ class HedgeTrader:
 
     async def wait_for_spread(self):
         """等待价差达到要求"""
+        subscription_task = None
         try:
             # 启动WebSocket订阅
             subscription_task = asyncio.create_task(self.subscribe_orderbooks())
             
             while True:
-                # 从队列中获取最新价差数据
-                spread_data = await self.price_updates.get()
-                spread_percent = spread_data['spread_percent']
-                
-                logger.info(f"价格检查 - Gate.io卖1: {spread_data['gateio_ask']} (量: {spread_data['gateio_ask_volume']}), "
-                           f"Bitget买1: {spread_data['bitget_bid']} (量: {spread_data['bitget_bid_volume']}), "
-                           f"价差: {spread_percent*100:.4f}%")
-                
-                if spread_percent >= self.min_spread:
-                    logger.info(f"价差条件满足: {spread_percent*100:.4f}% >= {self.min_spread*100:.4f}%")
-                    # 停止WebSocket订阅
-                    self.ws_running = False
-                    await subscription_task
-                    return (spread_percent, spread_data['gateio_ask'], spread_data['bitget_bid'],
-                           spread_data['gateio_ask_volume'], spread_data['bitget_bid_volume'])
-                
-                logger.info(f"价差条件不满足: {spread_percent*100:.4f}% < {self.min_spread*100:.4f}%")
-                
+                try:
+                    # 从队列中获取最新价差数据，设置超时
+                    spread_data = await asyncio.wait_for(
+                        self.price_updates.get(),
+                        timeout=10  # 10秒超时
+                    )
+                    
+                    spread_percent = spread_data['spread_percent']
+                    
+                    logger.info(f"价格检查 - Gate.io卖1: {spread_data['gateio_ask']} (量: {spread_data['gateio_ask_volume']}), "
+                               f"Bitget买1: {spread_data['bitget_bid']} (量: {spread_data['bitget_bid_volume']}), "
+                               f"价差: {spread_percent*100:.4f}%")
+                    
+                    if spread_percent >= self.min_spread:
+                        logger.info(f"价差条件满足: {spread_percent*100:.4f}% >= {self.min_spread*100:.4f}%")
+                        return (spread_percent, spread_data['gateio_ask'], spread_data['bitget_bid'],
+                               spread_data['gateio_ask_volume'], spread_data['bitget_bid_volume'])
+                    
+                    logger.info(f"价差条件不满足: {spread_percent*100:.4f}% < {self.min_spread*100:.4f}%")
+                    
+                except asyncio.TimeoutError:
+                    logger.warning("等待价差数据超时，重新订阅订单簿")
+                    # 重新启动订阅
+                    if subscription_task:
+                        subscription_task.cancel()
+                        try:
+                            await subscription_task
+                        except asyncio.CancelledError:
+                            pass
+                    subscription_task = asyncio.create_task(self.subscribe_orderbooks())
+                    
         except Exception as e:
             logger.error(f"等待价差时出错: {str(e)}")
             raise
         finally:
             # 确保WebSocket订阅被停止
             self.ws_running = False
-            if 'subscription_task' in locals():
-                await subscription_task
+            if subscription_task:
+                subscription_task.cancel()
+                try:
+                    await subscription_task
+                except asyncio.CancelledError:
+                    pass
 
     async def execute_hedge_trade(self):
         """执行对冲交易"""
