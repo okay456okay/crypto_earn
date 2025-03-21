@@ -18,7 +18,9 @@ import time
 import logging
 import argparse
 from decimal import Decimal
-import ccxt  # 直接导入ccxt库
+import ccxt.async_support as ccxt  # 使用异步版本的ccxt
+import asyncio
+import aiohttp
 
 # 添加项目根目录到系统路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -46,7 +48,7 @@ class HedgeTrader:
         self.min_spread = min_spread
         self.leverage = leverage
         
-        # 直接使用ccxt初始化交易所
+        # 使用异步版本初始化交易所
         self.gateio = ccxt.gateio({
             'apiKey': gateio_api_key,
             'secret': gateio_api_secret,
@@ -137,6 +139,7 @@ class HedgeTrader:
             gateio_orderbook = self.gateio.fetch_order_book(self.symbol)
             gateio_ask = Decimal(str(gateio_orderbook['asks'][0][0]))  # 卖1价
             gateio_ask_volume = Decimal(str(gateio_orderbook['asks'][0][1]))  # 卖1量
+            self.gateio.fetch_tickers()
             
             # 获取Bitget合约订单簿
             bitget_orderbook = self.bitget.fetch_order_book(self.contract_symbol)
@@ -175,15 +178,15 @@ class HedgeTrader:
             logger.info(f"价差条件不满足: {spread_percent*100:.4f}% < {self.min_spread*100:.4f}%, 等待1秒后重试...")
             time.sleep(1)
 
-    def execute_hedge_trade(self):
+    async def execute_hedge_trade(self):
         """执行对冲交易：在Gate.io买入现货，同时在Bitget开空单"""
         try:
             # 等待价差满足条件
             spread_percent, gateio_ask, bitget_bid, gateio_ask_volume, bitget_bid_volume = \
-                self.wait_for_spread()
+                await self.wait_for_spread()
             
-            # 使用已保存的账户余额检查是否满足交易条件
             trade_amount = self.spot_amount
+            base_currency = self.symbol.split('/')[0]
             
             # 使用最新价格重新检查余额是否足够
             required_usdt = float(trade_amount) * float(gateio_ask) * 1.02
@@ -194,13 +197,17 @@ class HedgeTrader:
             if required_margin > self.bitget_usdt:
                 raise Exception(f"Bitget USDT保证金不足，需要 {required_margin:.2f} USDT，当前余额 {self.bitget_usdt:.2f} USDT")
             
-            logger.info(f"计划交易数量: {trade_amount} {self.symbol.split('/')[0]}")
+            logger.info(f"计划交易数量: {trade_amount} {base_currency}")
             
-            # 1. 执行Gate.io现货市价买入
+            # 准备下单参数
             cost = float(trade_amount) * float(gateio_ask)
-            logger.info(f"在Gate.io市价买入 {trade_amount} {self.symbol.split('/')[0]}, 预估成本: {cost:.2f} USDT")
+            contract_amount = self.bitget.amount_to_precision(self.contract_symbol, trade_amount)
             
-            spot_order = self.gateio.create_market_buy_order(
+            logger.info(f"在Gate.io市价买入 {trade_amount} {base_currency}, 预估成本: {cost:.2f} USDT")
+            logger.info(f"在Bitget市价开空单 {contract_amount} {base_currency}")
+            
+            # 同时发起两个下单请求
+            spot_order_task = self.gateio.create_market_buy_order(
                 symbol=self.symbol,
                 amount=cost,
                 params={
@@ -209,22 +216,24 @@ class HedgeTrader:
                 }
             )
             
-            # 2. 立即执行Bitget合约市价做空，使用预估的合约数量
-            # 使用trade_amount作为初始合约数量（后续可能需要微调）
-            contract_amount = self.bitget.amount_to_precision(self.contract_symbol, trade_amount)
-            logger.info(f"在Bitget市价开空单 {contract_amount} {self.contract_symbol.split('/')[0]}")
-            
-            contract_order = self.bitget.create_market_sell_order(
+            contract_order_task = self.bitget.create_market_sell_order(
                 symbol=self.contract_symbol,
                 amount=contract_amount,
                 params={"reduceOnly": False}
             )
             
-            # 3. 获取现货订单的实际成交结果
+            # 等待两个订单都完成
+            spot_order, contract_order = await asyncio.gather(
+                spot_order_task,
+                contract_order_task
+            )
+            
             logger.info(f"Gate.io现货买入订单执行完成: {spot_order}")
+            logger.info(f"Bitget合约做空订单执行完成: {contract_order}")
+            
+            # 获取现货订单的实际成交结果
             filled_amount = float(spot_order['filled'])
             fees = spot_order.get('fees', [])
-            base_currency = self.symbol.split('/')[0]
             base_fee = sum(float(fee['cost']) for fee in fees if fee['currency'] == base_currency)
             actual_position = filled_amount - base_fee
             
@@ -232,84 +241,69 @@ class HedgeTrader:
                        f"手续费: {base_fee} {base_currency}, "
                        f"实际持仓: {actual_position} {base_currency}")
             
-            # 4. 获取合约订单执行结果
-            logger.info(f"Bitget合约做空订单执行完成: {contract_order}")
-            
-            # 5. 如果实际持仓和合约持仓差异较大，可以考虑补充合约订单
-            try:
-                time.sleep(1)  # 等待订单状态更新
-                positions = self.bitget.fetch_positions([self.contract_symbol])
-                if positions:
-                    for position in positions:
-                        if position['symbol'] == self.contract_symbol:
-                            contract_position = abs(float(position.get('contracts', 0)))
-                            position_diff = abs(actual_position - contract_position)
-                            
-                            # 如果差异超过0.5%，考虑补充合约订单
-                            if position_diff / actual_position > 0.005:
-                                logger.warning(f"检测到持仓差异: 现货={actual_position}, 合约={contract_position}")
-                                # 这里可以添加补充合约订单的逻辑
-            except Exception as e:
-                logger.error(f"检查合约持仓时出错: {str(e)}")
-            
-            # 6. 最后检查持仓情况
-            try:
-                self.check_positions()
-            except Exception as e:
-                logger.error(f"检查持仓状态时出错: {str(e)}")
+            # 检查持仓情况
+            await self.check_positions()
             
             return spot_order, contract_order
             
         except Exception as e:
             logger.error(f"执行对冲交易时出错: {str(e)}")
             raise
+        finally:
+            # 确保关闭交易所连接
+            await asyncio.gather(
+                self.gateio.close(),
+                self.bitget.close()
+            )
 
-    def check_positions(self):
-        """检查交易后的持仓情况，确认现货和合约仓位是否平衡"""
+    async def check_positions(self):
+        """异步检查交易后的持仓情况"""
         try:
-            # 等待一下确保订单完成
-            time.sleep(1)
+            await asyncio.sleep(1)  # 等待订单状态更新
+            
+            # 并行获取两个交易所的持仓信息
+            gateio_balance_task = self.gateio.fetch_balance()
+            positions_task = self.bitget.fetch_positions([self.contract_symbol])
+            
+            gateio_balance, positions = await asyncio.gather(
+                gateio_balance_task,
+                positions_task
+            )
             
             # 获取现货最新成交订单的信息
             base_currency = self.symbol.split('/')[0]
-            gateio_balance = self.gateio.fetch_balance()
             gateio_position = gateio_balance.get(base_currency, {}).get('total', 0)
             
             # 检查Bitget合约持仓
-            try:
-                positions = self.bitget.fetch_positions([self.contract_symbol])
-                contract_position = 0
-                
-                if positions:
-                    for position in positions:
-                        if position['symbol'] == self.contract_symbol:
-                            contract_position = abs(float(position.get('contracts', 0)))
-                            position_side = position.get('side', 'unknown')
-                            position_leverage = position.get('leverage', self.leverage)
-                            position_notional = position.get('notional', 0)
-                            
-                            logger.info(f"Bitget合约持仓: {position_side} {contract_position} 合约, "
-                                      f"杠杆: {position_leverage}倍, 名义价值: {position_notional}")
-                else:
-                    logger.warning("未获取到Bitget合约持仓信息")
-                
-                logger.info(f"持仓检查 - Gate.io现货: {gateio_position} {base_currency}, "
-                           f"Bitget合约: {contract_position} {base_currency}")
-                
-                # 检查是否平衡（允许0.5%的误差）
-                position_diff = abs(float(gateio_position) - float(contract_position))
-                position_diff_percent = position_diff / float(gateio_position) * 100
-                
-                if position_diff_percent > 0.5:  # 允许0.5%的误差
-                    logger.warning(f"现货和合约持仓不平衡! 差异: {position_diff} {base_currency} ({position_diff_percent:.2f}%)")
-                else:
-                    logger.info(f"现货和合约持仓基本平衡，差异在允许范围内: {position_diff} {base_currency} ({position_diff_percent:.2f}%)")
-                    
-            except Exception as e:
-                logger.error(f"获取Bitget合约持仓信息失败: {str(e)}")
+            contract_position = 0
+            
+            if positions:
+                for position in positions:
+                    if position['symbol'] == self.contract_symbol:
+                        contract_position = abs(float(position.get('contracts', 0)))
+                        position_side = position.get('side', 'unknown')
+                        position_leverage = position.get('leverage', self.leverage)
+                        position_notional = position.get('notional', 0)
+                        
+                        logger.info(f"Bitget合约持仓: {position_side} {contract_position} 合约, "
+                                  f"杠杆: {position_leverage}倍, 名义价值: {position_notional}")
+            else:
+                logger.warning("未获取到Bitget合约持仓信息")
+            
+            logger.info(f"持仓检查 - Gate.io现货: {gateio_position} {base_currency}, "
+                       f"Bitget合约: {contract_position} {base_currency}")
+            
+            # 检查是否平衡（允许0.5%的误差）
+            position_diff = abs(float(gateio_position) - float(contract_position))
+            position_diff_percent = position_diff / float(gateio_position) * 100
+            
+            if position_diff_percent > 0.5:  # 允许0.5%的误差
+                logger.warning(f"现货和合约持仓不平衡! 差异: {position_diff} {base_currency} ({position_diff_percent:.2f}%)")
+            else:
+                logger.info(f"现货和合约持仓基本平衡，差异在允许范围内: {position_diff} {base_currency} ({position_diff_percent:.2f}%)")
                 
         except Exception as e:
-            logger.error(f"检查持仓时出错: {str(e)}")
+            logger.error(f"获取Bitget合约持仓信息失败: {str(e)}")
 
 
 def parse_arguments():
@@ -324,14 +318,13 @@ def parse_arguments():
     return parser.parse_args()
 
 
-def main():
+async def main():
     """
-    主函数
+    异步主函数
     """
     args = parse_arguments()
     
     try:
-        # 初始化对冲交易器
         trader = HedgeTrader(
             symbol=args.symbol,
             spot_amount=args.amount,
@@ -339,19 +332,12 @@ def main():
             leverage=args.leverage
         )
         
-        # 执行对冲交易（包含价差检查和重试逻辑）
-        spot_order, contract_order = trader.execute_hedge_trade()
+        spot_order, contract_order = await trader.execute_hedge_trade()
         if spot_order and contract_order:
             logger.info("对冲交易成功完成!")
-            # 最后再检查一次持仓状态
-            time.sleep(2)  # 多等待一会确保订单状态已更新
-            try:
-                trader.check_positions()
-            except Exception as e:
-                logger.error(f"最终检查持仓状态时出错: {str(e)}")
         else:
             logger.info("未执行对冲交易")
-        
+            
     except Exception as e:
         logger.error(f"程序执行过程中发生错误: {str(e)}")
         return 1
@@ -360,4 +346,5 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main()) 
+    loop = asyncio.get_event_loop()
+    sys.exit(loop.run_until_complete(main())) 
