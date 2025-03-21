@@ -199,7 +199,11 @@ def init_exchanges(args):
 
 # 获取合约交易对
 def get_contract_symbol(exchange_id, symbol):
-    """根据不同交易所获取对应的合约交易对格式"""
+    """
+    根据不同交易所获取对应的合约交易对格式
+    :param exchange_id:
+    :param symbol: ETH/USDT
+    """
     if exchange_id == "bitget":
         return f"{symbol}:USDT"
     elif exchange_id == "binance":
