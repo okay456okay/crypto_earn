@@ -1,5 +1,6 @@
 import requests
 from tools.logger import logger
+from config import proxies
 
 def get_proxy_ip(proxies=proxies):
     """获取代理的出口IP"""
