@@ -196,7 +196,7 @@ class HedgeTrader:
             
             logger.info(f"计划交易数量: {trade_amount} {self.symbol.split('/')[0]}")
             
-            # 立即执行Gate.io现货市价买入
+            # 1. 执行Gate.io现货市价买入
             cost = float(trade_amount) * float(gateio_ask)
             logger.info(f"在Gate.io市价买入 {trade_amount} {self.symbol.split('/')[0]}, 预估成本: {cost:.2f} USDT")
             
@@ -208,9 +208,20 @@ class HedgeTrader:
                     'quoteOrderQty': True
                 }
             )
-            logger.info(f"Gate.io现货买入订单执行完成: {spot_order}")
             
-            # 获取实际成交数量和手续费
+            # 2. 立即执行Bitget合约市价做空，使用预估的合约数量
+            # 使用trade_amount作为初始合约数量（后续可能需要微调）
+            contract_amount = self.bitget.amount_to_precision(self.contract_symbol, trade_amount)
+            logger.info(f"在Bitget市价开空单 {contract_amount} {self.contract_symbol.split('/')[0]}")
+            
+            contract_order = self.bitget.create_market_sell_order(
+                symbol=self.contract_symbol,
+                amount=contract_amount,
+                params={"reduceOnly": False}
+            )
+            
+            # 3. 获取现货订单的实际成交结果
+            logger.info(f"Gate.io现货买入订单执行完成: {spot_order}")
             filled_amount = float(spot_order['filled'])
             fees = spot_order.get('fees', [])
             base_currency = self.symbol.split('/')[0]
@@ -221,27 +232,27 @@ class HedgeTrader:
                        f"手续费: {base_fee} {base_currency}, "
                        f"实际持仓: {actual_position} {base_currency}")
             
-            # 计算合约开仓数量，考虑合约费率
-            contract_fee_rate = 0.00095  # Bitget USDT合约费率，请根据实际费率调整
-            contract_amount = actual_position * (1 + contract_fee_rate)  # 略微增加合约数量以补偿手续费
-            
-            # 确保合约数量符合最小精度要求
-            contract_amount = self.bitget.amount_to_precision(self.contract_symbol, contract_amount)
-            
-            # 执行Bitget合约市价做空
-            logger.info(f"在Bitget市价开空单 {contract_amount} {self.contract_symbol.split('/')[0]}")
-            
-            contract_order = self.bitget.create_market_sell_order(
-                symbol=self.contract_symbol,
-                amount=contract_amount,
-                params={"reduceOnly": False}
-            )
+            # 4. 获取合约订单执行结果
             logger.info(f"Bitget合约做空订单执行完成: {contract_order}")
             
-            # 等待订单完成
-            time.sleep(2)
+            # 5. 如果实际持仓和合约持仓差异较大，可以考虑补充合约订单
+            try:
+                time.sleep(1)  # 等待订单状态更新
+                positions = self.bitget.fetch_positions([self.contract_symbol])
+                if positions:
+                    for position in positions:
+                        if position['symbol'] == self.contract_symbol:
+                            contract_position = abs(float(position.get('contracts', 0)))
+                            position_diff = abs(actual_position - contract_position)
+                            
+                            # 如果差异超过0.5%，考虑补充合约订单
+                            if position_diff / actual_position > 0.005:
+                                logger.warning(f"检测到持仓差异: 现货={actual_position}, 合约={contract_position}")
+                                # 这里可以添加补充合约订单的逻辑
+            except Exception as e:
+                logger.error(f"检查合约持仓时出错: {str(e)}")
             
-            # 检查交易后的账户状态
+            # 6. 最后检查持仓情况
             try:
                 self.check_positions()
             except Exception as e:
