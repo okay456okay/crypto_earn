@@ -129,7 +129,7 @@ class GateioHedgeTrader:
                 current_price = float(orderbook['asks'][0][0])
                 
                 required_spot_usdt = float(self.spot_amount) * current_price * 1.02  # 额外2%作为滑点和手续费
-                required_futures_margin = float(self.spot_amount) * current_price / self.leverage * 1.05  # 额外5%作为保证金
+                required_futures_margin = float(self.spot_amount) / self.leverage * 1.05  # 额外5%作为保证金
                 
                 if required_spot_usdt > self.spot_usdt:
                     raise Exception(f"Gate.io现货USDT余额不足，需要约 {required_spot_usdt:.2f} USDT，当前余额 {self.spot_usdt:.2f} USDT")
@@ -138,6 +138,16 @@ class GateioHedgeTrader:
                 
                 logger.info(f"账户余额检查通过 - 预估所需现货: {required_spot_usdt:.2f} USDT, 合约: {required_futures_margin:.2f} USDT")
                 
+            # 提前计算合约交易量
+            self.futures_amount = self.futures_exchange.amount_to_precision(
+                self.contract_symbol,
+                float(self.spot_amount) / self.contract_size
+            )
+            logger.info(f"合约交易量计算:")
+            logger.info(f"- 目标现货量: {self.spot_amount}")
+            logger.info(f"- 合约乘数: {self.contract_size}")
+            logger.info(f"- 实际合约量: {self.futures_amount}")
+            
         except Exception as e:
             logger.error(f"初始化失败: {str(e)}")
             raise
@@ -299,24 +309,11 @@ class GateioHedgeTrader:
             # 等待价差满足条件
             spread_data = await self.wait_for_spread()
             spot_ask = spread_data['spot_ask']
-            futures_bid = spread_data['futures_bid']
             
-            # 计算交易数量，考虑手续费
-            trade_amount = self.spot_amount
-            spot_cost = float(trade_amount) * float(spot_ask)
+            # 计算现货成本
+            spot_cost = float(self.spot_amount) * float(spot_ask)
             
-            # 计算合约交易量，考虑合约乘数
-            futures_amount = self.futures_exchange.amount_to_precision(
-                self.contract_symbol,
-                float(trade_amount) / self.contract_size  # 除以合约乘数来调整数量
-            )
-            
-            logger.info(f"合约交易量计算:")
-            logger.info(f"- 目标交易量: {trade_amount}")
-            logger.info(f"- 合约乘数: {self.contract_size}")
-            logger.info(f"- 实际下单量: {futures_amount}")
-            
-            # 并行执行现货买入和合约做空
+            # 直接执行交易，不做其他检查
             spot_order, futures_order = await asyncio.gather(
                 self.spot_exchange.create_market_buy_order(
                     symbol=self.symbol,
@@ -325,24 +322,20 @@ class GateioHedgeTrader:
                 ),
                 self.futures_exchange.create_market_sell_order(
                     symbol=self.contract_symbol,
-                    amount=futures_amount,
+                    amount=self.futures_amount,
                     params={
                         "reduceOnly": False,
-                        "marginMode": "cross",  # 设置为全仓模式
-                        "crossLeverageLimit": self.leverage,  # 设置全仓杠杆
+                        "marginMode": "cross",
+                        "crossLeverageLimit": self.leverage,
                     }
                 )
             )
             
-            # 打印订单详情
-            logger.info("合约订单详情:")
-            logger.info(f"- 订单信息: {futures_order}")
-            
             # 记录交易结果
             base_currency = self.symbol.split('/')[0]
-            logger.info(f"计划交易数量: {trade_amount} {base_currency}")
-            logger.info(f"Gate.io现货市价买入 {trade_amount} {base_currency}, 预估成本: {spot_cost:.2f} USDT")
-            logger.info(f"Gate.io合约市价开空 {futures_amount} {base_currency}")
+            logger.info(f"交易执行结果:")
+            logger.info(f"现货买入: {self.spot_amount} {base_currency}, 预估成本: {spot_cost:.2f} USDT")
+            logger.info(f"合约做空: {self.futures_amount} {base_currency}")
             
             # 获取实际成交结果
             spot_filled = float(spot_order['filled'])
@@ -350,9 +343,8 @@ class GateioHedgeTrader:
             spot_base_fee = sum(float(fee['cost']) for fee in spot_fees if fee['currency'] == base_currency)
             actual_spot_position = spot_filled - spot_base_fee
             
-            logger.info(f"Gate.io现货实际成交: {spot_filled} {base_currency}, "
-                       f"手续费: {spot_base_fee} {base_currency}, "
-                       f"实际持仓: {actual_spot_position} {base_currency}")
+            logger.info(f"实际成交:")
+            logger.info(f"现货成交: {spot_filled} {base_currency}, 手续费: {spot_base_fee} {base_currency}")
             
             # 检查持仓情况
             await self.check_positions()
