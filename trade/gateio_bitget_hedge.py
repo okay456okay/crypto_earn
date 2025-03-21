@@ -283,33 +283,16 @@ class HedgeTrader:
     async def execute_hedge_trade(self):
         """执行对冲交易"""
         try:
-            # 等待价差满足条件（使用WebSocket数据）
+            # 1. 等待价差满足条件
             spread_data = await self.wait_for_spread()
             spread_percent, gateio_ask, bitget_bid, gateio_ask_volume, bitget_bid_volume = spread_data
             
-            # 立即执行下单，减少延迟
+            # 2. 立即准备下单参数
             trade_amount = self.spot_amount
-            base_currency = self.symbol.split('/')[0]
-            
-            # 使用最新价格重新检查余额是否足够
-            required_usdt = float(trade_amount) * float(gateio_ask) * 1.02
-            required_margin = float(trade_amount) * float(bitget_bid) / self.leverage * 1.05
-            
-            if required_usdt > self.gateio_usdt:
-                raise Exception(f"Gate.io USDT余额不足，需要 {required_usdt:.2f} USDT，当前余额 {self.gateio_usdt:.2f} USDT")
-            if required_margin > self.bitget_usdt:
-                raise Exception(f"Bitget USDT保证金不足，需要 {required_margin:.2f} USDT，当前余额 {self.bitget_usdt:.2f} USDT")
-            
-            logger.info(f"计划交易数量: {trade_amount} {base_currency}")
-            
-            # 准备下单参数
             cost = float(trade_amount) * float(gateio_ask)
             contract_amount = self.bitget.amount_to_precision(self.contract_symbol, trade_amount)
             
-            logger.info(f"在Gate.io市价买入 {trade_amount} {base_currency}, 预估成本: {cost:.2f} USDT")
-            logger.info(f"在Bitget市价开空单 {contract_amount} {base_currency}")
-            
-            # 同时发起两个下单请求
+            # 3. 立即执行交易
             spot_order, contract_order = await asyncio.gather(
                 self.gateio.create_market_buy_order(
                     symbol=self.symbol,
@@ -323,8 +306,11 @@ class HedgeTrader:
                 )
             )
             
-            logger.info(f"Gate.io现货买入订单执行完成: {spot_order}")
-            logger.info(f"Bitget合约做空订单执行完成: {contract_order}")
+            # 4. 交易后再进行其他操作
+            base_currency = self.symbol.split('/')[0]
+            logger.info(f"计划交易数量: {trade_amount} {base_currency}")
+            logger.info(f"在Gate.io市价买入 {trade_amount} {base_currency}, 预估成本: {cost:.2f} USDT")
+            logger.info(f"在Bitget市价开空单 {contract_amount} {base_currency}")
             
             # 获取现货订单的实际成交结果
             filled_amount = float(spot_order['filled'])
