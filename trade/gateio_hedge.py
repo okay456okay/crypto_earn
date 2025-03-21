@@ -86,6 +86,22 @@ class GateioHedgeTrader:
     async def initialize(self):
         """初始化交易环境，包括设置合约参数和检查账户余额"""
         try:
+            # 获取合约规格并详细打印
+            contract_spec = await self.futures_exchange.fetch_market(self.contract_symbol)
+            logger.info("合约规格详情:")
+            logger.info(f"- 合约乘数(contractSize): {contract_spec.get('contractSize')}")
+            logger.info(f"- 最小下单量(minAmount): {contract_spec.get('limits', {}).get('amount', {}).get('min')}")
+            logger.info(f"- 价格精度(precision): {contract_spec.get('precision')}")
+            logger.info(f"- 合约类型(type): {contract_spec.get('type')}")
+            logger.info(f"- 完整规格: {contract_spec}")
+            
+            # 保存合约乘数
+            self.contract_size = float(contract_spec.get('contractSize', 1))
+            logger.info(f"使用合约乘数: {self.contract_size}")
+            
+            # 设置合约为全仓模式
+            await self.futures_exchange.set_position_mode(False)
+            
             # 设置合约杠杆
             await self.futures_exchange.set_leverage(self.leverage, self.contract_symbol)
             logger.info(f"设置Gate.io合约杠杆倍数为: {self.leverage}倍")
@@ -282,11 +298,16 @@ class GateioHedgeTrader:
             trade_amount = self.spot_amount
             spot_cost = float(trade_amount) * float(spot_ask)
             
-            # 合约交易量略大一点，补偿手续费
+            # 计算合约交易量，考虑合约乘数
             futures_amount = self.futures_exchange.amount_to_precision(
                 self.contract_symbol,
-                float(trade_amount) * 1.001  # 增加0.1%补偿手续费
+                float(trade_amount) / self.contract_size  # 除以合约乘数来调整数量
             )
+            
+            logger.info(f"合约交易量计算:")
+            logger.info(f"- 目标交易量: {trade_amount}")
+            logger.info(f"- 合约乘数: {self.contract_size}")
+            logger.info(f"- 实际下单量: {futures_amount}")
             
             # 并行执行现货买入和合约做空
             spot_order, futures_order = await asyncio.gather(
@@ -298,9 +319,16 @@ class GateioHedgeTrader:
                 self.futures_exchange.create_market_sell_order(
                     symbol=self.contract_symbol,
                     amount=futures_amount,
-                    params={"reduceOnly": False}
+                    params={
+                        "reduceOnly": False,
+                        "marginMode": "cross"
+                    }
                 )
             )
+            
+            # 打印订单详情
+            logger.info("合约订单详情:")
+            logger.info(f"- 订单信息: {futures_order}")
             
             # 记录交易结果
             base_currency = self.symbol.split('/')[0]
@@ -344,17 +372,20 @@ class GateioHedgeTrader:
             base_currency = self.symbol.split('/')[0]
             spot_position = spot_balance.get(base_currency, {}).get('total', 0)
             
-            # 检查合约持仓
+            # 修改合约持仓检查逻辑
             futures_position = 0
             if futures_positions:
                 for position in futures_positions:
                     if position['symbol'] == self.contract_symbol:
-                        futures_position = abs(float(position.get('contracts', 0)))
+                        # 使用 contractSize 来计算实际持仓数量
+                        contract_size = float(position.get('contractSize', 1))
+                        contracts = abs(float(position.get('contracts', 0)))
+                        futures_position = contracts * contract_size
                         position_side = position.get('side', 'unknown')
                         position_leverage = position.get('leverage', self.leverage)
                         position_notional = position.get('notional', 0)
                         
-                        logger.info(f"Gate.io合约持仓: {position_side} {futures_position} 合约, "
+                        logger.info(f"Gate.io合约持仓: {position_side} {futures_position} {base_currency}, "
                                   f"杠杆: {position_leverage}倍, 名义价值: {position_notional}")
             
             logger.info(f"持仓检查 - Gate.io现货: {spot_position} {base_currency}, "
