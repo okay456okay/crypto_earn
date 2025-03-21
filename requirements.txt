@@ -1,10 +1,11 @@
 PySocks==1.7.1
 python-binance==1.0.28
 requests==2.32.3
-urllib3==1.26.15
+urllib3==1.26.20
 schedule==1.2.2
 ccxt==4.4.65
 PyMySQL==1.1.1
 xmltodict==0.14.2
 Flask==3.1.0
 numpy==2.2.4
+ccxtpro==1.0.1
