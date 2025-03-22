@@ -17,9 +17,9 @@ from tools.logger import logger
 from high_yield.common import get_percentile
 
 
-def is_gold_dog(sorted_data):
+def is_gold_dog(sorted_data, high=200, low=50):
     """
-    # 示例数据
+    # 判断是否金狗，收益率刚刚突然暴涨
     test_data = [
         {"time": 1742083800, "value": "82.35"},
         {"time": 1742086200, "value": "75.12"},
@@ -28,7 +28,9 @@ def is_gold_dog(sorted_data):
 
     result = check_array_conditions(test_data)
     print(f"条件是否满足: {result}")  # 应该输出: 条件是否满足: True
-    :param data:
+    :param sorted_data:
+    :param high:
+    :param low:
     :return:
     """
     # 检查数组是否为空
@@ -38,13 +40,13 @@ def is_gold_dog(sorted_data):
     # 获取最后一个元素的value值
     last_value = float(sorted_data[-1]["value"])
 
-    # 检查条件1：最后一个元素的value值是否大于300
-    if last_value <= 300:
+    # 检查条件1：最后一个元素的value值是否大于high: 200
+    if last_value <= high:
         return False
 
-    # 检查条件2：前面所有元素的value值是否都小于100
+    # 检查条件2：前面所有元素的value值是否都小于low:50
     for item in sorted_data[:-1]:
-        if float(item["value"]) >= 100:
+        if float(item["value"]) >= low:
             return False
 
     # 如果所有条件都满足，返回True
@@ -265,7 +267,7 @@ class ExchangeAPI:
                 start_30 = end - 30 * 24 * 60 * 60
                 for item in data["data"]["list"]:
                     token = item["asset"]
-                    apy = float(item["next_time_rate_year"]) * 100
+                    apy = float(item["last_time_rate_year"]) * 100
                     apy_percentile = apy
                     apy_month = []
                     note = ''
