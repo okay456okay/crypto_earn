@@ -17,7 +17,7 @@ logging.basicConfig(
     handlers=[
         RotatingFileHandler(
             log_file_path,
-            maxBytes=10 * 1024 * 1024,  # 10MB
+            maxBytes=20 * 1024 * 1024,  # 10MB
             backupCount=20,  # 保留20个文件
         ),
         logging.StreamHandler()
