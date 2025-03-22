@@ -291,25 +291,25 @@ class CryptoYieldMonitor:
         logger.info("开始检查高收益加密货币...")
         try:
             # 获取所有交易所的活期理财产品
-            # binance_products = self.exchange_api.get_binance_flexible_products()
-            # logger.info(f"从Binance获取到{len(binance_products)}个活期理财产品")
+            binance_products = self.exchange_api.get_binance_flexible_products()
+            logger.info(f"从Binance获取到{len(binance_products)}个活期理财产品")
 
             gateio_products = self.exchange_api.get_gateio_flexible_products()
             logger.info(f"从GateIO获取到{len(gateio_products)}个活期理财产品")
 
-            # bitget_products = self.exchange_api.get_bitget_flexible_products()
-            # logger.info(f"从Bitget获取到{len(bitget_products)}个活期理财产品")
+            bitget_products = self.exchange_api.get_bitget_flexible_products()
+            logger.info(f"从Bitget获取到{len(bitget_products)}个活期理财产品")
 
-            # bybit_products = self.exchange_api.get_bybit_flexible_products()
-            # logger.info(f"从Bybit获取到{len(bybit_products)}个活期理财产品")
-            #
-            # okx_products = self.exchange_api.get_okx_flexible_products()
-            # logger.info(f"从OKX获取到{len(okx_products)}个活期理财产品")
+            bybit_products = self.exchange_api.get_bybit_flexible_products()
+            logger.info(f"从Bybit获取到{len(bybit_products)}个活期理财产品")
+
+            okx_products = self.exchange_api.get_okx_flexible_products()
+            logger.info(f"从OKX获取到{len(okx_products)}个活期理财产品")
 
             # 合并所有产品
-            # all_products = binance_products + bitget_products + bybit_products + gateio_products + okx_products
+            all_products = binance_products + bitget_products + bybit_products + gateio_products + okx_products
             # all_products =  bybit_products + gateio_products + okx_products + binance_products
-            all_products = gateio_products
+            # all_products = gateio_products
             logger.info(f"总共获取到{len(all_products)}个活期理财产品")
             self.exchange_api.get_binance_funding_info()
             # 过滤和处理高收益理财产品
