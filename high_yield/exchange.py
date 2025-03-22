@@ -17,42 +17,6 @@ from tools.logger import logger
 from high_yield.common import get_percentile
 
 
-def is_gold_dog(sorted_data, high=200, low=50):
-    """
-    # 判断是否金狗，收益率刚刚突然暴涨
-    test_data = [
-        {"time": 1742083800, "value": "82.35"},
-        {"time": 1742086200, "value": "75.12"},
-        {"time": 1742090400, "value": "350.50"}
-    ]
-
-    result = check_array_conditions(test_data)
-    print(f"条件是否满足: {result}")  # 应该输出: 条件是否满足: True
-    :param sorted_data:
-    :param high:
-    :param low:
-    :return:
-    """
-    # 检查数组是否为空
-    if not sorted_data:
-        return False
-
-    # 获取最后一个元素的value值
-    last_value = float(sorted_data[-1]["value"])
-
-    # 检查条件1：最后一个元素的value值是否大于high: 200
-    if last_value <= high:
-        return False
-
-    # 检查条件2：前面所有元素的value值是否都小于low:50
-    for item in sorted_data[:-1]:
-        if float(item["value"]) >= low:
-            return False
-
-    # 如果所有条件都满足，返回True
-    logger.info(f"检测到金狗，数据如下：{sorted_data}")
-    return True
-
 
 class ExchangeAPI:
     def __init__(self):
@@ -121,7 +85,6 @@ class ExchangeAPI:
                             'apy_month': apy_month,
                             "min_purchase": float(item.get('productDetailList', [])[0].get("minPurchaseAmount", 0)),
                             "max_purchase": float(item.get('productDetailList', [])[0].get("maxPurchaseAmountPerUser", 0)),
-                            "note": '',
                         }
                         products.append(product)
                         sleep(0.1)
@@ -159,7 +122,6 @@ class ExchangeAPI:
                             'apy_month': [],
                             "min_purchase": int(float(item['apyList'][0]['minStepVal'])),
                             "max_purchase": int(float(item['apyList'][0]['maxStepVal'])),
-                            "note": '',
                         }
                         products.append(product)
             else:
@@ -218,7 +180,6 @@ class ExchangeAPI:
                         'apy_month': [],
                         "min_purchase": float(item.get('minStakeAmount', 0)),
                         "max_purchase": float(item.get('maxStakeAmount', 0)),
-                        "note": '',
                     }
                     products.append(product)
             else:
@@ -270,7 +231,6 @@ class ExchangeAPI:
                     apy = float(item["last_time_rate_year"]) * 100
                     apy_percentile = apy
                     apy_month = []
-                    note = ''
                     if apy >= buy_apy_threshold:
                         try:
                             # https://www.gate.io/apiw/v2/uni-loan/earn/chart?from=1741874400&to=1741957200&asset=SOL&type=1
@@ -283,11 +243,6 @@ class ExchangeAPI:
                                 logger.error(f"gateio get 1day asset charts, url: {url}, status: {response.status_code}, response: {response.text}")
                             data = response.json().get('data', [])
                             apy_percentile = get_percentile([float(i['value']) for i in data], percentile=yield_percentile, reverse=True)
-                            # 按time字段排序
-                            sorted_data = sorted(data, key=lambda x: x["time"])
-                            if is_gold_dog(sorted_data):
-                                note = f"🚀收益率暴增至{sorted_data[-1]['value']}%"
-
                             url = f'https://www.gate.io/apiw/v2/uni-loan/earn/chart?from={start_30}&to={end}&asset={token}&type=2'
                             logger.info(f"get gateio {token}近30天收益率曲线, url: {url}")
                             response = requests.get(
@@ -308,7 +263,6 @@ class ExchangeAPI:
                         'apy_month': apy_month,
                         "min_purchase": f"{float(item.get('total_lend_available', 0))}(total_lend_available-可借总额)",
                         "max_purchase": f"{float(item.get('total_lend_all_amount', 0))}(total_lend_all_amount-借出总额)",
-                        "note": note,
                     }
                     products.append(product)
             else:
@@ -367,7 +321,6 @@ class ExchangeAPI:
                             'apy_month': apy_month,
                             "min_purchase": '无',
                             "max_purchase": '无',
-                            "note": '',
                         }
                         products.append(product)
                         sleep(0.1)
