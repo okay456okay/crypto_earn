@@ -26,6 +26,7 @@ class ExchangeAPI:
         })
         self.session.proxies.update(proxies)
         self.binance_funding_info = {}
+        self.products = []
 
     def get_binance_flexible_products(self):
         """
@@ -194,6 +195,53 @@ class ExchangeAPI:
         except Exception as e:
             logger.error(f"获取Bybit活期理财产品时出错: {str(e)}")
         return products
+
+    def get_gateio_flexible_product(self, token):
+        """
+        获取GateIO活期理财产品
+        https://www.gate.io/zh/simple-earn
+        https://www.gate.io/docs/developers/apiv4/zh_CN/#earnuni
+        """
+        end = int(datetime.now().replace(microsecond=0, second=0, minute=0).timestamp())
+        start = end - 1 * 24 * 60 * 60
+        start_30 = end - 30 * 24 * 60 * 60
+        apy_month = []
+        apy_day = []
+        try:
+            url = f'https://www.gate.io/apiw/v2/uni-loan/earn/chart?from={start}&to={end}&asset={token}&type=1'
+            logger.info(f"get gateio {token}近1天收益率曲线, url: {url}")
+            response = requests.get(
+                url=url,
+                proxies=proxies)
+            if response.status_code != 200:
+                logger.error(f"gateio get 1day asset charts, url: {url}, status: {response.status_code}, response: {response.text}")
+            else:
+                logger.info(f"get gateio 1day asset charts, url: {url}, data: {response.json()}")
+            data = response.json().get('data', [])
+            apy_day = [{'timestamp': int(i['time'])*1000, 'apy': float(i['value'])} for i in data]
+            apy_day = sorted(apy_day, key=lambda item: item['timestamp'], reverse=False)
+            url = f'https://www.gate.io/apiw/v2/uni-loan/earn/chart?from={start_30}&to={end}&asset={token}&type=2'
+            logger.info(f"get gateio {token}近30天收益率曲线, url: {url}")
+            response = requests.get(
+                url=url,
+                proxies=proxies)
+            if response.status_code != 200:
+                logger.error(f"gateio get 30days asset charts, url: {url}, status: {response.status_code}, response: {response.text}")
+            data = response.json().get('data', [])
+            apy_month = [{'timestamp': i['time']*1000, 'apy': float(i['value'])} for i in data]
+        except Exception as e:
+            logger.error(f"get asset chart {token} error: {str(e)}")
+        sleep(2)
+        product = {
+            "exchange": "GateIO",
+            "token": token,
+            "apy": apy_day[-1]['apy'],
+            'apy_day': apy_day,
+            'apy_month': apy_month,
+            "min_purchase": "无",
+            "max_purchase": "无",
+        }
+        return product
 
     def get_gateio_flexible_products(self):
         """

@@ -226,7 +226,8 @@ class CryptoYieldMonitor:
                 content = f"在{token['spot_exchange']}交易所中未找到 {token['token']} 理财产品"
                 # sell_wechat_bot.send_message(content)
                 logger.info(content)
-                product = {'apy': 0.0, 'apy_month': [], 'apy_day': [], 'exchange': f'({token["spot_exchange"]}未找到该活期理财产品)', 'token': token['token']}
+                if token['spot_exchange'] == 'GateIO':
+                    product = self.exchange_api.get_gateio_flexible_product(token['token'])
             else:
                 product = product[0]
             # 过滤资金费率和利率，如果满足条件就告警
@@ -332,7 +333,6 @@ class CryptoYieldMonitor:
             self.product_filter(all_products)
             self.position_check(all_products)
         except Exception as e:
-            # logger.error(f"运行监控任务时发生错误: {str(e)}")
             logger.exception(f"运行监控任务时发生错误: {str(e)}")
 
 
