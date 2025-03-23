@@ -125,7 +125,7 @@ exchange_configs = {
 系统主入口为 high_yield_scanner.py，启动命令：
 
 ```bash
-python high_yield_scanner.py
+python scanner.py
 ```
 
 ## 待实现功能

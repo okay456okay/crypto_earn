@@ -11,7 +11,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 # 将 config.py 所在的目录添加到系统路径
 sys.path.append(os.path.join(current_dir, '..'))
 
-from config import proxies, buy_apy_threshold, yield_percentile, bitget_api_key, bitget_api_secret, \
+from config import proxies, stability_buy_apy_threshold, yield_percentile, bitget_api_key, bitget_api_secret, \
     bitget_api_passphrase, okx_earn_insurance_keep_ratio
 from tools.logger import logger
 from high_yield.common import get_percentile
@@ -62,16 +62,18 @@ class ExchangeAPI:
                     if int(item['duration']) == 0:
                         prouct_id = item['productId']
                         apy = float(item.get("highestApy", 0)) * 100
-                        apy_percentile = -1
+                        # apy_percentile = -1
                         startTime = int(time.time()*1000) - 30*24*60*60*1000
                         apy_month = []
+                        apy_day = []
                         try:
-                            if apy > buy_apy_threshold:
+                            if apy > stability_buy_apy_threshold:
                                 url = f'https://www.binance.com/bapi/earn/v1/friendly/lending/daily/product/position-market-apr?productId={prouct_id}&startTime={startTime}'
                                 response = requests.get(url, proxies=proxies)
                                 if response.status_code == 200:
                                     apy_month = [{'timestamp': int(i['calcTime']), 'apy': float(i['marketApr'])*100} for i in response.json().get('data', {}).get('marketAprList', [])]
-                                    apy_percentile = get_percentile([i['apy'] for i in apy_month[-24:]], yield_percentile)
+                                    apy_day = sorted(apy_month[-24:], key=lambda item: item['timestamp'], reverse=False)
+                                    # apy_percentile = get_percentile([i['apy'] for i in apy_month[-24:]], yield_percentile)
                                 else:
                                     logger.error(
                                         f"binance get asset charts, url: {url}, status: {response.status_code}, response: {response.text}")
@@ -81,7 +83,8 @@ class ExchangeAPI:
                             "exchange": "Binance",
                             "token": item.get("asset", ""),
                             "apy": apy,
-                            'apy_percentile': apy_percentile,
+                            # 'apy_percentile': apy_percentile,
+                            'apy_day': apy_day,
                             'apy_month': apy_month,
                             "min_purchase": float(item.get('productDetailList', [])[0].get("minPurchaseAmount", 0)),
                             "max_purchase": float(item.get('productDetailList', [])[0].get("maxPurchaseAmountPerUser", 0)),
@@ -118,8 +121,9 @@ class ExchangeAPI:
                             "exchange": "Bitget",
                             "token": item["coin"],
                             "apy": float(item['apyList'][0]["currentApy"]),
-                            "apy_percentile": -1.0,
+                            # "apy_percentile": -1.0,
                             'apy_month': [],
+                            'apy_day': [],
                             "min_purchase": int(float(item['apyList'][0]['minStepVal'])),
                             "max_purchase": int(float(item['apyList'][0]['maxStepVal'])),
                         }
@@ -151,12 +155,13 @@ class ExchangeAPI:
                 for item in data["result"]["list"]:
                     token = item["coin"]
                     apy = float(item["estimateApr"].replace("%", ""))
-                    apy_percentile = apy
+                    apy_day = []
+                    # apy_percentile = apy
                     if item['status'] != 'Available':
                         continue
                     try:
                         # 最新一个点是否大于最小收益率，很多时候收益率是向下走的
-                        if apy >= buy_apy_threshold:
+                        if apy >= stability_buy_apy_threshold:
                             url = "https://api2.bybit.com/s1/byfi/get-flexible-saving-apr-history"
                             response = requests.post(
                                 url=url,
@@ -167,17 +172,19 @@ class ExchangeAPI:
                             if response.status_code != 200:
                                 logger.error(f"bybit get asset charts failed, url: {url}, status: {response.status_code}, response: {response.text}")
                             data = response.json().get('result', {}).get('hourly_apr_list', [])
-                            data = [int(i['apr_e8']) / 1000000 for i in data]
+                            apy_day = [{'apy': int(i['apr_e8']) / 1000000, 'timestamp': int(i['timestamp'])*1000} for i in data]
+                            apy_day = sorted(apy_day, key=lambda item: item['timestamp'], reverse=False)
                             logger.info(f"获取bybit {token}近24小时收益率曲线, 数据：{data}")
-                            apy_percentile = get_percentile(data, percentile=yield_percentile, reverse=True)
+                            # apy_percentile = get_percentile(data, percentile=yield_percentile, reverse=True)
                     except Exception as e:
                         logger.error(f"获取 {token}的收益曲线失败： {str(e)}")
                     product = {
                         "exchange": "Bybit",
                         "token": item["coin"],
                         "apy": float(item["estimateApr"].replace("%", "")),
-                        'apy_percentile': apy_percentile,
+                        # 'apy_percentile': apy_percentile,
                         'apy_month': [],
+                        'apy_day': apy_day,
                         "min_purchase": float(item.get('minStakeAmount', 0)),
                         "max_purchase": float(item.get('maxStakeAmount', 0)),
                     }
@@ -229,9 +236,10 @@ class ExchangeAPI:
                 for item in data["data"]["list"]:
                     token = item["asset"]
                     apy = float(item["last_time_rate_year"]) * 100
-                    apy_percentile = apy
+                    # apy_percentile = apy
                     apy_month = []
-                    if apy >= buy_apy_threshold:
+                    apy_day = []
+                    if apy >= stability_buy_apy_threshold:
                         try:
                             # https://www.gate.io/apiw/v2/uni-loan/earn/chart?from=1741874400&to=1741957200&asset=SOL&type=1
                             url = f'https://www.gate.io/apiw/v2/uni-loan/earn/chart?from={start}&to={end}&asset={token}&type=1'
@@ -242,7 +250,9 @@ class ExchangeAPI:
                             if response.status_code != 200:
                                 logger.error(f"gateio get 1day asset charts, url: {url}, status: {response.status_code}, response: {response.text}")
                             data = response.json().get('data', [])
-                            apy_percentile = get_percentile([float(i['value']) for i in data], percentile=yield_percentile, reverse=True)
+                            # apy_percentile = get_percentile([float(i['value']) for i in data], percentile=yield_percentile, reverse=True)
+                            apy_day = [{'timestamp': int(i['time'])*1000, 'apy': float(i['value'])} for i in data]
+                            apy_day = sorted(apy_day, key=lambda item: item['timestamp'], reverse=False)
                             url = f'https://www.gate.io/apiw/v2/uni-loan/earn/chart?from={start_30}&to={end}&asset={token}&type=2'
                             logger.info(f"get gateio {token}近30天收益率曲线, url: {url}")
                             response = requests.get(
@@ -259,7 +269,8 @@ class ExchangeAPI:
                         "exchange": "GateIO",
                         "token": token,
                         "apy": apy,
-                        "apy_percentile": apy_percentile,
+                        'apy_day': apy_day,
+                        # "apy_percentile": apy_percentile,
                         'apy_month': apy_month,
                         "min_purchase": f"{float(item.get('total_lend_available', 0))}(total_lend_available-可借总额)",
                         "max_purchase": f"{float(item.get('total_lend_all_amount', 0))}(total_lend_all_amount-借出总额)",
@@ -290,9 +301,10 @@ class ExchangeAPI:
                     token = item["investCurrency"]["currencyName"]
                     toked_id = int(item['investCurrency']['currencyId'])
                     apy = float(item['rate']['rateNum']['value'][0])
-                    apy_percentile = apy
+                    # apy_percentile = apy
+                    apy_day = []
                     apy_month = []
-                    if apy > buy_apy_threshold:
+                    if apy > stability_buy_apy_threshold:
                         try:
                             url = f'https://www.okx.com/priapi/v2/financial/rate-history?currencyId={toked_id}&t={now_timestamp_ms}'
                             logger.info(f"get okx {token}近1天收益率曲线, url: {url}")
@@ -309,7 +321,9 @@ class ExchangeAPI:
                             if response.status_code != 200:
                                 logger.error(f"gateio get asset charts, url: {url}, status: {response.status_code}, response: {response.text}")
                             data = response.json().get('data', {})
-                            apy_percentile = get_percentile([float(i['rate'])*100 for i in data.get('lastOneDayRates', {}).get('rates')])
+                            apy_day = [{'apy': float(i['rate'])*100, 'timestamp': int(i['dataDate'])} for i in data.get('lastOneDayRates', {}).get('rates')]
+                            apy_day = sorted(apy_day, key=lambda item: item['timestamp'], reverse=False)
+                            # apy_percentile = get_percentile([float(i['rate'])*100 for i in data.get('lastOneDayRates', {}).get('rates')])
                             apy_month = [{'timestamp': i['dataDate'], 'apy': float(i['rate'])*100*(1-okx_earn_insurance_keep_ratio)} for i in data.get('lastOneMonthRates', {}).get('rates', [])]
                         except Exception as e:
                             logger.error(f"get asset chart {item['asset']} error: {str(e)}")
@@ -317,7 +331,8 @@ class ExchangeAPI:
                             "exchange": "OKX",
                             "token": token,
                             "apy": apy*(1-okx_earn_insurance_keep_ratio),
-                            "apy_percentile": apy_percentile*(1-okx_earn_insurance_keep_ratio),
+                            # "apy_percentile": apy_percentile*(1-okx_earn_insurance_keep_ratio),
+                            'apy_day': apy_day,
                             'apy_month': apy_month,
                             "min_purchase": '无',
                             "max_purchase": '无',
@@ -343,13 +358,14 @@ class ExchangeAPI:
         :return:
         """
         url = f"https://www.binance.com/bapi/futures/v1/public/future/common/get-funding-info"
-        response = requests.get(url, proxies=proxies)
-        if response.status_code == 200:
-            data = response.json()
-            # logger.info(f"binance funding info get funding info: {data}")
-            for i in data.get('data', []):
-                self.binance_funding_info[i['symbol']] = i
-        else:
+        try:
+            response = requests.get(url, proxies=proxies)
+            if response.status_code == 200:
+                data = response.json()
+                # logger.info(f"binance funding info get funding info: {data}")
+                for i in data.get('data', []):
+                    self.binance_funding_info[i['symbol']] = i
+        except Exception as e:
             logger.error(f"binance get funding info failed, url: {url}, code: {response.status_code}, error: {response.text}")
 
     def get_binance_future_funding_rate_history(self, token, startTime, endTime):
