@@ -310,7 +310,7 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description='Gate.io现货卖出与Bitget合约平空单交易')
     parser.add_argument('-s', '--symbol', type=str, required=True, help='交易对符号，例如 ETH/USDT')
     parser.add_argument('-a', '--amount', type=float, required=True, help='卖出的现货数量')
-    parser.add_argument('-p', '--min-spread', type=float, default=0.001, help='最小价差要求，默认0.001 (0.1%)')
+    parser.add_argument('-p', '--min-spread', type=float, default=0.001, help='最小价差要求，默认0.001 (0.1%%)')
     return parser.parse_args()
 
 
