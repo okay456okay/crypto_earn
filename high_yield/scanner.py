@@ -121,7 +121,7 @@ class CryptoYieldMonitor:
         else:
             logger.error("unknown product type")
             return
-        limit = 4
+        limit = 3
         for p in range(int(len(notifications) / limit) + 1):
             message = ''
             for idx, notif in enumerate(notifications[p*limit:(p+1)*limit], 1):
