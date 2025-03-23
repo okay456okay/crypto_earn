@@ -249,6 +249,8 @@ class ExchangeAPI:
                                 proxies=proxies)
                             if response.status_code != 200:
                                 logger.error(f"gateio get 1day asset charts, url: {url}, status: {response.status_code}, response: {response.text}")
+                            else:
+                                logger.info(f"get gateio 1day asset charts, url: {url}, data: {response.json()}")
                             data = response.json().get('data', [])
                             # apy_percentile = get_percentile([float(i['value']) for i in data], percentile=yield_percentile, reverse=True)
                             apy_day = [{'timestamp': int(i['time'])*1000, 'apy': float(i['value'])} for i in data]
