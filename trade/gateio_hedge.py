@@ -129,7 +129,7 @@ class GateioHedgeTrader:
                 current_price = float(orderbook['asks'][0][0])
                 
                 required_spot_usdt = float(self.spot_amount) * current_price * 1.02  # 额外2%作为滑点和手续费
-                required_futures_margin = float(self.spot_amount) / self.leverage * 1.05  # 额外5%作为保证金
+                required_futures_margin = float(self.spot_amount) * current_price / self.leverage * 1.05  # 额外5%作为保证金
                 
                 if required_spot_usdt > self.spot_usdt:
                     raise Exception(f"Gate.io现货USDT余额不足，需要约 {required_spot_usdt:.2f} USDT，当前余额 {self.spot_usdt:.2f} USDT")
