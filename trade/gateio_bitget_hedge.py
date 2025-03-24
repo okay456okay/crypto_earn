@@ -280,6 +280,44 @@ class HedgeTrader:
                 except asyncio.CancelledError:
                     pass
 
+    async def subscribe_to_earn(self, currency: str, amount: float) -> dict:
+        """
+        申购Gate.io余币宝产品
+        
+        Args:
+            currency: 币种，如 'KAVA'
+            amount: 申购数量
+            
+        Returns:
+            dict: 申购结果
+        """
+        try:
+            # 获取可用的余币宝产品列表
+            earn_products = await self.gateio.fetch_earn_products({'currency': currency})
+            
+            if not earn_products:
+                raise Exception(f"未找到{currency}的余币宝产品")
+            
+            # 通常选择第一个可用产品
+            product = earn_products[0]
+            product_id = product['id']
+            
+            # 申购余币宝
+            subscription = await self.gateio.subscribe_to_earn_product(
+                product_id,
+                amount,
+                {'currency': currency}
+            )
+            
+            logger.info(f"余币宝申购成功 - 币种: {currency}, 数量: {amount}, "
+                       f"产品ID: {product_id}")
+            
+            return subscription
+            
+        except Exception as e:
+            logger.error(f"余币宝申购失败: {str(e)}")
+            raise
+
     async def execute_hedge_trade(self):
         """执行对冲交易"""
         try:
@@ -317,6 +355,13 @@ class HedgeTrader:
             fees = spot_order.get('fees', [])
             base_fee = sum(float(fee['cost']) for fee in fees if fee['currency'] == base_currency)
             actual_position = filled_amount - base_fee
+            
+            # 申购余币宝
+            try:
+                await self.subscribe_to_earn(base_currency, actual_position)
+                logger.info(f"已将 {actual_position} {base_currency} 申购到余币宝")
+            except Exception as e:
+                logger.error(f"余币宝申购失败，但不影响主要交易流程: {str(e)}")
             
             logger.info(f"Gate.io实际成交数量: {filled_amount} {base_currency}, "
                        f"手续费: {base_fee} {base_currency}, "
@@ -390,7 +435,31 @@ def parse_arguments():
     parser.add_argument('-a', '--amount', type=float, required=True, help='购买的现货数量')
     parser.add_argument('-p', '--min-spread', type=float, default=0.001, help='最小价差要求，默认0.001 (0.1%%)')
     parser.add_argument('-l', '--leverage', type=int, default=20, help='合约杠杆倍数，默认20倍')
+    parser.add_argument('--test-earn', action='store_true', help='测试余币宝申购功能')
     return parser.parse_args()
+
+
+async def test_earn_subscription():
+    """
+    测试Gate.io余币宝申购功能
+    """
+    try:
+        # 创建测试用的交易器实例
+        trader = HedgeTrader("KAVA/USDT")  # 使用KAVA作为测试币种
+        await trader.initialize()
+        
+        # 测试申购余币宝
+        currency = "KAVA"
+        amount = 10  # 测试申购10个KAVA
+        
+        result = await trader.subscribe_to_earn(currency, amount)
+        logger.info(f"余币宝测试申购结果: {result}")
+        
+    except Exception as e:
+        logger.error(f"余币宝测试失败: {str(e)}")
+    finally:
+        if 'trader' in locals():
+            await trader.gateio.close()
 
 
 async def main():
@@ -399,6 +468,11 @@ async def main():
     """
     args = parse_arguments()
     
+    # 如果是测试模式，只测试余币宝功能
+    if args.test_earn:
+        await test_earn_subscription()
+        return 0
+        
     try:
         # 创建并初始化交易器
         trader = HedgeTrader(
