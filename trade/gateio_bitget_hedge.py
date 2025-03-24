@@ -24,6 +24,8 @@ import aiohttp
 import ccxt.pro as ccxtpro  # 使用 ccxt pro 版本
 from collections import defaultdict
 from typing import Dict, Optional
+import hmac
+import hashlib
 
 # 添加项目根目录到系统路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -292,27 +294,67 @@ class HedgeTrader:
             dict: 申购结果
         """
         try:
-            # 获取可用的余币宝产品列表
-            earn_products = await self.gateio.fetch_earn_products({'currency': currency})
+            # 使用Gate.io的原生API
+            url = "https://api.gateio.ws/api/v4/earn/products"
+            headers = {
+                "Accept": "application/json",
+                "Content-Type": "application/json"
+            }
             
-            if not earn_products:
+            # 获取可用的余币宝产品列表
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, params={'currency': currency}) as response:
+                    if response.status != 200:
+                        raise Exception(f"获取余币宝产品失败: {await response.text()}")
+                    products = await response.json()
+            
+            if not products:
                 raise Exception(f"未找到{currency}的余币宝产品")
             
-            # 通常选择第一个可用产品
-            product = earn_products[0]
-            product_id = product['id']
+            # 找到第一个可用的活期产品
+            available_product = None
+            for product in products:
+                if (product.get('type') == 'flexible' and  # 活期产品
+                    product.get('status') == 'in_progress' and  # 正在进行中
+                    product.get('currency') == currency):  # 匹配币种
+                    available_product = product
+                    break
+            
+            if not available_product:
+                raise Exception(f"未找到{currency}可用的活期余币宝产品")
             
             # 申购余币宝
-            subscription = await self.gateio.subscribe_to_earn_product(
-                product_id,
-                amount,
-                {'currency': currency}
-            )
+            invest_url = "https://api.gateio.ws/api/v4/earn/investments"
+            payload = {
+                "product_id": available_product['id'],
+                "amount": str(amount)
+            }
+            
+            # 生成签名
+            timestamp = str(int(time.time()))
+            sign_payload = f"{timestamp}\nPOST\n/api/v4/earn/investments\n{payload}"
+            signature = hmac.new(
+                self.gateio.secret.encode(),
+                sign_payload.encode(),
+                hashlib.sha512
+            ).hexdigest()
+            
+            headers.update({
+                "KEY": self.gateio.apiKey,
+                "Timestamp": timestamp,
+                "SIGN": signature
+            })
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(invest_url, headers=headers, json=payload) as response:
+                    if response.status != 200:
+                        raise Exception(f"申购余币宝失败: {await response.text()}")
+                    result = await response.json()
             
             logger.info(f"余币宝申购成功 - 币种: {currency}, 数量: {amount}, "
-                       f"产品ID: {product_id}")
+                       f"产品ID: {available_product['id']}")
             
-            return subscription
+            return result
             
         except Exception as e:
             logger.error(f"余币宝申购失败: {str(e)}")
