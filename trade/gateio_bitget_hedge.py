@@ -22,15 +22,12 @@ import ccxt.async_support as ccxt  # 使用异步版本的ccxt
 import asyncio
 import aiohttp
 import ccxt.pro as ccxtpro  # 使用 ccxt pro 版本
-from collections import defaultdict
-from typing import Dict, Optional
-import hmac
-import hashlib
 
 # 添加项目根目录到系统路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tools.logger import logger
 from config import bitget_api_key, bitget_api_secret, bitget_api_passphrase, gateio_api_secret, gateio_api_key, proxies
+from trade.gateio_api import subscrible_earn as gateio_subscrible_earn
 
 
 class HedgeTrader:
@@ -282,84 +279,6 @@ class HedgeTrader:
                 except asyncio.CancelledError:
                     pass
 
-    async def subscribe_to_earn(self, currency: str, amount: float) -> dict:
-        """
-        申购Gate.io余币宝产品
-        
-        Args:
-            currency: 币种，如 'KAVA'
-            amount: 申购数量
-            
-        Returns:
-            dict: 申购结果
-        """
-        try:
-            # 使用Gate.io的原生API
-            url = "https://api.gateio.ws/api/v4/earn/products"
-            headers = {
-                "Accept": "application/json",
-                "Content-Type": "application/json"
-            }
-            
-            # 获取可用的余币宝产品列表
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, params={'currency': currency}) as response:
-                    if response.status != 200:
-                        raise Exception(f"获取余币宝产品失败: {await response.text()}")
-                    products = await response.json()
-            
-            if not products:
-                raise Exception(f"未找到{currency}的余币宝产品")
-            
-            # 找到第一个可用的活期产品
-            available_product = None
-            for product in products:
-                if (product.get('type') == 'flexible' and  # 活期产品
-                    product.get('status') == 'in_progress' and  # 正在进行中
-                    product.get('currency') == currency):  # 匹配币种
-                    available_product = product
-                    break
-            
-            if not available_product:
-                raise Exception(f"未找到{currency}可用的活期余币宝产品")
-            
-            # 申购余币宝
-            invest_url = "https://api.gateio.ws/api/v4/earn/investments"
-            payload = {
-                "product_id": available_product['id'],
-                "amount": str(amount)
-            }
-            
-            # 生成签名
-            timestamp = str(int(time.time()))
-            sign_payload = f"{timestamp}\nPOST\n/api/v4/earn/investments\n{payload}"
-            signature = hmac.new(
-                self.gateio.secret.encode(),
-                sign_payload.encode(),
-                hashlib.sha512
-            ).hexdigest()
-            
-            headers.update({
-                "KEY": self.gateio.apiKey,
-                "Timestamp": timestamp,
-                "SIGN": signature
-            })
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.post(invest_url, headers=headers, json=payload) as response:
-                    if response.status != 200:
-                        raise Exception(f"申购余币宝失败: {await response.text()}")
-                    result = await response.json()
-            
-            logger.info(f"余币宝申购成功 - 币种: {currency}, 数量: {amount}, "
-                       f"产品ID: {available_product['id']}")
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"余币宝申购失败: {str(e)}")
-            raise
-
     async def execute_hedge_trade(self):
         """执行对冲交易"""
         try:
@@ -398,20 +317,20 @@ class HedgeTrader:
             base_fee = sum(float(fee['cost']) for fee in fees if fee['currency'] == base_currency)
             actual_position = filled_amount - base_fee
             
-            # 申购余币宝
-            try:
-                await self.subscribe_to_earn(base_currency, actual_position)
-                logger.info(f"已将 {actual_position} {base_currency} 申购到余币宝")
-            except Exception as e:
-                logger.error(f"余币宝申购失败，但不影响主要交易流程: {str(e)}")
-            
             logger.info(f"Gate.io实际成交数量: {filled_amount} {base_currency}, "
                        f"手续费: {base_fee} {base_currency}, "
                        f"实际持仓: {actual_position} {base_currency}")
             
             # 检查持仓情况
             await self.check_positions()
-            
+
+            # 申购余币宝
+            try:
+                gateio_subscrible_earn(base_currency, actual_position)
+                logger.info(f"已将 {filled_amount} {actual_position} 申购到余币宝")
+            except Exception as e:
+                logger.error(f"余币宝申购失败，但不影响主要交易流程: {str(e)}")
+
             return spot_order, contract_order
             
         except Exception as e:
