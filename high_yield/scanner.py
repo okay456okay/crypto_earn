@@ -173,8 +173,8 @@ class CryptoYieldMonitor:
             futures_results = self.get_futures_trading(perp_token)
             logger.info(f"{perp_token} get future results: {futures_results}")
             # 计算不同交易所的预估收益率，支持合约且考虑资金费率后预估收益率大于收益率买入最低要求
-            estimate_apys = [i for i in futures_results if self.get_estimate_apy(product['apy'], i['fundingRate'], i['fundingIntervalHours']) > stability_buy_apy_threshold]
-            if not estimate_apys:
+            low_estimate_apys = [i for i in futures_results if self.get_estimate_apy(product['apy'], i['fundingRate'], i['fundingIntervalHours']) < stability_buy_apy_threshold]
+            if low_estimate_apys:
                 continue
             apy_percentile = 0.0
             if product['apy_day']:
