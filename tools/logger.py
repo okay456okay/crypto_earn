@@ -13,7 +13,8 @@ os.makedirs(logs_dir, exist_ok=True)
 # 配置日志
 logging.basicConfig(
     level=logging.INFO,
-    format="[%(asctime)-15s] %(name)s %(levelname)s (%(funcName)s(), %(filename)s:%(lineno)d): %(message)s",
+    # format="[%(asctime)-15s] %(name)s %(levelname)s (%(funcName)s(), %(filename)s:%(lineno)d): %(message)s",
+    format="[%(asctime)-15s] %(levelname)s %(filename)s:%(lineno)d): %(message)s",
     handlers=[
         RotatingFileHandler(
             log_file_path,
