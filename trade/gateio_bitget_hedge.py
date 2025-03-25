@@ -239,7 +239,7 @@ class HedgeTrader:
                     # 从队列中获取最新价差数据，设置超时
                     spread_data = await asyncio.wait_for(
                         self.price_updates.get(),
-                        timeout=10  # 10秒超时
+                        timeout=30  # 10秒超时
                     )
                     
                     spread_percent = spread_data['spread_percent']
