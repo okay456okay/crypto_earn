@@ -245,10 +245,12 @@ class CryptoYieldMonitor:
                 content = f"在{token['spot_exchange']}交易所中未找到 {token['token']} 理财产品"
                 # sell_wechat_bot.send_message(content)
                 logger.info(content)
+                if token['spot_exchange'] == 'GateIO':
+                    product = self.exchange_api.get_gateio_flexible_product(token['token'])
             else:
                 product = product[0]
-            if token['spot_exchange'] == 'GateIO' and (not product['apy_day']):
-                product = self.exchange_api.get_gateio_flexible_product(token['token'])
+                if token['spot_exchange'] == 'GateIO' and (not product['apy_day']):
+                    product = self.exchange_api.get_gateio_flexible_product(token['token'])
             # 过滤资金费率和利率，如果满足条件就告警
             perp_token = f"{token['token']}USDT"
             futures_results = self.get_futures_trading(perp_token)
