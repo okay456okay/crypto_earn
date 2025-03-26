@@ -190,7 +190,8 @@ class CryptoYieldMonitor:
                 i for i in futures_results if
                 self.get_estimate_apy(product['apy'], i['fundingRate'],
                                       i['fundingIntervalHours']) < stability_buy_apy_threshold or
-                i['fundingRate'] <= -0.1
+                i['fundingRate'] <= -0.1 or
+                i['markPrice'] <= 0.0001
             ]
             if low_estimate_apys_or_high_negative_funding_rate:
                 continue
