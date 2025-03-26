@@ -146,7 +146,7 @@ class GateioHedgeTrader:
             logger.info(f"合约交易量计算:")
             logger.info(f"- 目标现货量: {self.spot_amount}")
             logger.info(f"- 合约乘数: {self.contract_size}")
-            logger.info(f"- 实际合约量: {self.futures_amount}")
+            logger.info(f"- 实际合约量: {self.futures_amount*self.contract_size}")
             
         except Exception as e:
             logger.error(f"初始化失败: {str(e)}")
