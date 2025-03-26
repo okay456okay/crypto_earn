@@ -325,8 +325,9 @@ class GateioHedgeTrader:
                     amount=self.futures_amount,
                     params={
                         "reduceOnly": False,
-                        "marginMode": "cross",
+                        # "marginMode": "cross",
                         "crossLeverageLimit": self.leverage,
+                        "account": "cross_margin",
                     }
                 )
             )
