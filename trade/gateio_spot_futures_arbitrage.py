@@ -17,15 +17,11 @@ Gate.io现货-合约价差套利脚本
 
 import sys
 import os
-import time
 import logging
 import argparse
 from decimal import Decimal
-import ccxt.async_support as ccxt
 import asyncio
 import ccxt.pro as ccxtpro
-from collections import defaultdict
-from typing import Dict, Optional, Tuple
 
 # 添加项目根目录到系统路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -39,8 +35,8 @@ class GateioSpotFuturesArbitrage:
     实现现货和合约之间的套利交易
     """
     
-    def __init__(self, symbol: str, trade_amount: float, max_spread: float = 0.03, 
-                 min_spread: float = 0.01, leverage: int = 20, 
+    def __init__(self, symbol: str, trade_amount: float, max_spread: float = 0.02,
+                 min_spread: float = -0.01, leverage: int = 20,
                  balance_check_interval: int = 300, test_mode: bool = False):
         """
         初始化交易参数
