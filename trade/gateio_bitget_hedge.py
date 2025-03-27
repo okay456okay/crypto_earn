@@ -14,13 +14,9 @@ Gate.io现货买入与Bitget合约空单对冲的套利脚本
 
 import sys
 import os
-import time
-import logging
 import argparse
 from decimal import Decimal
-import ccxt.async_support as ccxt  # 使用异步版本的ccxt
 import asyncio
-import aiohttp
 import ccxt.pro as ccxtpro  # 使用 ccxt pro 版本
 
 # 添加项目根目录到系统路径
@@ -405,22 +401,15 @@ async def test_earn_subscription():
     测试Gate.io余币宝申购功能
     """
     try:
-        # 创建测试用的交易器实例
-        trader = HedgeTrader("KAVA/USDT")  # 使用KAVA作为测试币种
-        await trader.initialize()
-        
         # 测试申购余币宝
         currency = "KAVA"
         amount = 10  # 测试申购10个KAVA
         
-        result = await trader.subscribe_to_earn(currency, amount)
+        result = gateio_subscrible_earn(currency, amount)
         logger.info(f"余币宝测试申购结果: {result}")
         
     except Exception as e:
         logger.error(f"余币宝测试失败: {str(e)}")
-    finally:
-        if 'trader' in locals():
-            await trader.gateio.close()
 
 
 async def main():
