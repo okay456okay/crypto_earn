@@ -41,3 +41,4 @@ debug_file_handler.setFormatter(
     logging.Formatter("[%(asctime)-15s] %(levelname)s (%(funcName)s(), %(filename)s:%(lineno)d): %(message)s")
 )
 debug_logger.addHandler(debug_file_handler)
+debug_logger.addHandler(logging.StreamHandler())  # 同时输出到控制台
