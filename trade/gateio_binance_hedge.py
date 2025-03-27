@@ -297,7 +297,7 @@ class HedgeTrader:
                 self.binance.create_market_sell_order(
                     symbol=self.contract_symbol,
                     amount=contract_amount,
-                    params={'positionSide': 'BOTH'}
+                    params={'positionSide': 'LONG'}
                 )
             )
             
