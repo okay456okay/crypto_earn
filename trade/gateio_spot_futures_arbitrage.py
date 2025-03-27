@@ -29,7 +29,7 @@ from typing import Dict, Optional, Tuple
 
 # 添加项目根目录到系统路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from tools.logger import logger
+from tools.logger import debug_logger as logger
 from config import gateio_api_key, gateio_api_secret, proxies
 
 
@@ -256,11 +256,11 @@ class GateioSpotFuturesArbitrage:
             # 计算平仓价差 (现货ask - 合约bid) / 合约bid
             close_spread = (spot_ask - futures_bid) / futures_bid
             
-            # 添加更详细的日志
-            logger.info(f"价差分析 - 现货买/卖: {float(spot_bid)}/{float(spot_ask)}, "
-                       f"合约买/卖: {float(futures_bid)}/{float(futures_ask)}, "
-                       f"开仓价差: {float(open_spread)*100:.2f}%, "
-                       f"平仓价差: {float(close_spread)*100:.2f}%")
+            # 将常规价差分析改为DEBUG级别
+            logger.debug(f"价差分析 - 现货买/卖: {float(spot_bid)}/{float(spot_ask)}, "
+                        f"合约买/卖: {float(futures_bid)}/{float(futures_ask)}, "
+                        f"开仓价差: {float(open_spread)*100:.2f}%, "
+                        f"平仓价差: {float(close_spread)*100:.2f}%")
             
             # 检查是否满足交易条件
             if float(open_spread) >= self.max_spread:
@@ -480,12 +480,20 @@ def parse_arguments():
                        help='合约杠杆倍数，默认20倍')
     parser.add_argument('-t', '--test', action='store_true',
                        help='测试模式，只显示交易信息不实际执行')
+    parser.add_argument('-d', '--debug', action='store_true',
+                       help='启用DEBUG级别日志输出')
     return parser.parse_args()
 
 
 async def main():
     """主函数"""
     args = parse_arguments()
+    
+    # 设置日志级别
+    if args.debug:
+        logger.setLevel(logging.DEBUG)
+    else:
+        logger.setLevel(logging.INFO)
     
     try:
         trader = GateioSpotFuturesArbitrage(
