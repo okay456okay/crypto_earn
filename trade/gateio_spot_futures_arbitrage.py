@@ -274,11 +274,7 @@ class GateioSpotFuturesArbitrage:
             logger.error(f"分析价差时出错: {str(e)}")
 
     async def execute_open_arbitrage(self):
-        """
-        执行开仓套利:
-        1. 卖出现货
-        2. 开合约多单
-        """
+        """执行开仓套利"""
         try:
             spot_ob = self.orderbooks['spot']
             futures_ob = self.orderbooks['futures']
@@ -303,12 +299,12 @@ class GateioSpotFuturesArbitrage:
             
             if self.test_mode:
                 logger.info(
-                    f"OPEN|{self.symbol}|"
-                    f"spot_bid={spot_bid:.4f}|spot_volume={spot_bid_volume:.4f}|"
-                    f"futures_ask={futures_ask:.4f}|futures_volume={futures_ask_volume:.4f}|"
-                    f"spread={spread*100:.2f}%|"
-                    f"plan_amount={self.trade_amount:.4f}|exec_amount={executable_amount:.4f}|"
-                    f"fees={spot_fee + futures_fee:.4f}|profit={profit:.4f}"
+                    f"开仓|{self.symbol}|"
+                    f"现货买价={spot_bid:.4f}|现货数量={spot_bid_volume:.4f}|"
+                    f"合约卖价={futures_ask:.4f}|合约数量={futures_ask_volume:.4f}|"
+                    f"价差={spread*100:.2f}%|"
+                    f"计划数量={self.trade_amount:.4f}|实际数量={executable_amount:.4f}|"
+                    f"手续费={spot_fee + futures_fee:.4f}|利润={profit:.4f}"
                 )
                 return
                 
@@ -350,11 +346,7 @@ class GateioSpotFuturesArbitrage:
             logger.error(f"执行开仓套利失败: {str(e)}")
 
     async def execute_close_arbitrage(self):
-        """
-        执行平仓套利:
-        1. 买入现货
-        2. 平合约多单
-        """
+        """执行平仓套利"""
         try:
             spot_ob = self.orderbooks['spot']
             futures_ob = self.orderbooks['futures']
@@ -379,12 +371,12 @@ class GateioSpotFuturesArbitrage:
             
             if self.test_mode:
                 logger.info(
-                    f"CLOSE|{self.symbol}|"
-                    f"spot_ask={spot_ask:.4f}|spot_volume={spot_ask_volume:.4f}|"
-                    f"futures_bid={futures_bid:.4f}|futures_volume={futures_bid_volume:.4f}|"
-                    f"spread={spread*100:.2f}%|"
-                    f"plan_amount={self.trade_amount:.4f}|exec_amount={executable_amount:.4f}|"
-                    f"fees={spot_fee + futures_fee:.4f}|profit={profit:.4f}"
+                    f"平仓|{self.symbol}|"
+                    f"现货卖价={spot_ask:.4f}|现货数量={spot_ask_volume:.4f}|"
+                    f"合约买价={futures_bid:.4f}|合约数量={futures_bid_volume:.4f}|"
+                    f"价差={spread*100:.2f}%|"
+                    f"计划数量={self.trade_amount:.4f}|实际数量={executable_amount:.4f}|"
+                    f"手续费={spot_fee + futures_fee:.4f}|利润={profit:.4f}"
                 )
                 return
                 
