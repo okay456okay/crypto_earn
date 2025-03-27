@@ -302,15 +302,14 @@ class GateioSpotFuturesArbitrage:
             profit = executable_amount * (spot_bid - futures_ask) - spot_fee - futures_fee
             
             if self.test_mode:
-                logger.info("\n========== 开仓套利模拟 ==========")
-                logger.info(f"现货买一价: {spot_bid:.4f}, 数量: {spot_bid_volume:.4f}")
-                logger.info(f"合约卖一价: {futures_ask:.4f}, 数量: {futures_ask_volume:.4f}")
-                logger.info(f"价差: {spread*100:.2f}%")
-                logger.info(f"计划交易数量: {self.trade_amount:.4f}")
-                logger.info(f"实际可交易数量: {executable_amount:.4f}")
-                logger.info(f"预计手续费: {spot_fee + futures_fee:.4f} USDT")
-                logger.info(f"预计利润: {profit:.4f} USDT")
-                logger.info("================================\n")
+                logger.info(
+                    f"OPEN|{self.symbol}|"
+                    f"spot_bid={spot_bid:.4f}|spot_volume={spot_bid_volume:.4f}|"
+                    f"futures_ask={futures_ask:.4f}|futures_volume={futures_ask_volume:.4f}|"
+                    f"spread={spread*100:.2f}%|"
+                    f"plan_amount={self.trade_amount:.4f}|exec_amount={executable_amount:.4f}|"
+                    f"fees={spot_fee + futures_fee:.4f}|profit={profit:.4f}"
+                )
                 return
                 
             # 检查是否有足够的现货可卖
@@ -379,15 +378,14 @@ class GateioSpotFuturesArbitrage:
             profit = executable_amount * (futures_bid - spot_ask) - spot_fee - futures_fee
             
             if self.test_mode:
-                logger.info("\n========== 平仓套利模拟 ==========")
-                logger.info(f"现货卖一价: {spot_ask:.4f}, 数量: {spot_ask_volume:.4f}")
-                logger.info(f"合约买一价: {futures_bid:.4f}, 数量: {futures_bid_volume:.4f}")
-                logger.info(f"价差: {spread*100:.2f}%")
-                logger.info(f"计划交易数量: {self.trade_amount:.4f}")
-                logger.info(f"实际可交易数量: {executable_amount:.4f}")
-                logger.info(f"预计手续费: {spot_fee + futures_fee:.4f} USDT")
-                logger.info(f"预计利润: {profit:.4f} USDT")
-                logger.info("================================\n")
+                logger.info(
+                    f"CLOSE|{self.symbol}|"
+                    f"spot_ask={spot_ask:.4f}|spot_volume={spot_ask_volume:.4f}|"
+                    f"futures_bid={futures_bid:.4f}|futures_volume={futures_bid_volume:.4f}|"
+                    f"spread={spread*100:.2f}%|"
+                    f"plan_amount={self.trade_amount:.4f}|exec_amount={executable_amount:.4f}|"
+                    f"fees={spot_fee + futures_fee:.4f}|profit={profit:.4f}"
+                )
                 return
                 
             # 检查是否有足够的USDT买入现货
