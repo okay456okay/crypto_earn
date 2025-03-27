@@ -24,7 +24,7 @@ import ccxt.pro as ccxtpro  # 使用 ccxt pro 版本
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tools.logger import logger
 from config import binance_api_key, binance_api_secret, gateio_api_secret, gateio_api_key, proxies
-from trade.gateio_api import subscrible_earn as gateio_subscrible_earn
+from trade.gateio_api import subscrible_earn as gateio_subscrible_earn, redeem_earn
 
 
 class HedgeTrader:
@@ -101,6 +101,13 @@ class HedgeTrader:
                 
                 if required_usdt > self.gateio_usdt:
                     raise Exception(f"Gate.io USDT余额不足，需要约 {required_usdt:.2f} USDT，当前余额 {self.gateio_usdt:.2f} USDT")
+                    # raise Exception(f"Gate.io USDT余额不足，需要约 {required_usdt:.2f} USDT，当前余额 {self.gateio_usdt:.2f} USDT")
+                    redeem_earn(self.symbol, required_usdt * 1.01)
+                    # 重新获取并保存账户余额
+                    self.gateio_usdt, self.bitget_usdt = await self.check_balances()
+                    if required_usdt > self.gateio_usdt:
+                        raise Exception(
+                            f"Gate.io USDT余额不足，需要约 {required_usdt:.2f} USDT，当前余额 {self.gateio_usdt:.2f} USDT")
                 if required_margin > self.binance_usdt:
                     raise Exception(f"Binance USDT保证金不足，需要约 {required_margin:.2f} USDT，当前余额 {self.binance_usdt:.2f} USDT")
                 
