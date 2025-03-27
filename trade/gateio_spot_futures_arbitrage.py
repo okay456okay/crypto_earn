@@ -183,39 +183,58 @@ class GateioSpotFuturesArbitrage:
                         asyncio.create_task(self.futures_exchange.watch_order_book(self.contract_symbol))
                     ]
                     
+                    # 修改为等待所有任务完成
                     done, pending = await asyncio.wait(
                         tasks,
-                        return_when=asyncio.FIRST_COMPLETED
+                        return_when=asyncio.ALL_COMPLETED,
+                        timeout=30  # 添加超时时间
                     )
                     
+                    # 处理超时情况
+                    if pending:
+                        logger.warning("订单簿订阅超时，准备重新订阅")
+                        for task in pending:
+                            task.cancel()
+                        continue
+                    
+                    # 处理完成的任务
                     for task in done:
-                        if not self.ws_running:
-                            break
+                        try:
+                            if not self.ws_running:
+                                break
                             
-                        ob = task.result()
-                        if task == tasks[0]:
-                            self.orderbooks['spot'] = ob
-                        else:
-                            self.orderbooks['futures'] = ob
+                            ob = task.result()
+                            # 根据订单簿的symbol判断是现货还是合约
+                            if ob['symbol'] == self.symbol:
+                                self.orderbooks['spot'] = ob
+                                logger.debug(f"更新现货订单簿 - 买一: {ob['bids'][0][0]}, 卖一: {ob['asks'][0][0]}")
+                            else:
+                                self.orderbooks['futures'] = ob
+                                logger.debug(f"更新合约订单簿 - 买一: {ob['bids'][0][0]}, 卖一: {ob['asks'][0][0]}")
                             
-                        if self.orderbooks['spot'] and self.orderbooks['futures']:
-                            await self.analyze_spread()
-                            
-                    for task in pending:
-                        task.cancel()
-                        
+                        except Exception as e:
+                            logger.error(f"处理订单簿数据出错: {str(e)}")
+                            continue
+                    
+                    # 两个订单簿都有数据时进行价差分析
+                    if self.orderbooks['spot'] and self.orderbooks['futures']:
+                        await self.analyze_spread()
+                    else:
+                        logger.debug("等待订单簿数据完整...")
+                    
                 except Exception as e:
                     if isinstance(e, asyncio.CancelledError):
                         break
                     logger.error(f"订阅订单簿出错: {str(e)}")
-                    if not self.ws_running:
-                        break
-                    await asyncio.sleep(1)
-                    
+                    # 添加重连延迟
+                    await asyncio.sleep(5)
+                    continue
+                
         except Exception as e:
             logger.error(f"订单簿订阅循环出错: {str(e)}")
         finally:
             self.ws_running = False
+            logger.info("订单簿订阅已停止")
 
     async def analyze_spread(self):
         """分析现货和合约价差，并在满足条件时触发交易"""
@@ -237,8 +256,11 @@ class GateioSpotFuturesArbitrage:
             # 计算平仓价差 (现货ask - 合约bid) / 合约bid
             close_spread = (spot_ask - futures_bid) / futures_bid
             
-            logger.debug(f"价差分析 - 开仓价差: {float(open_spread)*100:.2f}%, "
-                        f"平仓价差: {float(close_spread)*100:.2f}%")
+            # 添加更详细的日志
+            logger.info(f"价差分析 - 现货买/卖: {float(spot_bid)}/{float(spot_ask)}, "
+                       f"合约买/卖: {float(futures_bid)}/{float(futures_ask)}, "
+                       f"开仓价差: {float(open_spread)*100:.2f}%, "
+                       f"平仓价差: {float(close_spread)*100:.2f}%")
             
             # 检查是否满足交易条件
             if float(open_spread) >= self.max_spread:
