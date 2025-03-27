@@ -413,8 +413,8 @@ def parse_arguments():
     parser.add_argument('-p', '--min-spread', type=float, default=0.001, help='最小价差要求，默认0.001 (0.1%%)')
     parser.add_argument('-l', '--leverage', type=int, default=20, help='合约杠杆倍数，默认20倍')
     parser.add_argument('--test-earn', action='store_true', help='测试余币宝申购功能')
-    parser.add_argument('--test', action='store_true', help='测试模式，只打印交易信息，不实际下单')
-    parser.add_argument('--debug', action='store_true', help='启用调试日志')
+    parser.add_argument('-t', '--test', action='store_true', help='测试模式，只打印交易信息，不实际下单')
+    parser.add_argument('-d', '--debug', action='store_true', help='启用调试日志')
     return parser.parse_args()
 
 
