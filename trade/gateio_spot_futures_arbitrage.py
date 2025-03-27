@@ -237,7 +237,21 @@ class GateioSpotFuturesArbitrage:
             logger.info("订单簿订阅已停止")
 
     async def analyze_spread(self):
-        """分析现货和合约价差，并在满足条件时触发交易"""
+        """
+        分析现货和合约价差，并在满足条件时触发交易
+        
+        价差计算逻辑：(实际卖出价 - 实际买入价) / 实际买入价
+        
+        开仓套利(进入套利)：
+        - 卖出现货(现货买一价)、合约开多(合约卖一价)
+        - 开仓价差 = (现货买一 - 合约卖一) / 合约卖一
+        - 当价差 >= max_spread 时开仓
+        
+        平仓套利(退出套利)：
+        - 合约平多(合约买一价)、买入现货(现货卖一价)
+        - 平仓价差 = (合约买一 - 现货卖一) / 现货卖一
+        - 当价差 >= min_spread 时平仓
+        """
         try:
             spot_ob = self.orderbooks['spot']
             futures_ob = self.orderbooks['futures']
@@ -250,31 +264,38 @@ class GateioSpotFuturesArbitrage:
             futures_bid = Decimal(str(futures_ob['bids'][0][0]))  # 合约买一价
             futures_ask = Decimal(str(futures_ob['asks'][0][0]))  # 合约卖一价
             
-            # 计算开仓价差 (现货bid - 合约ask) / 合约ask
+            # 开仓价差 = (现货买一 - 合约卖一) / 合约卖一
+            # 现货买一是我们能卖出的最高价，合约卖一是我们需要买入的最低价
             open_spread = (spot_bid - futures_ask) / futures_ask
             
-            # 计算平仓价差 (现货ask - 合约bid) / 合约bid
-            close_spread = (spot_ask - futures_bid) / futures_bid
+            # 平仓价差 = (合约买一 - 现货卖一) / 现货卖一
+            # 合约买一是我们能卖出的最高价，现货卖一是我们需要买入的最低价
+            close_spread = (futures_bid - spot_ask) / spot_ask
             
             # 将常规价差分析改为DEBUG级别
             logger.debug(f"价差分析 - 现货买/卖: {float(spot_bid)}/{float(spot_ask)}, "
                         f"合约买/卖: {float(futures_bid)}/{float(futures_ask)}, "
-                        f"开仓价差: {float(open_spread)*100:.2f}%, "
-                        f"平仓价差: {float(close_spread)*100:.2f}%")
+                        f"开仓价差: {float(open_spread)*100:+.2f}%, "
+                        f"平仓价差: {float(close_spread)*100:+.2f}%")
             
             # 检查是否满足交易条件
-            if float(open_spread) >= self.max_spread:
-                logger.info(f"发现开仓机会 - 价差: {float(open_spread)*100:.2f}% >= {self.max_spread*100:.2f}%")
+            if float(open_spread) >= self.max_spread:  # 开仓条件：正价差超过阈值
+                logger.info(f"发现开仓机会 - 价差: {float(open_spread)*100:+.2f}% >= {self.max_spread*100:.2f}%")
                 await self.execute_open_arbitrage()
-            elif float(close_spread) <= self.min_spread:
-                logger.info(f"发现平仓机会 - 价差: {float(close_spread)*100:.2f}% <= {self.min_spread*100:.2f}%")
+            elif float(close_spread) >= self.min_spread:  # 平仓条件：正价差超过阈值
+                logger.info(f"发现平仓机会 - 价差: {float(close_spread)*100:+.2f}% >= {self.min_spread*100:.2f}%")
                 await self.execute_close_arbitrage()
                 
         except Exception as e:
             logger.error(f"分析价差时出错: {str(e)}")
 
     async def execute_open_arbitrage(self):
-        """执行开仓套利"""
+        """
+        执行开仓套利:
+        1. 卖出现货(现货买一价)
+        2. 开合约多单(合约卖一价)
+        价差 = (现货买一 - 合约卖一) / 合约卖一
+        """
         try:
             spot_ob = self.orderbooks['spot']
             futures_ob = self.orderbooks['futures']
@@ -291,7 +312,7 @@ class GateioSpotFuturesArbitrage:
             executable_amount = min(self.trade_amount, spot_bid_volume, futures_ask_volume)
             
             # 计算预期利润
-            spread = (spot_bid - futures_ask) / futures_ask
+            spread = (spot_bid - futures_ask) / futures_ask  # 开仓价差
             fee_rate = 0.001  # 0.1% 手续费
             spot_fee = executable_amount * spot_bid * fee_rate
             futures_fee = executable_amount * futures_ask * fee_rate
@@ -299,10 +320,10 @@ class GateioSpotFuturesArbitrage:
             
             if self.test_mode:
                 logger.info(
-                    f"开仓|{self.symbol}|"
-                    f"现货买价={spot_bid:.4f}|现货数量={spot_bid_volume:.4f}|"
-                    f"合约卖价={futures_ask:.4f}|合约数量={futures_ask_volume:.4f}|"
-                    f"价差={spread*100:.2f}%|"
+                    f"开仓套利|{self.symbol}|"
+                    f"交易方向: 卖出现货{spot_bid:.4f}、合约开多{futures_ask:.4f}|"
+                    f"现货数量={spot_bid_volume:.4f}|合约数量={futures_ask_volume:.4f}|"
+                    f"价差计算: ({spot_bid:.4f} - {futures_ask:.4f}) / {futures_ask:.4f} = {spread*100:+.2f}%|"
                     f"计划数量={self.trade_amount:.4f}|实际数量={executable_amount:.4f}|"
                     f"手续费={spot_fee + futures_fee:.4f}|利润={profit:.4f}"
                 )
@@ -346,7 +367,12 @@ class GateioSpotFuturesArbitrage:
             logger.error(f"执行开仓套利失败: {str(e)}")
 
     async def execute_close_arbitrage(self):
-        """执行平仓套利"""
+        """
+        执行平仓套利:
+        1. 合约平多(合约买一价)
+        2. 买入现货(现货卖一价)
+        价差 = (合约买一 - 现货卖一) / 现货卖一
+        """
         try:
             spot_ob = self.orderbooks['spot']
             futures_ob = self.orderbooks['futures']
@@ -363,7 +389,7 @@ class GateioSpotFuturesArbitrage:
             executable_amount = min(self.trade_amount, spot_ask_volume, futures_bid_volume)
             
             # 计算预期利润
-            spread = (spot_ask - futures_bid) / futures_bid
+            spread = (futures_bid - spot_ask) / spot_ask  # 平仓价差
             fee_rate = 0.001  # 0.1% 手续费
             spot_fee = executable_amount * spot_ask * fee_rate
             futures_fee = executable_amount * futures_bid * fee_rate
@@ -371,10 +397,10 @@ class GateioSpotFuturesArbitrage:
             
             if self.test_mode:
                 logger.info(
-                    f"平仓|{self.symbol}|"
-                    f"现货卖价={spot_ask:.4f}|现货数量={spot_ask_volume:.4f}|"
-                    f"合约买价={futures_bid:.4f}|合约数量={futures_bid_volume:.4f}|"
-                    f"价差={spread*100:.2f}%|"
+                    f"平仓套利|{self.symbol}|"
+                    f"交易方向: 合约平多{futures_bid:.4f}、买入现货{spot_ask:.4f}|"
+                    f"现货数量={spot_ask_volume:.4f}|合约数量={futures_bid_volume:.4f}|"
+                    f"价差计算: ({futures_bid:.4f} - {spot_ask:.4f}) / {spot_ask:.4f} = {spread*100:+.2f}%|"
                     f"计划数量={self.trade_amount:.4f}|实际数量={executable_amount:.4f}|"
                     f"手续费={spot_fee + futures_fee:.4f}|利润={profit:.4f}"
                 )
