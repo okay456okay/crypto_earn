@@ -143,8 +143,8 @@ class CryptoYieldMonitor:
                     d30apy_str = f"{d30apy:.2f}%"
                 message += (
                     f"{idx + p * limit}. {notif['token']}({notif['exchange']}) 💰\n"
-                    f"   • 最新收益率: {notif['apy']:.2f}%\n"
                     f"   • 近24小时现货交易量: {notif['volume_24h']/10000:.2f}万USDT\n"
+                    f"   • 最新收益率: {notif['apy']:.2f}%\n"
                     f"   • 近24小时P{yield_percentile}收益率: {notif['apy_percentile']:.2f}%\n"
                     f"   • 近7天P{yield_percentile}收益率: {d7apy_str}\n"
                     f"   • 近30天P{yield_percentile}收益率: {d30apy_str}\n"
@@ -289,8 +289,8 @@ class CryptoYieldMonitor:
                     content = f"💰**持仓收益率**: "
                 content += (
                         f"{product['exchange']}活期理财产品{product['token']} ({now_str})\n"
-                        f"最新收益率: {product['apy']:.2f}%\n"
                         f"近24小时现货交易量: {product['volume_24h']/10000:.2f}万USDT\n"
+                        f"最新收益率: {product['apy']:.2f}%\n"
                         f"P{yield_percentile}收益率: {apy_percentile:.2f}%\n"
                         f"近7天P{yield_percentile}收益率: {d7apy_str}\n"
                         f"近30天P{yield_percentile}收益率: {d30apy_str}\n"
