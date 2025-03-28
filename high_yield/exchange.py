@@ -13,7 +13,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(current_dir, '..'))
 
 from config import proxies, stability_buy_apy_threshold, yield_percentile, bitget_api_key, bitget_api_secret, \
-    bitget_api_passphrase, okx_earn_insurance_keep_ratio
+    bitget_api_passphrase, okx_earn_insurance_keep_ratio, okx_login_token
 from tools.logger import logger
 from high_yield.common import get_percentile
 
@@ -35,6 +35,16 @@ class ExchangeAPI:
         :return [{'exchange': 'Binance', 'token': 'AUCTION', 'apy': 25.573329, 'min_purchase': 0.01, 'max_purchase': 50280.0}]
         """
         try:
+            # 获取所有交易对24小时交易量
+            volume_url = "https://api.binance.com/api/v3/ticker/24hr"
+            volume_response = requests.get(volume_url, proxies=proxies)
+            volumes = {}
+            if volume_response.status_code == 200:
+                for item in volume_response.json():
+                    if item['symbol'].endswith('USDT'):
+                        token = item['symbol'].replace('USDT', '')
+                        volumes[token] = float(item['volume']) * float(item['weightedAvgPrice'])
+            
             # 新的Binance API接口
             url = "https://www.binance.com/bapi/earn/v1/friendly/finance-earn/simple-earn/homepage/details"
             params = {
@@ -92,6 +102,7 @@ class ExchangeAPI:
                             "min_purchase": float(item.get('productDetailList', [])[0].get("minPurchaseAmount", 0)),
                             "max_purchase": float(
                                 item.get('productDetailList', [])[0].get("maxPurchaseAmountPerUser", 0)),
+                            "volume_24h": volumes.get(item.get("asset", ""), 0)  # 添加24小时交易量
                         }
                         products.append(product)
                         sleep(0.1)
@@ -108,6 +119,17 @@ class ExchangeAPI:
         """
         products = []
         try:
+            # 获取所有交易对24小时交易量
+            volume_url = "https://api.bitget.com/api/v2/spot/market/tickers"
+            volume_response = requests.get(volume_url, proxies=proxies)
+            volumes = {}
+            if volume_response.status_code == 200:
+                for item in volume_response.json().get('data', []):
+                    if item['symbol'].endswith('USDT'):
+                        token = item['symbol'].replace('USDT', '')
+                        volumes[token] = float(item['usdtVolume'])  # bitget直接提供USDT计价的交易量
+            
+            # 原有的产品获取逻辑
             exchange = ccxt.bitget({
                 'apiKey': bitget_api_key,
                 'secret': bitget_api_secret,
@@ -124,11 +146,11 @@ class ExchangeAPI:
                             "exchange": "Bitget",
                             "token": item["coin"],
                             "apy": float(item['apyList'][0]["currentApy"]),
-                            # "apy_percentile": -1.0,
                             'apy_month': [],
                             'apy_day': [],
                             "min_purchase": int(float(item['apyList'][0]['minStepVal'])),
                             "max_purchase": int(float(item['apyList'][0]['maxStepVal'])),
+                            "volume_24h": volumes.get(item["coin"], 0)  # 添加24小时交易量
                         }
                         products.append(product)
             else:
@@ -144,6 +166,16 @@ class ExchangeAPI:
         """
         products = []
         try:
+            # 获取所有交易对24小时交易量
+            volume_url = "https://api.bybit.com/v5/market/tickers?category=spot"
+            volume_response = requests.get(volume_url, proxies=proxies)
+            volumes = {}
+            if volume_response.status_code == 200:
+                for item in volume_response.json().get('result', {}).get('list', []):
+                    if item['symbol'].endswith('USDT'):
+                        token = item['symbol'].replace('USDT', '')
+                        volumes[token] = float(item['volume24h']) * float(item['lastPrice'])
+            
             # https://api.bybit.com/v5/earn/product?category=FlexibleSaving
             url = "https://api.bybit.com/v5/earn/product"
             params = {
@@ -193,6 +225,7 @@ class ExchangeAPI:
                         'apy_day': apy_day,
                         "min_purchase": float(item.get('minStakeAmount', 0)),
                         "max_purchase": float(item.get('maxStakeAmount', 0)),
+                        "volume_24h": volumes.get(item["coin"], 0)  # 添加24小时交易量
                     }
                     products.append(product)
             else:
@@ -258,6 +291,16 @@ class ExchangeAPI:
         """
         products = []
         try:
+            # 获取所有交易对24小时交易量
+            volume_url = "https://api.gateio.ws/api/v4/spot/tickers"
+            volume_response = requests.get(volume_url, proxies=proxies)
+            volumes = {}
+            if volume_response.status_code == 200:
+                for item in volume_response.json():
+                    if item['currency_pair'].endswith('_USDT'):
+                        token = item['currency_pair'].replace('_USDT', '')
+                        volumes[token] = float(item['quote_volume'])
+            
             # self.session.get("https://www.gate.io/zh/simple-earn")
             # url = "https://www.gate.io/apiw/v2/uni-loan/earn/market/list?sort_type=3&available=false&limit=7&have_balance=0&have_award=0&is_subscribed=0&page=1"
             url = "https://www.gate.io/apiw/v2/uni-loan/earn/market/list"
@@ -334,6 +377,7 @@ class ExchangeAPI:
                         'apy_month': apy_month,
                         "min_purchase": f"{float(item.get('total_lend_available', 0))}(total_lend_available-可借总额)",
                         "max_purchase": f"{float(item.get('total_lend_all_amount', 0))}(total_lend_all_amount-借出总额)",
+                        "volume_24h": volumes.get(token, 0)  # 添加24小时交易量
                     }
                     products.append(product)
             else:
@@ -349,6 +393,16 @@ class ExchangeAPI:
         """
         products = []
         try:
+            # 获取所有交易对24小时交易量
+            volume_url = "https://www.okx.com/api/v5/market/tickers?instType=SPOT"
+            volume_response = requests.get(volume_url, proxies=proxies)
+            volumes = {}
+            if volume_response.status_code == 200:
+                for item in volume_response.json().get('data', []):
+                    if item['instId'].endswith('-USDT'):
+                        token = item['instId'].replace('-USDT', '')
+                        volumes[token] = float(item['volCcy24h']) * float(item['last'])
+            
             now_timestamp_ms = int(time.time() * 1000)
             url = f"https://www.okx.com/priapi/v1/earn/simple-earn/all-products?type=all&t={now_timestamp_ms}"
             response = requests.get(url, proxies=proxies)
@@ -372,7 +426,7 @@ class ExchangeAPI:
                             headers = {
                                 "accept": "application/json",
                                 "content-type": "application/json",
-                                "authorization": "eyJhbGciOiJIUzUxMiJ9.eyJqdGkiOiJleDExMDE3NDE2MjI3Mjc0NzhFRkZGQzc4Mzk1N0U0RDMwMVhWV0IiLCJ1aWQiOiJMZDlvSkMxdVVXQlA0bWJtbDROcWp3PT0iLCJzdGEiOjAsIm1pZCI6IkxkOW9KQzF1VVdCUDRtYm1sNE5xanc9PSIsInBpZCI6IlBUeUE4VzA5ekZVSkJHSjZZUk5HWXc9PSIsIm5kZSI6MCwiaWF0IjoxNzQxNjIyNzI3LCJleHAiOjE3NDI4MzIzMjcsImJpZCI6MCwiZG9tIjoid3d3Lm9reC5jb20iLCJlaWQiOjE0LCJpc3MiOiJva2NvaW4iLCJkaWQiOiJJMW9iM0FDOEdPcXdyeG1ETEhDd3JGU3RsYUZ4bjlRUGNobmtibnZWMDhQcktxUlJ4QjNSWXVrY3p1YzkvRzJuIiwibGlkIjoiTGQ5b0pDMXVVV0JQNG1ibWw0TnFqdz09IiwidWZiIjoiUFR5QThXMDl6RlVKQkdKNllSTkdZdz09IiwidXBiIjoiaUJyYTJWaE5va3lSaWh4aUovM3pFdz09Iiwia3ljIjoyLCJreWkiOiJzVmtQSHhqTUdvYWFzajZndFcxUHg3ZFRwQ1pLZzUvNktuMW14YWlyWkNsTzhxa2IxYkx0YWYySVJVS2tMN3hFN3lkRi9ZTkNHUVcvNXlpNFZCelQzUT09IiwiY3BrIjoiaEJ2M21IRmNvSURMblNyRnp0R1NOWkxPb1pTazVtQThIcFBwT0w4UTVOVUR4dDJVVVE1N3BtcCsxcXVCRFJ2bGlta3gyQk94b0M5OG11Vi85a2tPdnR5VjlacGk5NkFEdHpKRGdiS0FjVnoyb01xeE5taVpabko0Q284ZWUyS1hsYXZXOVpiK3FqNTJPVnJSbGNId0tkK1hVWFdheWJQVjRackRXb2F0SnU4PSIsInZlciI6MSwiY2x0IjoyfQ.PirV2tw9OJordjLO5xs82rPPfS3tK7dSlonOh7FJi-hbdemX7vrJ65sDo2IlyR70GR9R0qD-te8QUdPugo9SRA",
+                                "authorization": okx_login_token,
                                 "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0",
                             }
                             response = requests.get(
@@ -401,6 +455,7 @@ class ExchangeAPI:
                             'apy_month': apy_month,
                             "min_purchase": '无',
                             "max_purchase": '无',
+                            "volume_24h": volumes.get(token, 0)  # 添加24小时交易量
                         }
                         products.append(product)
                         sleep(0.1)
@@ -822,9 +877,9 @@ if __name__ == "__main__":
     # print(api.get_gateio_futures_funding_rate(token))
     # print(api.get_gateio_flexible_products())
     # print(api.get_bitget_futures_funding_rate_history(token, startTime=start, endTime=end)[0])
-    print(api.get_bybit_futures_funding_rate_history(token, startTime=start, endTime=end))
+    # print(api.get_bybit_futures_funding_rate_history(token, startTime=start, endTime=end))
     # print(api.get_okx_futures_funding_rate_history(token, startTime=start, endTime=end)[0])
     # print(api.get_gateio_futures_funding_rate_history(token, startTime=start, endTime=end)[0])
     # print(api.get_binance_flexible_products())
     # print(api.get_gateio_flexible_products())
-    # print(api.get_okx_flexible_products())
+    print(api.get_bitget_flexible_products())
