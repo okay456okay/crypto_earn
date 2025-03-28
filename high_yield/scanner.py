@@ -201,7 +201,7 @@ class CryptoYieldMonitor:
                 apy_percentile = get_percentile([i['apy'] for i in product['apy_day']], yield_percentile)
 
             future_info_str = '\n'.join([
-                f"   • {i['exchange']}: 近24小时合约交易量:{i['volume_24h']}, 最新资金费率:{i['fundingRate']:.4f}%, 近7天P{future_percentile}资金费率:{get_percentile([i['fundingRate'] for i in i['d7history']], future_percentile):.4f}%, 标记价格:{i['markPrice']:.9f}, 预估收益率: {self.get_estimate_apy(product['apy'], i['fundingRate'], i['fundingIntervalHours']):.2f}%, P{yield_percentile}预估收益率: {self.get_estimate_apy(apy_percentile, i['fundingRate'], i['fundingIntervalHours']):.2f}%, 结算周期:{i['fundingIntervalHoursText']}, {datetime.fromtimestamp(i['fundingTime'] / 1000)}"
+                f"   • {i['exchange']}: 近24小时合约交易量:{i['volume_24h']/10000:.2f}万USDT, 最新资金费率:{i['fundingRate']:.4f}%, 近7天P{future_percentile}资金费率:{get_percentile([i['fundingRate'] for i in i['d7history']], future_percentile):.4f}%, 标记价格:{i['markPrice']:.9f}, 预估收益率: {self.get_estimate_apy(product['apy'], i['fundingRate'], i['fundingIntervalHours']):.2f}%, P{yield_percentile}预估收益率: {self.get_estimate_apy(apy_percentile, i['fundingRate'], i['fundingIntervalHours']):.2f}%, 结算周期:{i['fundingIntervalHoursText']}, {datetime.fromtimestamp(i['fundingTime'] / 1000)}"
                 for i in
                 futures_results])
             # 生成通知内容
@@ -267,7 +267,7 @@ class CryptoYieldMonitor:
                 estimate_apy_percentile = self.get_estimate_apy(apy_percentile, token_future['fundingRate'],
                                                                 token_future['fundingIntervalHours'])
                 future_info_str = '\n'.join([
-                    f"   • {i['exchange']}: 近24小时合约交易量:{i['volume_24h']}, 资金费率:{i['fundingRate']:.4f}%, 近7天P{future_percentile}资金费率:{get_percentile([i['fundingRate'] for i in i['d7history']], future_percentile):.4f}%, 标记价格:{i['markPrice']:.9f}, 预估收益率: {self.get_estimate_apy(product['apy'], i['fundingRate'], i['fundingIntervalHours']):.2f}%, P{yield_percentile}预估收益率: {self.get_estimate_apy(apy_percentile, i['fundingRate'], i['fundingIntervalHours']):.2f}%, 结算周期:{i['fundingIntervalHoursText']}, {datetime.fromtimestamp(i['fundingTime'] / 1000)}"
+                    f"   • {i['exchange']}: 近24小时合约交易量:{i['volume_24h']/10000:.2f}万USDT, 资金费率:{i['fundingRate']:.4f}%, 近7天P{future_percentile}资金费率:{get_percentile([i['fundingRate'] for i in i['d7history']], future_percentile):.4f}%, 标记价格:{i['markPrice']:.9f}, 预估收益率: {self.get_estimate_apy(product['apy'], i['fundingRate'], i['fundingIntervalHours']):.2f}%, P{yield_percentile}预估收益率: {self.get_estimate_apy(apy_percentile, i['fundingRate'], i['fundingIntervalHours']):.2f}%, 结算周期:{i['fundingIntervalHoursText']}, {datetime.fromtimestamp(i['fundingTime'] / 1000)}"
                     for i in
                     futures_results])
                 # token_future['fundingRate'] < 0
@@ -284,25 +284,19 @@ class CryptoYieldMonitor:
                 if product['apy'] < sell_apy_threshold or \
                         estimate_apy < sell_apy_threshold or \
                         estimate_apy_percentile < sell_apy_threshold:
-                    content = (
-                        f"📉**卖出提醒**: {product['exchange']}活期理财产品{product['token']} ({now_str})\n"
+                    content = f"📉**卖出提醒**: "
+                else:
+                    content = f"💰**持仓收益率**: "
+                content += (
+                        f"{product['exchange']}活期理财产品{product['token']} ({now_str})\n"
                         f"最新收益率: {product['apy']:.2f}%\n"
+                        f"近24小时现货交易量: {product['volume_24h']/10000:.2f}万USDT\n"
                         f"P{yield_percentile}收益率: {apy_percentile:.2f}%\n"
                         f"近7天P{yield_percentile}收益率: {d7apy_str}\n"
                         f"近30天P{yield_percentile}收益率: {d30apy_str}\n"
                         f"各交易所资金费率: (套保交易所: {token['future_exchange']})\n"
                         f"{future_info_str}"
                     )
-                else:
-                    content = (
-                        f"💰**持仓收益率**: {product['exchange']}活期理财产品{product['token']} ({now_str})\n"
-                        f"最新收益率: {product['apy']:.2f}%\n"
-                        f"P{yield_percentile}收益率: {apy_percentile:.2f}%\n"
-                        f"近7天P{yield_percentile}收益率: {d7apy_str}\n"
-                        f"近30天P{yield_percentile}收益率: {d30apy_str}\n"
-                        # f"持有仓位: {token['totalAmount']}\n"
-                        f"各交易所资金费率: (套保交易所: {token['future_exchange']})\n"
-                        f"{future_info_str}")
                 sell_wechat_bot.send_message(content)
             else:
                 content = f"在{token['future_exchange']}交易所中未找到 {token['token']} 合约产品"
@@ -324,8 +318,7 @@ class CryptoYieldMonitor:
             logger.info(f"获取到的活期理财账户仓位如下：{purchased_tokens}")
             self.check_tokens(purchased_tokens, all_products)
         except Exception as e:
-            raise
-            logger.error(f"对所有已购买产品做检查失败 {e}")
+            logger.exception(f"对所有已购买产品做检查失败 {e}")
 
     def run(self):
         # 尝试获取外网出口IP
