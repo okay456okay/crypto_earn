@@ -18,6 +18,7 @@ import argparse
 from decimal import Decimal
 import asyncio
 import ccxt.pro as ccxtpro  # 使用 ccxt pro 版本
+import logging
 
 # 添加项目根目录到系统路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -249,7 +250,7 @@ class HedgeTrader:
 
                     spread_percent = spread_data['spread_percent']
 
-                    logger.info(
+                    logger.debug(
                         f"价格检查 - Gate.io卖1: {spread_data['gateio_ask']} (量: {spread_data['gateio_ask_volume']}), "
                         f"Bitget买1: {spread_data['bitget_bid']} (量: {spread_data['bitget_bid_volume']}), "
                         f"价差: {spread_percent * 100:.4f}%")
@@ -405,6 +406,7 @@ def parse_arguments():
     parser.add_argument('-p', '--min-spread', type=float, default=0.001, help='最小价差要求，默认0.001 (0.1%%)')
     parser.add_argument('-l', '--leverage', type=int, default=20, help='合约杠杆倍数，默认20倍')
     parser.add_argument('--test-earn', action='store_true', help='测试余币宝申购功能')
+    parser.add_argument('-d', '--debug', action='store_true', help='启用调试日志')  # 添加调试参数
     return parser.parse_args()
 
 
@@ -429,6 +431,13 @@ async def main():
     异步主函数
     """
     args = parse_arguments()
+    
+    # 设置日志级别
+    if args.debug:
+        logger.setLevel(logging.DEBUG)
+        logger.debug("已启用调试日志模式")
+    else:
+        logger.setLevel(logging.INFO)
 
     # 如果是测试模式，只测试余币宝功能
     if args.test_earn:
