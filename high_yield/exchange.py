@@ -27,6 +27,77 @@ class ExchangeAPI:
         self.session.proxies.update(proxies)
         self.binance_funding_info = {}
         self.products = []
+        # 添加交易量缓存
+        self.binance_volumes = {}
+        self.bitget_volumes = {}
+        self.bybit_volumes = {}
+        self.gateio_volumes = {}
+        self.okx_volumes = {}
+
+    def get_binance_volumes(self):
+        """获取币安所有交易对24小时交易量"""
+        try:
+            volume_url = "https://api.binance.com/api/v3/ticker/24hr"
+            volume_response = requests.get(volume_url, proxies=proxies)
+            if volume_response.status_code == 200:
+                for item in volume_response.json():
+                    if item['symbol'].endswith('USDT'):
+                        token = item['symbol'].replace('USDT', '')
+                        self.binance_volumes[token] = float(item['volume']) * float(item['weightedAvgPrice'])
+        except Exception as e:
+            logger.error(f"获取Binance交易量数据失败: {str(e)}")
+
+    def get_bitget_volumes(self):
+        """获取Bitget所有交易对24小时交易量"""
+        try:
+            volume_url = "https://api.bitget.com/api/v2/spot/market/tickers"
+            volume_response = requests.get(volume_url, proxies=proxies)
+            if volume_response.status_code == 200:
+                for item in volume_response.json().get('data', []):
+                    if item['symbol'].endswith('USDT'):
+                        token = item['symbol'].replace('USDT', '')
+                        self.bitget_volumes[token] = float(item['usdtVolume'])
+        except Exception as e:
+            logger.error(f"获取Bitget交易量数据失败: {str(e)}")
+
+    def get_bybit_volumes(self):
+        """获取Bybit所有交易对24小时交易量"""
+        try:
+            volume_url = "https://api.bybit.com/v5/market/tickers?category=spot"
+            volume_response = requests.get(volume_url, proxies=proxies)
+            if volume_response.status_code == 200:
+                for item in volume_response.json().get('result', {}).get('list', []):
+                    if item['symbol'].endswith('USDT'):
+                        token = item['symbol'].replace('USDT', '')
+                        self.bybit_volumes[token] = float(item['volume24h']) * float(item['lastPrice'])
+        except Exception as e:
+            logger.error(f"获取Bybit交易量数据失败: {str(e)}")
+
+    def get_gateio_volumes(self):
+        """获取GateIO所有交易对24小时交易量"""
+        try:
+            volume_url = "https://api.gateio.ws/api/v4/spot/tickers"
+            volume_response = requests.get(volume_url, proxies=proxies)
+            if volume_response.status_code == 200:
+                for item in volume_response.json():
+                    if item['currency_pair'].endswith('_USDT'):
+                        token = item['currency_pair'].replace('_USDT', '')
+                        self.gateio_volumes[token] = float(item['quote_volume'])
+        except Exception as e:
+            logger.error(f"获取GateIO交易量数据失败: {str(e)}")
+
+    def get_okx_volumes(self):
+        """获取OKX所有交易对24小时交易量"""
+        try:
+            volume_url = "https://www.okx.com/api/v5/market/tickers?instType=SPOT"
+            volume_response = requests.get(volume_url, proxies=proxies)
+            if volume_response.status_code == 200:
+                for item in volume_response.json().get('data', []):
+                    if item['instId'].endswith('-USDT'):
+                        token = item['instId'].replace('-USDT', '')
+                        self.okx_volumes[token] = float(item['volCcy24h']) * float(item['last'])
+        except Exception as e:
+            logger.error(f"获取OKX交易量数据失败: {str(e)}")
 
     def get_binance_flexible_products(self):
         """
@@ -35,15 +106,9 @@ class ExchangeAPI:
         :return [{'exchange': 'Binance', 'token': 'AUCTION', 'apy': 25.573329, 'min_purchase': 0.01, 'max_purchase': 50280.0}]
         """
         try:
-            # 获取所有交易对24小时交易量
-            volume_url = "https://api.binance.com/api/v3/ticker/24hr"
-            volume_response = requests.get(volume_url, proxies=proxies)
-            volumes = {}
-            if volume_response.status_code == 200:
-                for item in volume_response.json():
-                    if item['symbol'].endswith('USDT'):
-                        token = item['symbol'].replace('USDT', '')
-                        volumes[token] = float(item['volume']) * float(item['weightedAvgPrice'])
+            # 检查并获取交易量数据
+            if not self.binance_volumes:
+                self.get_binance_volumes()
             
             # 新的Binance API接口
             url = "https://www.binance.com/bapi/earn/v1/friendly/finance-earn/simple-earn/homepage/details"
@@ -102,7 +167,7 @@ class ExchangeAPI:
                             "min_purchase": float(item.get('productDetailList', [])[0].get("minPurchaseAmount", 0)),
                             "max_purchase": float(
                                 item.get('productDetailList', [])[0].get("maxPurchaseAmountPerUser", 0)),
-                            "volume_24h": volumes.get(item.get("asset", ""), 0)  # 添加24小时交易量
+                            "volume_24h": self.binance_volumes.get(item.get("asset", ""), 0)
                         }
                         products.append(product)
                         sleep(0.1)
@@ -119,15 +184,9 @@ class ExchangeAPI:
         """
         products = []
         try:
-            # 获取所有交易对24小时交易量
-            volume_url = "https://api.bitget.com/api/v2/spot/market/tickers"
-            volume_response = requests.get(volume_url, proxies=proxies)
-            volumes = {}
-            if volume_response.status_code == 200:
-                for item in volume_response.json().get('data', []):
-                    if item['symbol'].endswith('USDT'):
-                        token = item['symbol'].replace('USDT', '')
-                        volumes[token] = float(item['usdtVolume'])  # bitget直接提供USDT计价的交易量
+            # 检查并获取交易量数据
+            if not self.bitget_volumes:
+                self.get_bitget_volumes()
             
             # 原有的产品获取逻辑
             exchange = ccxt.bitget({
@@ -150,7 +209,7 @@ class ExchangeAPI:
                             'apy_day': [],
                             "min_purchase": int(float(item['apyList'][0]['minStepVal'])),
                             "max_purchase": int(float(item['apyList'][0]['maxStepVal'])),
-                            "volume_24h": volumes.get(item["coin"], 0)  # 添加24小时交易量
+                            "volume_24h": self.bitget_volumes.get(item["coin"], 0)
                         }
                         products.append(product)
             else:
@@ -166,15 +225,9 @@ class ExchangeAPI:
         """
         products = []
         try:
-            # 获取所有交易对24小时交易量
-            volume_url = "https://api.bybit.com/v5/market/tickers?category=spot"
-            volume_response = requests.get(volume_url, proxies=proxies)
-            volumes = {}
-            if volume_response.status_code == 200:
-                for item in volume_response.json().get('result', {}).get('list', []):
-                    if item['symbol'].endswith('USDT'):
-                        token = item['symbol'].replace('USDT', '')
-                        volumes[token] = float(item['volume24h']) * float(item['lastPrice'])
+            # 检查并获取交易量数据
+            if not self.bybit_volumes:
+                self.get_bybit_volumes()
             
             # https://api.bybit.com/v5/earn/product?category=FlexibleSaving
             url = "https://api.bybit.com/v5/earn/product"
@@ -225,7 +278,7 @@ class ExchangeAPI:
                         'apy_day': apy_day,
                         "min_purchase": float(item.get('minStakeAmount', 0)),
                         "max_purchase": float(item.get('maxStakeAmount', 0)),
-                        "volume_24h": volumes.get(item["coin"], 0)  # 添加24小时交易量
+                        "volume_24h": self.bybit_volumes.get(item["coin"], 0)
                     }
                     products.append(product)
             else:
@@ -246,6 +299,8 @@ class ExchangeAPI:
         apy_month = []
         apy_day = []
         try:
+            if not self.gateio_volumes:
+                self.get_gateio_volumes()
             url = f'https://www.gate.io/apiw/v2/uni-loan/earn/chart?from={start}&to={end}&asset={token}&type=1'
             logger.info(f"get gateio {token}近1天收益率曲线, url: {url}")
             response = requests.get(
@@ -280,6 +335,7 @@ class ExchangeAPI:
             'apy_month': apy_month,
             "min_purchase": "无",
             "max_purchase": "无",
+            "volume_24h": self.gateio_volumes.get(token, 0)
         }
         return product
 
@@ -291,15 +347,9 @@ class ExchangeAPI:
         """
         products = []
         try:
-            # 获取所有交易对24小时交易量
-            volume_url = "https://api.gateio.ws/api/v4/spot/tickers"
-            volume_response = requests.get(volume_url, proxies=proxies)
-            volumes = {}
-            if volume_response.status_code == 200:
-                for item in volume_response.json():
-                    if item['currency_pair'].endswith('_USDT'):
-                        token = item['currency_pair'].replace('_USDT', '')
-                        volumes[token] = float(item['quote_volume'])
+            # 检查并获取交易量数据
+            if not self.gateio_volumes:
+                self.get_gateio_volumes()
             
             # self.session.get("https://www.gate.io/zh/simple-earn")
             # url = "https://www.gate.io/apiw/v2/uni-loan/earn/market/list?sort_type=3&available=false&limit=7&have_balance=0&have_award=0&is_subscribed=0&page=1"
@@ -377,7 +427,7 @@ class ExchangeAPI:
                         'apy_month': apy_month,
                         "min_purchase": f"{float(item.get('total_lend_available', 0))}(total_lend_available-可借总额)",
                         "max_purchase": f"{float(item.get('total_lend_all_amount', 0))}(total_lend_all_amount-借出总额)",
-                        "volume_24h": volumes.get(token, 0)  # 添加24小时交易量
+                        "volume_24h": self.gateio_volumes.get(token, 0)
                     }
                     products.append(product)
             else:
@@ -393,6 +443,10 @@ class ExchangeAPI:
         """
         products = []
         try:
+            # 检查并获取交易量数据
+            if not self.okx_volumes:
+                self.get_okx_volumes()
+            
             # 获取所有交易对24小时交易量
             volume_url = "https://www.okx.com/api/v5/market/tickers?instType=SPOT"
             volume_response = requests.get(volume_url, proxies=proxies)
@@ -455,7 +509,7 @@ class ExchangeAPI:
                             'apy_month': apy_month,
                             "min_purchase": '无',
                             "max_purchase": '无',
-                            "volume_24h": volumes.get(token, 0)  # 添加24小时交易量
+                            "volume_24h": self.okx_volumes.get(token, 0)
                         }
                         products.append(product)
                         sleep(0.1)
