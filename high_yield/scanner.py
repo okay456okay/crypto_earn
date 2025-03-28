@@ -148,7 +148,9 @@ class CryptoYieldMonitor:
                     f"   • 近24小时P{yield_percentile}收益率: {notif['apy_percentile']:.2f}%\n"
                     f"   • 近7天P{yield_percentile}收益率: {d7apy_str}\n"
                     f"   • 近30天P{yield_percentile}收益率: {d30apy_str}\n"
-                    f"   • 各交易所合约信息: \n{notif['future_info']}\n"
+                    f"   • 各交易所合约信息: \n"
+                    f"   • 近24小时合约交易量|最新资金费率|近7天P{yield_percentile}资金费率|标记价格|预估收益率|近24小时P{yield_percentile}预估收益率|结算周期|下次结算时间\n"
+                    f"   • {notif['future_info']}\n"
                     f"   • 最低购买量: {notif['min_purchase']}\n"
                     f"   • 最大购买量: {notif['max_purchase']}\n"
                 )
@@ -201,7 +203,7 @@ class CryptoYieldMonitor:
                 apy_percentile = get_percentile([i['apy'] for i in product['apy_day']], yield_percentile)
 
             future_info_str = '\n'.join([
-                f"   • {i['exchange']}: 近24小时合约交易量:{i['volume_24h']/10000:.2f}万USDT, 最新资金费率:{i['fundingRate']:.4f}%, 近7天P{future_percentile}资金费率:{get_percentile([i['fundingRate'] for i in i['d7history']], future_percentile):.4f}%, 标记价格:{i['markPrice']:.9f}, 预估收益率: {self.get_estimate_apy(product['apy'], i['fundingRate'], i['fundingIntervalHours']):.2f}%, P{yield_percentile}预估收益率: {self.get_estimate_apy(apy_percentile, i['fundingRate'], i['fundingIntervalHours']):.2f}%, 结算周期:{i['fundingIntervalHoursText']}, {datetime.fromtimestamp(i['fundingTime'] / 1000)}"
+                f"   • {i['exchange']}: {i['volume_24h']/10000:.2f}万USDT, {i['fundingRate']:.4f}%, {get_percentile([i['fundingRate'] for i in i['d7history']], future_percentile):.4f}%, {i['markPrice']:.5f}, {self.get_estimate_apy(product['apy'], i['fundingRate'], i['fundingIntervalHours']):.2f}%, {self.get_estimate_apy(apy_percentile, i['fundingRate'], i['fundingIntervalHours']):.2f}%, {i['fundingIntervalHoursText']}, {datetime.fromtimestamp(i['fundingTime'] / 1000)}"
                 for i in
                 futures_results])
             # 生成通知内容
@@ -267,7 +269,7 @@ class CryptoYieldMonitor:
                 estimate_apy_percentile = self.get_estimate_apy(apy_percentile, token_future['fundingRate'],
                                                                 token_future['fundingIntervalHours'])
                 future_info_str = '\n'.join([
-                    f"   • {i['exchange']}: 近24小时合约交易量:{i['volume_24h']/10000:.2f}万USDT, 资金费率:{i['fundingRate']:.4f}%, 近7天P{future_percentile}资金费率:{get_percentile([i['fundingRate'] for i in i['d7history']], future_percentile):.4f}%, 标记价格:{i['markPrice']:.9f}, 预估收益率: {self.get_estimate_apy(product['apy'], i['fundingRate'], i['fundingIntervalHours']):.2f}%, P{yield_percentile}预估收益率: {self.get_estimate_apy(apy_percentile, i['fundingRate'], i['fundingIntervalHours']):.2f}%, 结算周期:{i['fundingIntervalHoursText']}, {datetime.fromtimestamp(i['fundingTime'] / 1000)}"
+                    f"   • {i['exchange']}: {i['volume_24h'] / 10000:.2f}万USDT, {i['fundingRate']:.4f}%, {get_percentile([i['fundingRate'] for i in i['d7history']], future_percentile):.4f}%, {i['markPrice']:.5f}, {self.get_estimate_apy(product['apy'], i['fundingRate'], i['fundingIntervalHours']):.2f}%, {self.get_estimate_apy(apy_percentile, i['fundingRate'], i['fundingIntervalHours']):.2f}%, {i['fundingIntervalHoursText']}, {datetime.fromtimestamp(i['fundingTime'] / 1000)}"
                     for i in
                     futures_results])
                 # token_future['fundingRate'] < 0
@@ -294,7 +296,8 @@ class CryptoYieldMonitor:
                         f"P{yield_percentile}收益率: {apy_percentile:.2f}%\n"
                         f"近7天P{yield_percentile}收益率: {d7apy_str}\n"
                         f"近30天P{yield_percentile}收益率: {d30apy_str}\n"
-                        f"各交易所资金费率: (套保交易所: {token['future_exchange']})\n"
+                        f"各交易所合约信息(套保交易所: {token['future_exchange']})\n"
+                        f"近24小时合约交易量|最新资金费率|近7天P{yield_percentile}资金费率|标记价格|预估收益率|近24小时P{yield_percentile}预估收益率|结算周期|下次结算时间\n"
                         f"{future_info_str}"
                     )
                 sell_wechat_bot.send_message(content)
