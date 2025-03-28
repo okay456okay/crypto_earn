@@ -99,7 +99,7 @@ class HedgeTrader:
 
                 if required_usdt > self.gateio_usdt:
                     # raise Exception(f"Gate.io USDT余额不足，需要约 {required_usdt:.2f} USDT，当前余额 {self.gateio_usdt:.2f} USDT")
-                    redeem_earn(self.symbol, required_usdt * 1.01)
+                    redeem_earn('USDT', required_usdt * 1.01)
                     # 重新获取并保存账户余额
                     self.gateio_usdt, self.bitget_usdt = await self.check_balances()
                     if required_usdt > self.gateio_usdt:
