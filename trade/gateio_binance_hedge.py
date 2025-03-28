@@ -98,7 +98,7 @@ class HedgeTrader:
                 
                 required_usdt = float(self.spot_amount) * current_price * 1.02
                 required_margin = float(self.spot_amount) * current_price / self.leverage * 1.05
-                
+
                 if required_usdt > self.gateio_usdt:
                     raise Exception(f"Gate.io USDT余额不足，需要约 {required_usdt:.2f} USDT，当前余额 {self.gateio_usdt:.2f} USDT")
                     # raise Exception(f"Gate.io USDT余额不足，需要约 {required_usdt:.2f} USDT，当前余额 {self.gateio_usdt:.2f} USDT")
@@ -110,7 +110,7 @@ class HedgeTrader:
                             f"Gate.io USDT余额不足，需要约 {required_usdt:.2f} USDT，当前余额 {self.gateio_usdt:.2f} USDT")
                 if required_margin > self.binance_usdt:
                     raise Exception(f"Binance USDT保证金不足，需要约 {required_margin:.2f} USDT，当前余额 {self.binance_usdt:.2f} USDT")
-                
+
                 logger.info(f"账户余额检查通过 - 预估所需Gate.io: {required_usdt:.2f} USDT, Binance: {required_margin:.2f} USDT")
                 
         except Exception as e:
@@ -297,7 +297,7 @@ class HedgeTrader:
                 self.binance.create_market_sell_order(
                     symbol=self.contract_symbol,
                     amount=contract_amount,
-                    params={'positionSide': 'LONG', "reduceOnly": False}
+                    params={'positionSide': 'SHORT'}
                 )
             )
             
@@ -470,7 +470,22 @@ async def main():
             test_mode=args.test  # 添加测试模式参数
         )
         await trader.initialize()
-        
+
+        """
+        # 开空单
+        contract_order = await  trader.binance.create_market_sell_order(
+            symbol='DOGEUSDT',
+            amount=30,
+            params={'positionSide': 'SHORT'}
+        )
+        # 平空单
+        contract_order = await  trader.binance.create_market_buy_order(
+            symbol='DOGEUSDT',
+            amount=30,
+            params={'positionSide': 'SHORT'}
+        )
+        """
+
         # 执行对冲交易
         spot_order, contract_order = await trader.execute_hedge_trade()
         
