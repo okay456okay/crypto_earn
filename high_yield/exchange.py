@@ -33,6 +33,12 @@ class ExchangeAPI:
         self.bybit_volumes = {}
         self.gateio_volumes = {}
         self.okx_volumes = {}
+        # 添加合约交易量缓存
+        self.binance_futures_volumes = {}
+        self.bitget_futures_volumes = {}
+        self.bybit_futures_volumes = {}
+        self.gateio_futures_volumes = {}
+        self.okx_futures_volumes = {}
 
     def get_binance_volumes(self):
         """获取币安所有交易对24小时交易量"""
@@ -98,6 +104,70 @@ class ExchangeAPI:
                         self.okx_volumes[token] = float(item['volCcy24h']) * float(item['last'])
         except Exception as e:
             logger.error(f"获取OKX交易量数据失败: {str(e)}")
+
+    def get_binance_futures_volumes(self):
+        """获取币安合约24小时交易量"""
+        try:
+            url = "https://fapi.binance.com/fapi/v1/ticker/24hr"
+            response = requests.get(url, proxies=proxies)
+            if response.status_code == 200:
+                for item in response.json():
+                    if item['symbol'].endswith('USDT'):
+                        self.binance_futures_volumes[item['symbol']] = float(item['volume']) * float(item['weightedAvgPrice'])
+        except Exception as e:
+            logger.error(f"获取Binance合约交易量数据失败: {str(e)}")
+
+    def get_bybit_futures_volumes(self):
+        """获取Bybit合约24小时交易量"""
+        try:
+            url = "https://api.bybit.com/v5/market/tickers?category=linear"
+            response = requests.get(url, proxies=proxies)
+            if response.status_code == 200:
+                data = response.json().get('result', {}).get('list', [])
+                for item in data:
+                    if item['symbol'].endswith('USDT'):
+                        self.bybit_futures_volumes[item['symbol']] = float(item['volume24h']) * float(item['lastPrice'])
+        except Exception as e:
+            logger.error(f"获取Bybit合约交易量数据失败: {str(e)}")
+
+    def get_bitget_futures_volumes(self):
+        """获取Bitget合约24小时交易量"""
+        try:
+            url = "https://api.bitget.com/api/v2/mix/market/tickers?productType=USDT-FUTURES"
+            response = requests.get(url, proxies=proxies)
+            if response.status_code == 200:
+                for item in response.json().get('data', []):
+                    self.bitget_futures_volumes[item['symbol']] = float(item['usdtVolume'])
+        except Exception as e:
+            logger.error(f"获取Bitget合约交易量数据失败: {str(e)}")
+
+    def get_gateio_futures_volumes(self):
+        """获取GateIO合约24小时交易量"""
+        try:
+            url = "https://api.gateio.ws/api/v4/futures/usdt/tickers"
+            response = requests.get(url, proxies=proxies)
+            if response.status_code == 200:
+                data = response.json()
+                for item in data:
+                    contract = item['contract']
+                    if contract.endswith('_USDT'):
+                        symbol = contract.replace('_USDT', 'USDT')
+                        self.gateio_futures_volumes[symbol] = float(item['volume_24h_settle'])
+        except Exception as e:
+            logger.error(f"获取GateIO合约交易量数据失败: {str(e)}")
+
+    def get_okx_futures_volumes(self):
+        """获取OKX合约24小时交易量"""
+        try:
+            url = "https://www.okx.com/api/v5/market/tickers?instType=SWAP"
+            response = requests.get(url, proxies=proxies)
+            if response.status_code == 200:
+                for item in response.json().get('data', []):
+                    if item['instId'].endswith('-USDT-SWAP'):
+                        symbol = item['instId'].replace('-USDT-SWAP', 'USDT')
+                        self.okx_futures_volumes[symbol] = float(item['volCcy24h']) * float(item['last'])
+        except Exception as e:
+            logger.error(f"获取OKX合约交易量数据失败: {str(e)}")
 
     def get_binance_flexible_products(self):
         """
@@ -588,11 +658,13 @@ class ExchangeAPI:
     def get_binance_futures_funding_rate(self, token):
         """
         获取币安合约资金费率
-        :return {'fundingTime': 1741478400001, 'fundingRate': 0.0068709999999999995, 'markPrice': 2202.84}
         """
         exchange = 'Binance'
         try:
-            # url = f"https://fapi.binance.com/fapi/v1/fundingRate?symbol={token}"
+            # 检查并获取交易量数据
+            if not self.binance_futures_volumes:
+                self.get_binance_futures_volumes()
+            
             url = f"https://fapi.binance.com/fapi/v1/premiumIndex?symbol={token}"
             response = requests.get(url, proxies=proxies)
             if response.status_code != 200:
@@ -610,6 +682,7 @@ class ExchangeAPI:
                 "markPrice": float(data["markPrice"]),
                 "fundingIntervalHours": fundingIntervalHours,
                 'fundingIntervalHoursText': fundingIntervalHoursText,
+                'volume_24h': self.binance_futures_volumes.get(token, 0),
             }  # 转换为百分比
         except Exception as e:
             logger.error(f"获取{exchange} {token}合约资金费率时出错: {str(e)}")
@@ -735,10 +808,13 @@ class ExchangeAPI:
     def get_bitget_futures_funding_rate(self, token):
         """
         获取Bitget合约资金费率
-        :return {'fundingTime': 1741478400001, 'fundingRate': 0.0068709999999999995, 'markPrice': 2202.84}
         """
         exchange = 'Bitget'
         try:
+            # 检查并获取交易量数据
+            if not self.bitget_futures_volumes:
+                self.get_bitget_futures_volumes()
+            
             url = "https://api.bitget.com/api/v2/mix/market/current-fund-rate"
             params = {
                 "symbol": f"{token}",
@@ -761,6 +837,7 @@ class ExchangeAPI:
                     'markPrice': float(mark_price),
                     'fundingIntervalHours': fundingIntervalHours,
                     'fundingIntervalHoursText': fundingIntervalHoursText,
+                    'volume_24h': self.bitget_futures_volumes.get(token, 0),
                 }  # 转换为百分比
             return {}
         except Exception as e:
@@ -770,10 +847,13 @@ class ExchangeAPI:
     def get_bybit_futures_funding_rate(self, token):
         """
         获取Bybit合约资金费率
-        :return {'fundingTime': 1741478400001, 'fundingRate': 0.0068709999999999995, 'markPrice': 2202.84}
         """
         exchange = 'Bybit'
         try:
+            # 检查并获取交易量数据
+            if not self.bybit_futures_volumes:
+                self.get_bybit_futures_volumes()
+            
             url = "https://api.bybit.com/v5/market/tickers"
             params = {
                 "category": "linear",
@@ -810,6 +890,7 @@ class ExchangeAPI:
                             'markPrice': float(item["markPrice"]),
                             'fundingIntervalHours': fundingIntervalHours,
                             'fundingIntervalHoursText': fundingIntervalHoursText,
+                            'volume_24h': self.bybit_futures_volumes.get(token, 0),
                         }
             return {}
         except Exception as e:
@@ -819,10 +900,13 @@ class ExchangeAPI:
     def get_gateio_futures_funding_rate(self, token):
         """
         获取GateIO合约资金费率
-        :return {'fundingTime': 1741478400001, 'fundingRate': 0.0068709999999999995, 'markPrice': 2202.84}
         """
         exchange = 'GateIO'
         try:
+            # 检查并获取交易量数据
+            if not self.gateio_futures_volumes:
+                self.get_gateio_futures_volumes()
+            
             gate_io_token = token.replace('USDT', '_USDT')
             url = f"https://api.gateio.ws/api/v4/futures/usdt/contracts/{gate_io_token}"
             response = self.session.get(url)
@@ -839,6 +923,7 @@ class ExchangeAPI:
                     'markPrice': float(data["mark_price"]),
                     'fundingIntervalHours': fundingIntervalHours,
                     'fundingIntervalHoursText': fundingIntervalHours,
+                    'volume_24h': self.gateio_futures_volumes.get(token, 0),
                 }
         except Exception as e:
             logger.error(f"获取{exchange} {token}合约资金费率时出错: {str(e)}")
@@ -846,12 +931,15 @@ class ExchangeAPI:
 
     def get_okx_futures_funding_rate(self, token):
         """
-        获取 OKX 合约资金费率
-        :return {'fundingTime': 1741478400001, 'fundingRate': 0.0068709999999999995, 'markPrice': 2202.84}
+        获取OKX合约资金费率
         """
         exchange = 'OKX'
-        symbol = token.replace('USDT', '/USDT:USDT')
         try:
+            # 检查并获取交易量数据
+            if not self.okx_futures_volumes:
+                self.get_okx_futures_volumes()
+            
+            symbol = token.replace('USDT', '/USDT:USDT')
             # 初始化OKX交易所实例
             exchange = ccxt.okx({'proxies': proxies})
 
@@ -873,6 +961,7 @@ class ExchangeAPI:
                 'markPrice': float(current_price) * 100,
                 "fundingIntervalHours": fundingIntervalHours,
                 'fundingIntervalHoursText': fundingIntervalHours,
+                'volume_24h': self.okx_futures_volumes.get(token, 0),
             }
         except Exception as e:
             logger.error(f"获取{exchange} {token}合约资金费率时出错: {str(e)}")
@@ -928,7 +1017,8 @@ if __name__ == "__main__":
     token = 'ETHUSDT'
     start = 1739318400000
     end = 1741939200000
-    # print(api.get_gateio_futures_funding_rate(token))
+    # print(api.get_binance_futures_funding_rate(token))
+    print(api.get_okx_futures_funding_rate(token))
     # print(api.get_gateio_flexible_products())
     # print(api.get_bitget_futures_funding_rate_history(token, startTime=start, endTime=end)[0])
     # print(api.get_bybit_futures_funding_rate_history(token, startTime=start, endTime=end))
@@ -936,4 +1026,4 @@ if __name__ == "__main__":
     # print(api.get_gateio_futures_funding_rate_history(token, startTime=start, endTime=end)[0])
     # print(api.get_binance_flexible_products())
     # print(api.get_gateio_flexible_products())
-    print(api.get_bitget_flexible_products())
+    # print(api.get_bitget_flexible_products())

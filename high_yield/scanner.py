@@ -201,7 +201,7 @@ class CryptoYieldMonitor:
                 apy_percentile = get_percentile([i['apy'] for i in product['apy_day']], yield_percentile)
 
             future_info_str = '\n'.join([
-                f"   • {i['exchange']}: 最新资金费率:{i['fundingRate']:.4f}%, 近7天P{future_percentile}资金费率:{get_percentile([i['fundingRate'] for i in i['d7history']], future_percentile):.4f}%, 标记价格:{i['markPrice']:.9f}, 预估收益率: {self.get_estimate_apy(product['apy'], i['fundingRate'], i['fundingIntervalHours']):.2f}%, P{yield_percentile}预估收益率: {self.get_estimate_apy(apy_percentile, i['fundingRate'], i['fundingIntervalHours']):.2f}%, 结算周期:{i['fundingIntervalHoursText']}, {datetime.fromtimestamp(i['fundingTime'] / 1000)}"
+                f"   • {i['exchange']}: 近24小时合约交易量:{i['volume_24h']}, 最新资金费率:{i['fundingRate']:.4f}%, 近7天P{future_percentile}资金费率:{get_percentile([i['fundingRate'] for i in i['d7history']], future_percentile):.4f}%, 标记价格:{i['markPrice']:.9f}, 预估收益率: {self.get_estimate_apy(product['apy'], i['fundingRate'], i['fundingIntervalHours']):.2f}%, P{yield_percentile}预估收益率: {self.get_estimate_apy(apy_percentile, i['fundingRate'], i['fundingIntervalHours']):.2f}%, 结算周期:{i['fundingIntervalHoursText']}, {datetime.fromtimestamp(i['fundingTime'] / 1000)}"
                 for i in
                 futures_results])
             # 生成通知内容
@@ -267,7 +267,7 @@ class CryptoYieldMonitor:
                 estimate_apy_percentile = self.get_estimate_apy(apy_percentile, token_future['fundingRate'],
                                                                 token_future['fundingIntervalHours'])
                 future_info_str = '\n'.join([
-                    f"   • {i['exchange']}: 资金费率:{i['fundingRate']:.4f}%, 近7天P{future_percentile}资金费率:{get_percentile([i['fundingRate'] for i in i['d7history']], future_percentile):.4f}%, 标记价格:{i['markPrice']:.9f}, 预估收益率: {self.get_estimate_apy(product['apy'], i['fundingRate'], i['fundingIntervalHours']):.2f}%, P{yield_percentile}预估收益率: {self.get_estimate_apy(apy_percentile, i['fundingRate'], i['fundingIntervalHours']):.2f}%, 结算周期:{i['fundingIntervalHoursText']}, {datetime.fromtimestamp(i['fundingTime'] / 1000)}"
+                    f"   • {i['exchange']}: 近24小时合约交易量:{i['volume_24h']}, 资金费率:{i['fundingRate']:.4f}%, 近7天P{future_percentile}资金费率:{get_percentile([i['fundingRate'] for i in i['d7history']], future_percentile):.4f}%, 标记价格:{i['markPrice']:.9f}, 预估收益率: {self.get_estimate_apy(product['apy'], i['fundingRate'], i['fundingIntervalHours']):.2f}%, P{yield_percentile}预估收益率: {self.get_estimate_apy(apy_percentile, i['fundingRate'], i['fundingIntervalHours']):.2f}%, 结算周期:{i['fundingIntervalHoursText']}, {datetime.fromtimestamp(i['fundingTime'] / 1000)}"
                     for i in
                     futures_results])
                 # token_future['fundingRate'] < 0
