@@ -250,17 +250,21 @@ class HedgeTrader:
 
                     spread_percent = spread_data['spread_percent']
 
-                    logger.debug(
-                        f"价格检查 - Gate.io卖1: {spread_data['gateio_ask']} (量: {spread_data['gateio_ask_volume']}), "
-                        f"Bitget买1: {spread_data['bitget_bid']} (量: {spread_data['bitget_bid_volume']}), "
-                        f"价差: {spread_percent * 100:.4f}%")
 
                     if spread_percent >= self.min_spread:
+                        logger.info(
+                            f"价格检查 - Gate.io卖1: {spread_data['gateio_ask']} (量: {spread_data['gateio_ask_volume']}), "
+                            f"Bitget买1: {spread_data['bitget_bid']} (量: {spread_data['bitget_bid_volume']}), "
+                            f"价差: {spread_percent * 100:.4f}%")
                         logger.info(f"价差条件满足: {spread_percent * 100:.4f}% >= {self.min_spread * 100:.4f}%")
                         return (spread_percent, spread_data['gateio_ask'], spread_data['bitget_bid'],
                                 spread_data['gateio_ask_volume'], spread_data['bitget_bid_volume'])
-
-                    logger.info(f"价差条件不满足: {spread_percent * 100:.4f}% < {self.min_spread * 100:.4f}%")
+                    else:
+                        logger.debug(
+                            f"价格检查 - Gate.io卖1: {spread_data['gateio_ask']} (量: {spread_data['gateio_ask_volume']}), "
+                            f"Bitget买1: {spread_data['bitget_bid']} (量: {spread_data['bitget_bid_volume']}), "
+                            f"价差: {spread_percent * 100:.4f}%")
+                        logger.debug(f"价差条件不满足: {spread_percent * 100:.4f}% < {self.min_spread * 100:.4f}%")
 
                 except asyncio.TimeoutError:
                     logger.warning("等待价差数据超时，重新订阅订单簿")
