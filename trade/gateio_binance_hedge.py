@@ -114,7 +114,7 @@ class HedgeTrader:
                 logger.info(f"账户余额检查通过 - 预估所需Gate.io: {required_usdt:.2f} USDT, Binance: {required_margin:.2f} USDT")
                 
         except Exception as e:
-            logger.error(f"初始化失败: {str(e)}")
+            logger.exception(f"初始化失败: {str(e)}")
             raise
 
     async def subscribe_orderbooks(self):
