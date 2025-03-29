@@ -270,7 +270,7 @@ class HedgeTrader:
             spread_percent, gateio_ask, binance_bid, gateio_ask_volume, binance_bid_volume = spread_data
             
             # 2. 立即准备下单参数, 不然现货会比合约少一些
-            trade_amount = self.spot_amount * 1.001
+            trade_amount = self.spot_amount * 1.0005
             cost = float(trade_amount) * float(gateio_ask)
             contract_amount = self.binance.amount_to_precision(self.contract_symbol, trade_amount)
             
