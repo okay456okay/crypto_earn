@@ -298,7 +298,7 @@ class HedgeTrader:
             spread_percent, gateio_ask, bitget_bid, gateio_ask_volume, bitget_bid_volume = spread_data
 
             # 2. 立即准备下单参数, 补偿一点手续费，不然现货会比合约少一些
-            trade_amount = self.spot_amount * 1.0005
+            trade_amount = self.spot_amount * 1.001
             cost = float(trade_amount) * float(gateio_ask)
             contract_amount = self.bitget.amount_to_precision(self.contract_symbol, trade_amount)
 
@@ -338,7 +338,7 @@ class HedgeTrader:
             # 申购余币宝
             try:
                 gateio_subscrible_earn(base_currency, actual_position)
-                logger.info(f"已将 {filled_amount} {actual_position} 申购到余币宝")
+                logger.info(f"已将 {actual_position} {base_currency} 申购到余币宝")
             except Exception as e:
                 logger.error(f"余币宝申购失败，但不影响主要交易流程: {str(e)}")
 
