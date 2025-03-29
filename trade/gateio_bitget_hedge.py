@@ -297,8 +297,8 @@ class HedgeTrader:
             spread_data = await self.wait_for_spread()
             spread_percent, gateio_ask, bitget_bid, gateio_ask_volume, bitget_bid_volume = spread_data
 
-            # 2. 立即准备下单参数
-            trade_amount = self.spot_amount
+            # 2. 立即准备下单参数, 补偿一点手续费，不然现货会比合约少一些
+            trade_amount = self.spot_amount * 1.001
             cost = float(trade_amount) * float(gateio_ask)
             contract_amount = self.bitget.amount_to_precision(self.contract_symbol, trade_amount)
 
