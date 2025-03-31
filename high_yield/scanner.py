@@ -218,7 +218,8 @@ class CryptoYieldMonitor:
                 "min_purchase": product["min_purchase"],
                 "max_purchase": product["max_purchase"],
             }
-            # 稳定收益： 24小时Pxx收益率达到最低值
+            logger.info(f"filter high yield product: {product}")
+            # 稳定收益： 24小时Pxx收益率达到最低k
             if apy_percentile > stability_buy_apy_threshold:
                 stability_product_notifications.append(notification)
             if len([i for i in product['apy_day'][-3:] if
