@@ -1014,11 +1014,11 @@ class ExchangeAPI:
 if __name__ == "__main__":
     api = ExchangeAPI()
     # api.get_binance_funding_info()
-    token = 'ETHUSDT'
+    token = 'IMTUSDT'
     start = 1739318400000
     end = 1741939200000
     # print(api.get_binance_futures_funding_rate(token))
-    print(api.get_okx_futures_funding_rate(token))
+    print(api.get_bitget_futures_funding_rate(token))
     # print(api.get_gateio_flexible_products())
     # print(api.get_bitget_futures_funding_rate_history(token, startTime=start, endTime=end)[0])
     # print(api.get_bybit_futures_funding_rate_history(token, startTime=start, endTime=end))
