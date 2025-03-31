@@ -27,7 +27,7 @@ from high_yield.token_manager import TokenManager
 from tools.proxy import get_proxy_ip
 from config import leverage_ratio, yield_percentile, stability_buy_apy_threshold, sell_apy_threshold, \
     future_percentile, highyield_buy_apy_threshold, stability_buy_webhook_url, highyield_buy_webhook_url, \
-    highyield_checkpoints
+    highyield_checkpoints, volume_24h_threshold
 from tools.logger import logger
 
 
@@ -165,22 +165,21 @@ class CryptoYieldMonitor:
 
     def product_filter(self, all_products):
         # 筛选年化利率高于阈值的产品
-        high_yield_products = [p for p in all_products if p["apy"] >= stability_buy_apy_threshold]
-        high_yield_products = sorted(high_yield_products, key=lambda x: x['apy'], reverse=True)
-        logger.info(f"筛选出{len(high_yield_products)}个年化利率高于{stability_buy_apy_threshold}%的产品")
+        eligible_products = [p for p in all_products if p["apy"] >= stability_buy_apy_threshold and p['volume_24h'] > volume_24h_threshold]
+        eligible_products = sorted(eligible_products, key=lambda x: x['apy'], reverse=True)
+        logger.info(f"筛选出{len(eligible_products)}个年化利率高于{stability_buy_apy_threshold}%的产品")
 
-        if not high_yield_products:
-            logger.info(f"未找到年化利率高于{stability_buy_apy_threshold}%的产品")
+        if not eligible_products:
+            logger.info(f"未找到年化利率高于{stability_buy_apy_threshold}%且24小时交易额大于10000USDT的产品")
             return
 
         # 检查每个高收益产品是否满足合约交易条件
         stability_product_notifications = []
         highyield_product_notifications = []
 
-        for product in high_yield_products:
+        for product in eligible_products:
             token = product["token"]
             logger.info(f"检查Token {token} 的合约交易情况")
-
             # 检查合约交易条件
             perp_token = f"{token}USDT"
             futures_results = self.get_futures_trading(perp_token)
@@ -189,14 +188,15 @@ class CryptoYieldMonitor:
             if not futures_results:
                 continue
             # 是否有预估收益率低于最低收率益的交易所（合约负费率太多了）
-            low_estimate_apys_or_high_negative_funding_rate = [
+            eligible_funding_rate = [
                 i for i in futures_results if
                 self.get_estimate_apy(product['apy'], i['fundingRate'],
-                                      i['fundingIntervalHours']) < stability_buy_apy_threshold or
-                i['fundingRate'] <= -0.1 or
-                i['markPrice'] <= 0.0001
+                                      i['fundingIntervalHours']) >= stability_buy_apy_threshold and # 考虑资金费率后收益率超过基准值
+                i['fundingRate'] > -0.02 or  # 资金费率大于某个值
+                i['markPrice'] > 0.0001 or  # 币值大于某个值
+                i['volume_24h'] > volume_24h_threshold  # 合约交易额大于某个值
             ]
-            if low_estimate_apys_or_high_negative_funding_rate:
+            if not eligible_funding_rate:
                 continue
             apy_percentile = 0.0
             if product['apy_day']:
