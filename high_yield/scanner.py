@@ -286,8 +286,8 @@ class CryptoYieldMonitor:
                     d30apy_str = f"{d30apy:.2f}%"
                 # 收益率、预估收益率、Pxx收益率 小于卖出年化阈值
                 if product['apy'] < sell_apy_threshold or \
-                        estimate_apy < sell_apy_threshold or \
-                        estimate_apy_percentile < sell_apy_threshold:
+                        estimate_apy < sell_apy_threshold:
+                        # estimate_apy_percentile < sell_apy_threshold:
                     content = f"📉**卖出提醒**: "
                 else:
                     content = f"💰**持仓收益率**: "
