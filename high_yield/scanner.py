@@ -192,11 +192,11 @@ class CryptoYieldMonitor:
                 i for i in futures_results if
                 self.get_estimate_apy(product['apy'], i['fundingRate'],
                                       i['fundingIntervalHours']) >= stability_buy_apy_threshold and # 考虑资金费率后收益率超过基准值
-                i['fundingRate'] > -0.02 or  # 资金费率大于某个值
-                i['markPrice'] > 0.0001 or  # 币值大于某个值
+                i['fundingRate'] > -0.02 and  # 资金费率大于某个值
+                i['markPrice'] > 0.0001 and  # 币值大于某个值
                 i['volume_24h'] > volume_24h_threshold  # 合约交易额大于某个值
             ]
-            if not eligible_funding_rate:
+            if len(eligible_funding_rate) == 0:
                 continue
             apy_percentile = 0.0
             if product['apy_day']:
