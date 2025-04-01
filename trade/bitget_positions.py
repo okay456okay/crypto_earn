@@ -36,13 +36,14 @@ class BitgetPositionFetcher:
 
     async def fetch_positions(self):
         """获取所有合约持仓信息"""
+        positions = []
         try:
             # 获取所有持仓信息
             positions = await self.exchange.fetch_positions()
             
             if not positions:
                 logger.info("当前没有持仓")
-                return
+                return positions
 
             # 打印持仓信息
             logger.info("\n=== Bitget合约持仓信息 ===")
@@ -58,6 +59,8 @@ class BitgetPositionFetcher:
             total_unrealized_pnl = Decimal('0')
             total_margin = Decimal('0')
 
+            # 处理持仓数据，确保返回的字段与scanner.py中使用的字段一致
+            processed_positions = []
             for position in positions:
                 if float(position.get('contracts', 0)) == 0:
                     continue
@@ -97,6 +100,21 @@ class BitgetPositionFetcher:
                 total_unrealized_pnl += Decimal(str(unrealized_pnl))
                 total_margin += Decimal(str(margin))
 
+                # 构建处理后的持仓数据
+                processed_position = {
+                    'symbol': symbol,
+                    'side': side,
+                    'contracts': contracts,
+                    'leverage': leverage,
+                    'entryPrice': entry_price,
+                    'markPrice': mark_price,
+                    'unrealizedPnl': unrealized_pnl,
+                    'initialMargin': margin,
+                    'notional': notional,
+                    'liquidationPrice': liquidation_price
+                }
+                processed_positions.append(processed_position)
+
             logger.info("-" * 120)
             
             # 打印汇总信息
@@ -107,8 +125,11 @@ class BitgetPositionFetcher:
             logger.info(f"总风险率: {(float(total_margin) / float(total_notional) * 100):.2f}%")
             logger.info("=" * 120)
 
+            return processed_positions
+
         except Exception as e:
             logger.exception(f"获取持仓信息时出错: {str(e)}")
+            return []
         finally:
             await self.exchange.close()
 
