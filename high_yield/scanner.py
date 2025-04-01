@@ -289,7 +289,7 @@ class CryptoYieldMonitor:
             gateio_position_info = ""
             if token['spot_exchange'] == 'GateIO' and token['token'] in gateio_positions:
                 position = gateio_positions[token['token']]
-                gateio_position_info = f"\nGateIO理财持仓信息:\n   • 持仓金额: {position['curr_amount_usdt']} USDT\n   • 持仓数量: {position['curr_amount']}\n   • 当前价格: {position['price']}\n   • 冻结数量: {position['frozen_amount']}\n   • 已赚利息: {position['interest']}\n   • 下次利率: {position['next_time_rate_year']}\n   • 上次利率: {position['last_rate_year']}"
+                gateio_position_info = f"\nGateIO理财持仓信息: 持仓金额 {position['curr_amount_usdt']} USDT, 持仓数量 {position['curr_amount']}, 当前价格 {position['price']}, 已赚利息 {position['interest']}, 下次利率 {float(position['next_time_rate_year'])*100:.2f}%, 上次利率 {float(position['last_rate_year'])*100:.2f}%"
 
             # 获取Bitget合约持仓信息
             bitget_position_info = ""
@@ -297,7 +297,7 @@ class CryptoYieldMonitor:
                 perp_token = f"{token['token']}/USDT:USDT"
                 if perp_token in bitget_positions:
                     position = bitget_positions[perp_token]
-                    bitget_position_info = f"\nBitget合约持仓信息:\n   • 持仓方向: {'多' if position['side'] == 'long' else '空'}\n   • 持仓数量: {position['contracts']}\n   • 杠杆倍数: {position['leverage']}x\n   • 开仓价格: {position['entryPrice']}\n   • 标记价格: {position['markPrice']}\n   • 未实现盈亏: {position['unrealizedPnl']} USDT\n   • 保证金: {position['initialMargin']} USDT\n   • 名义价值: {position['notional']} USDT\n   • 风险率: {position['initialMargin']/position['notional']*100:.2f}%\n   • 强平价格: {position['liquidationPrice']}"
+                    bitget_position_info = f"\nBitget合约持仓信息: {'多' if position['side'] == 'long' else '空'} {position['contracts']} 张, {position['leverage']}x, 开仓价 {position['entryPrice']}, 标记价 {position['markPrice']}, 未实现盈亏 {position['unrealizedPnl']} USDT"
             # 过滤资金费率和利率，如果满足条件就告警
             perp_token = f"{token['token']}USDT"
             futures_results = self.get_futures_trading(perp_token)
