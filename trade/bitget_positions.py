@@ -66,7 +66,8 @@ class BitgetPositionFetcher:
                     continue
 
                 # 处理symbol格式，去掉/USDT:USDT后缀
-                symbol = position['symbol'].replace('/USDT:USDT', '')
+                # symbol = position['symbol'].replace('/USDT:USDT', '')
+                symbol = position['symbol']
                 side = position['side']
                 contracts = float(position.get('contracts', 0))
                 leverage = position.get('leverage', 0)
