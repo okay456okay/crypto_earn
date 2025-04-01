@@ -252,6 +252,7 @@ class CryptoYieldMonitor:
         except Exception as e:
             logger.error(f"获取GateIO理财持仓信息失败: {str(e)}")
 
+        logger.info(f"gateio positions: {gateio_positions}")
         # 获取Bitget合约持仓信息
         bitget_positions = {}
         try:
@@ -265,6 +266,7 @@ class CryptoYieldMonitor:
         except Exception as e:
             logger.error(f"获取Bitget合约持仓信息失败: {str(e)}")
 
+        logger.info(f"bitget positions: {bitget_positions}")
         for token in tokens:
             # 获取理财产品最新利率
             sell_wechat_bot = WeChatWorkBot(token['webhook_url'])
@@ -296,7 +298,6 @@ class CryptoYieldMonitor:
                 if perp_token in bitget_positions:
                     position = bitget_positions[perp_token]
                     bitget_position_info = f"\nBitget合约持仓信息:\n   • 持仓方向: {'多' if position['side'] == 'long' else '空'}\n   • 持仓数量: {position['contracts']}\n   • 杠杆倍数: {position['leverage']}x\n   • 开仓价格: {position['entryPrice']}\n   • 标记价格: {position['markPrice']}\n   • 未实现盈亏: {position['unrealizedPnl']} USDT\n   • 保证金: {position['initialMargin']} USDT\n   • 名义价值: {position['notional']} USDT\n   • 风险率: {position['initialMargin']/position['notional']*100:.2f}%\n   • 强平价格: {position['liquidationPrice']}"
-
             # 过滤资金费率和利率，如果满足条件就告警
             perp_token = f"{token['token']}USDT"
             futures_results = self.get_futures_trading(perp_token)
