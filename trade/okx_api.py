@@ -1,6 +1,7 @@
 """
 一些gateio自定义的api(模拟浏览器请求)，ccxt未支持
 """
+from datetime import datetime
 from time import sleep
 
 import requests
@@ -8,7 +9,7 @@ import sys
 import os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import proxies, gateio_login_token
+from config import proxies, gateio_login_token, okx_login_token
 from tools.logger import logger
 
 
@@ -97,7 +98,7 @@ def redeem_earn(token, amount, login_token=gateio_login_token):
         print(f"subscribe {token} {amount} failed, code:{r.status_code}, error: {r.text}")
 
 
-def get_earn_positions(login_token=gateio_login_token, limit=50, page=1):
+def get_earn_positions(login_token=okx_login_token):
     """
 
     :param login_token:
@@ -109,14 +110,16 @@ def get_earn_positions(login_token=gateio_login_token, limit=50, page=1):
     ]
     """
     positions = []
-    url = 'https://www.gate.io/apiw/v2/uni-loan/earn/subscribe'
+    url = 'https://www.okx.com/priapi/v1/earn/grouped-user-assets'
     params = {
-        'limit': limit,
-        'page': page,
+        't': int(datetime.now().timestamp()*1000),
+        'valuationUnit': 'USDT',
+        'type': 'all',
     }
     cookies = {
-        'token_type': 'Bearer',
-        'token': login_token,
+        'accept': 'application/json',
+        'authorization': login_token,
+        'app-type': 'web'
     }
     try:
         r = requests.get(url, params=params, proxies=proxies, cookies=cookies)

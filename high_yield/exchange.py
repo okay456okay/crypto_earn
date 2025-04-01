@@ -561,7 +561,7 @@ class ExchangeAPI:
                                 logger.error(
                                     f"gateio get asset charts, url: {url}, status: {response.status_code}, response: {response.text}")
                             data = response.json().get('data', {})
-                            apy_day = [{'apy': float(i['rate']) * 100, 'timestamp': int(i['dataDate'])} for i in
+                            apy_day = [{'apy': float(i['rate']) * 100 * (1-okx_earn_insurance_keep_ratio), 'timestamp': int(i['dataDate'])} for i in
                                        data.get('lastOneDayRates', {}).get('rates')]
                             apy_day = sorted(apy_day, key=lambda item: item['timestamp'], reverse=False)
                             # apy_percentile = get_percentile([float(i['rate'])*100 for i in data.get('lastOneDayRates', {}).get('rates')])

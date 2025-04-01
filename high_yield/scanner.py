@@ -224,7 +224,7 @@ class CryptoYieldMonitor:
             if apy_percentile > stability_buy_apy_threshold:
                 stability_product_notifications.append(notification)
             if len([i for i in product['apy_day'][-3:] if
-                    i['apy'] >= highyield_buy_apy_threshold]) == highyield_checkpoints:
+                    i['apy'] >= highyield_buy_apy_threshold]) == highyield_checkpoints and product['apy'] >= highyield_buy_apy_threshold:
                 highyield_product_notifications.append(notification)
 
         # 发送通知
