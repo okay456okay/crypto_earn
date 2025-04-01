@@ -241,6 +241,30 @@ class CryptoYieldMonitor:
         end = int(datetime.now().timestamp() * 1000)
         d7start = end - 7 * 24 * 60 * 60 * 1000
         d30start = end - 30 * 24 * 60 * 60 * 1000
+
+        # 获取GateIO理财持仓信息
+        gateio_positions = {}
+        try:
+            from trade.gateio_api import get_earn_positions
+            positions = get_earn_positions()
+            for position in positions:
+                gateio_positions[position["asset"]] = position
+        except Exception as e:
+            logger.error(f"获取GateIO理财持仓信息失败: {str(e)}")
+
+        # 获取Bitget合约持仓信息
+        bitget_positions = {}
+        try:
+            from trade.bitget_positions import BitgetPositionFetcher
+            import asyncio
+            fetcher = BitgetPositionFetcher()
+            positions = asyncio.run(fetcher.fetch_positions())
+            for position in positions:
+                if position['contracts'] > 0:  # 只保存有持仓的
+                    bitget_positions[position['symbol']] = position
+        except Exception as e:
+            logger.error(f"获取Bitget合约持仓信息失败: {str(e)}")
+
         for token in tokens:
             # 获取理财产品最新利率
             sell_wechat_bot = WeChatWorkBot(token['webhook_url'])
@@ -258,6 +282,21 @@ class CryptoYieldMonitor:
                 product = product[0]
                 if token['spot_exchange'] == 'GateIO' and (not product['apy_day']):
                     product = self.exchange_api.get_gateio_flexible_product(token['token'])
+
+            # 获取GateIO理财持仓信息
+            gateio_position_info = ""
+            if token['spot_exchange'] == 'GateIO' and token['token'] in gateio_positions:
+                position = gateio_positions[token['token']]
+                gateio_position_info = f"\nGateIO理财持仓信息:\n   • 持仓金额: {position['curr_amount_usdt']} USDT\n   • 持仓数量: {position['curr_amount']}\n   • 当前价格: {position['price']}\n   • 冻结数量: {position['frozen_amount']}\n   • 已赚利息: {position['interest']}\n   • 下次利率: {position['next_time_rate_year']}\n   • 上次利率: {position['last_rate_year']}"
+
+            # 获取Bitget合约持仓信息
+            bitget_position_info = ""
+            if token['future_exchange'] == 'Bitget':
+                perp_token = f"{token['token']}USDT"
+                if perp_token in bitget_positions:
+                    position = bitget_positions[perp_token]
+                    bitget_position_info = f"\nBitget合约持仓信息:\n   • 持仓方向: {'多' if position['side'] == 'long' else '空'}\n   • 持仓数量: {position['contracts']}\n   • 杠杆倍数: {position['leverage']}x\n   • 开仓价格: {position['entryPrice']}\n   • 标记价格: {position['markPrice']}\n   • 未实现盈亏: {position['unrealizedPnl']} USDT\n   • 保证金: {position['initialMargin']} USDT\n   • 名义价值: {position['notional']} USDT\n   • 风险率: {position['initialMargin']/position['notional']*100:.2f}%\n   • 强平价格: {position['liquidationPrice']}"
+
             # 过滤资金费率和利率，如果满足条件就告警
             perp_token = f"{token['token']}USDT"
             futures_results = self.get_futures_trading(perp_token)
@@ -301,6 +340,8 @@ class CryptoYieldMonitor:
                         f"各交易所合约信息(套保交易所: {token['future_exchange']})\n"
                         f"近24小时合约交易量|最新资金费率|近7天P{yield_percentile}资金费率|标记价格|预估收益率|近24小时P{yield_percentile}预估收益率|结算周期|下次结算时间\n"
                         f"{future_info_str}"
+                        f"{gateio_position_info}"
+                        f"{bitget_position_info}"
                     )
                 sell_wechat_bot.send_message(content)
             else:
