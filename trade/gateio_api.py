@@ -11,6 +11,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import proxies, gateio_login_token
 from tools.logger import logger
 
+
 def subscrible_earn(token, amount, rate="0.0010", login_token=gateio_login_token):
     """
     curl 'https://www.gate.io/apiw/v2/uni-loan/earn/subscribe' \
@@ -61,6 +62,7 @@ def subscrible_earn(token, amount, rate="0.0010", login_token=gateio_login_token
     except Exception as e:
         print(f"subscribe {token} {amount} failed, code:{r.status_code}, error: {r.text}")
 
+
 def redeem_earn(token, amount, login_token=gateio_login_token):
     positions = get_earn_positions(login_token=login_token)
     position = [i for i in positions if i["asset"] == token][0]
@@ -78,7 +80,7 @@ def redeem_earn(token, amount, login_token=gateio_login_token):
         "asset": token,
         "amount": str(amount),
         'curr_amount': current_amount,
-        "lend_amount" : lend_amount,
+        "lend_amount": lend_amount,
     }
     try:
         r = requests.post(
@@ -94,11 +96,22 @@ def redeem_earn(token, amount, login_token=gateio_login_token):
     except Exception as e:
         print(f"subscribe {token} {amount} failed, code:{r.status_code}, error: {r.text}")
 
+
 def get_earn_positions(login_token=gateio_login_token, limit=50, page=1):
+    """
+
+    :param login_token:
+    :param limit:
+    :param page:
+    :return:
+    [
+    {'id': 2311000, 'asset': 'USDT', 'price': '1', 'curr_amount': '913.23884', 'curr_amount_usdt': '913.23884', 'lend_amount': '913.23884', 'frozen_amount': '0', 'interest': '0.25874864', 'min_lend_rate_year': '0.0010', 'next_time_rate_year': '0.0197', 'last_rate_year': '0.0197', 'is_open_award_pool': 1, 'award_asset': 'GT', 'ext_award_rate_year': '0.0800', 'ext_award_limit': '500', 'reinvest_status': 1, 'margin_frozen_amount': '0', 'margin_available_amount': '913.23884', 'auto_invest_status': 1, 'frozen_status': 0},
+    ]
+    """
     positions = []
     url = 'https://www.gate.io/apiw/v2/uni-loan/earn/subscribe'
     params = {
-       'limit': limit,
+        'limit': limit,
         'page': page,
     }
     cookies = {
@@ -115,7 +128,6 @@ def get_earn_positions(login_token=gateio_login_token, limit=50, page=1):
     except Exception as e:
         print(f"get gateio earn positions failed, code:{r.status_code}, error: {r.text}")
     return positions
-
 
 
 if __name__ == '__main__':

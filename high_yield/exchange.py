@@ -372,7 +372,7 @@ class ExchangeAPI:
             if not self.gateio_volumes:
                 self.get_gateio_volumes()
             url = f'https://www.gate.io/apiw/v2/uni-loan/earn/chart?from={start}&to={end}&asset={token}&type=1'
-            logger.info(f"get gateio {token}近1天收益率曲线, url: {url}")
+            logger.debug(f"get gateio {token}近1天收益率曲线, url: {url}")
             response = requests.get(
                 url=url,
                 proxies=proxies)
@@ -380,12 +380,12 @@ class ExchangeAPI:
                 logger.error(
                     f"gateio get 1day asset charts, url: {url}, status: {response.status_code}, response: {response.text}")
             else:
-                logger.info(f"get gateio 1day asset charts, url: {url}, data: {response.json()}")
+                logger.debug(f"get gateio 1day asset charts, url: {url}, data: {response.json()}")
             data = response.json().get('data', [])
             apy_day = [{'timestamp': int(i['time']) * 1000, 'apy': float(i['value'])} for i in data]
             apy_day = sorted(apy_day, key=lambda item: item['timestamp'], reverse=False)
             url = f'https://www.gate.io/apiw/v2/uni-loan/earn/chart?from={start_30}&to={end}&asset={token}&type=2'
-            logger.info(f"get gateio {token}近30天收益率曲线, url: {url}")
+            logger.debug(f"get gateio {token}近30天收益率曲线, url: {url}")
             response = requests.get(
                 url=url,
                 proxies=proxies)
@@ -470,7 +470,7 @@ class ExchangeAPI:
                                 logger.error(
                                     f"gateio get 1day asset charts, url: {url}, status: {response.status_code}, response: {response.text}")
                             else:
-                                logger.info(f"get gateio 1day asset charts, url: {url}, data: {response.json()}")
+                                logger.debug(f"get gateio 1day asset charts, url: {url}, data: {response.json()}")
                             data = response.json().get('data', [])
                             # apy_percentile = get_percentile([float(i['value']) for i in data], percentile=yield_percentile, reverse=True)
                             apy_day = [{'timestamp': int(i['time']) * 1000, 'apy': float(i['value'])} for i in data]

@@ -142,7 +142,7 @@ class CryptoYieldMonitor:
                                             yield_percentile)
                     d30apy_str = f"{d30apy:.2f}%"
                 message += (
-                    f"{idx + p * limit}. {notif['token']}({notif['exchange']}) 💰\n"
+                    f"**{idx + p * limit}. {notif['token']}({notif['exchange']})** 💰\n"
                     f"   • 近24小时现货交易量: {notif['volume_24h']/10000:.2f}万USDT\n"
                     f"   • 最新收益率: {notif['apy']:.2f}%\n"
                     f"   • 近24小时P{yield_percentile}收益率: {notif['apy_percentile']:.2f}%\n"
@@ -292,7 +292,7 @@ class CryptoYieldMonitor:
                 else:
                     content = f"💰**持仓收益率**: "
                 content += (
-                        f"{product['exchange']}活期理财产品{product['token']} ({now_str})\n"
+                        f"{product['exchange']} {product['token']} ({now_str})\n"
                         f"近24小时现货交易量: {product['volume_24h']/10000:.2f}万USDT\n"
                         f"最新收益率: {product['apy']:.2f}%\n"
                         f"P{yield_percentile}收益率: {apy_percentile:.2f}%\n"
@@ -312,12 +312,6 @@ class CryptoYieldMonitor:
     def position_check(self, all_products):
         try:
             # 对所有已购买产品做检查
-            # purchased_tokens = [('Binance', 'HIVE'), ]
-            # binance_earn_positions = get_binance_flexible_savings(binance_api_key, binance_api_secret, proxies)
-            # for p in binance_earn_positions:
-            #     if float(p.get('totalAmount', 0)) > 1:
-            #         purchased_tokens.append({"exchange": 'Binance', "token": p.get('asset'),
-            #                                  "totalAmount": float(p.get('totalAmount', 0.0))})
             token_manger = TokenManager()
             purchased_tokens = token_manger.query_tokens()
             logger.info(f"获取到的活期理财账户仓位如下：{purchased_tokens}")
