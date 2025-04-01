@@ -124,7 +124,7 @@ class BitgetPositionFetcher:
             logger.info(f"总持仓保证金: {float(total_margin):.2f} USDT")
             logger.info(f"总风险率: {(float(total_margin) / float(total_notional) * 100):.2f}%")
             logger.info("=" * 120)
-
+            logger.info(f"processed_positions: {processed_positions}")
             return processed_positions
 
         except Exception as e:
