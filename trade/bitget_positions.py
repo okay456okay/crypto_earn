@@ -65,7 +65,8 @@ class BitgetPositionFetcher:
                 if float(position.get('contracts', 0)) == 0:
                     continue
 
-                symbol = position['symbol']
+                # 处理symbol格式，去掉/USDT:USDT后缀
+                symbol = position['symbol'].replace('/USDT:USDT', '')
                 side = position['side']
                 contracts = float(position.get('contracts', 0))
                 leverage = position.get('leverage', 0)
