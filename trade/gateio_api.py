@@ -114,15 +114,20 @@ def get_earn_positions(login_token=gateio_login_token, limit=50, page=1):
     return positions
 
 
+
 if __name__ == '__main__':
-    token = 'KAVA'
+    # token = 'KAVA'
     positions = get_earn_positions()
-    print([i for i in positions if i["asset"] == token])
+    # print(positions)
+    for p in positions:
+        if float(p['curr_amount_usdt']) >= 1:
+            print(f"{p['asset']}: 持仓金额:{p['curr_amount_usdt']} USDT,数量: {p['curr_amount']}, 价格:{p['price']}")
+    # print([i for i in positions if i["asset"] == token])
 
-    redeem_earn(token, 10)
-    get_earn_positions()
-    print([i for i in positions if i["asset"] == token])
-
-    subscrible_earn(token, 10)
-    get_earn_positions()
-    print([i for i in positions if i["asset"] == token])
+    # redeem_earn(token, 10)
+    # get_earn_positions()
+    # print([i for i in positions if i["asset"] == token])
+    #
+    # subscrible_earn(token, 10)
+    # get_earn_positions()
+    # print([i for i in positions if i["asset"] == token])
