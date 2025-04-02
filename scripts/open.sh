@@ -1,12 +1,21 @@
 #!/bin/bash
 
+if [ $# -lt 2 ]; then
+    echo "Usage: $(basename $0) token amount [count=50] [price_diff=0.0001]"
+    exit 1
+fi
+
 token=$1
 amount=$2
 count=$3
 price_diff=$4
-if [ $# -ne 3 -o $# -ne 4 ]; then
-    echo "Usage: $(basename $0) token amount count [price_diff=0.0001]"
-    exit 1
+
+if [ -z "$count" ]; then
+  count=50
+fi
+
+if [ -z "$price_diff" ]; then
+  price_diff=0.0001
 fi
 
 script_dir=$(dirname $0)
