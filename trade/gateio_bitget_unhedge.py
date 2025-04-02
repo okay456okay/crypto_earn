@@ -61,6 +61,10 @@ class UnhedgeTrader:
             'secret': gateio_api_secret,
             'enableRateLimit': True,
             'proxies': proxies,
+            'aiohttp_proxy': proxies.get('https', None),
+            'ws_proxy': proxies.get('https', None),
+            'wss_proxy': proxies.get('https', None),
+            'ws_socks_proxy': proxies.get('https', None),
         })
 
         self.bitget = ccxtpro.bitget({
@@ -69,6 +73,10 @@ class UnhedgeTrader:
             'password': bitget_api_passphrase,
             'enableRateLimit': True,
             'proxies': proxies,
+            'aiohttp_proxy': proxies.get('https', None),
+            'ws_proxy': proxies.get('https', None),
+            'wss_proxy': proxies.get('https', None),
+            'ws_socks_proxy': proxies.get('https', None),
         })
 
         # 存储账户余额

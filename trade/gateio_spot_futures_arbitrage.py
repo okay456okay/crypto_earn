@@ -68,6 +68,10 @@ class GateioSpotFuturesArbitrage:
             'secret': gateio_api_secret,
             'enableRateLimit': True,
             'proxies': proxies,
+            'aiohttp_proxy': proxies.get('https', None),
+            'ws_proxy': proxies.get('https', None),
+            'wss_proxy': proxies.get('https', None),
+            'ws_socks_proxy': proxies.get('https', None),
         })
         
         self.futures_exchange = ccxtpro.gateio({
@@ -75,6 +79,10 @@ class GateioSpotFuturesArbitrage:
             'secret': gateio_api_secret,
             'enableRateLimit': True,
             'proxies': proxies,
+            'aiohttp_proxy': proxies.get('https', None),
+            'ws_proxy':  proxies.get('https', None),
+            'wss_proxy':  proxies.get('https', None),
+            'ws_socks_proxy':  proxies.get('https', None),
             'options': {'defaultType': 'swap'}
         })
         

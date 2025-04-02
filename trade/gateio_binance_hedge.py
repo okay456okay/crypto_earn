@@ -48,6 +48,10 @@ class HedgeTrader:
             'secret': gateio_api_secret,
             'enableRateLimit': True,
             'proxies': proxies,
+            'aiohttp_proxy': proxies.get('https', None),
+            'ws_proxy': proxies.get('https', None),
+            'wss_proxy': proxies.get('https', None),
+            'ws_socks_proxy': proxies.get('https', None),
         })
         
         self.binance = ccxtpro.binance({
@@ -55,6 +59,10 @@ class HedgeTrader:
             'secret': binance_api_secret,
             'enableRateLimit': True,
             'proxies': proxies,
+            'aiohttp_proxy': proxies.get('https', None),
+            'ws_proxy':  proxies.get('https', None),
+            'wss_proxy':  proxies.get('https', None),
+            'ws_socks_proxy':  proxies.get('https', None),
             'options': {
                 'defaultType': 'future',  # 设置为合约模式
             }
