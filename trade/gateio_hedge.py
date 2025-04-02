@@ -24,6 +24,8 @@ import ccxt.pro as ccxtpro
 from collections import defaultdict
 from typing import Dict, Optional
 
+from trade.gateio_api import redeem_earn
+
 # 添加项目根目录到系统路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tools.logger import logger
@@ -139,8 +141,9 @@ class GateioHedgeTrader:
                 required_spot_usdt = float(self.spot_amount) * current_price * 1.02  # 额外2%作为滑点和手续费
                 required_futures_margin = float(self.spot_amount) * current_price / self.leverage * 1.05  # 额外5%作为保证金
                 
-                if required_spot_usdt > self.spot_usdt:
-                    raise Exception(f"Gate.io现货USDT余额不足，需要约 {required_spot_usdt:.2f} USDT，当前余额 {self.spot_usdt:.2f} USDT")
+                if required_spot_usdt > self.spot_usdt or self.spot_usdt < 50:
+                    redeem_earn('USDT', max(required_spot_usdt * 1.01, 50))
+                    # raise Exception(f"Gate.io现货USDT余额不足，需要约 {required_spot_usdt:.2f} USDT，当前余额 {self.spot_usdt:.2f} USDT")
                 if required_futures_margin > self.futures_usdt:
                     raise Exception(f"Gate.io合约USDT保证金不足，需要约 {required_futures_margin:.2f} USDT，当前余额 {self.futures_usdt:.2f} USDT")
                 

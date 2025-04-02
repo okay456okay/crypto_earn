@@ -68,7 +68,7 @@ class HedgeTrader:
             }
         })
         
-        self.gateio_usdt = None
+        self.gateio_usdt = 0
         self.binance_usdt = None
         
         # 用于存储最新订单簿数据
@@ -107,10 +107,9 @@ class HedgeTrader:
                 required_usdt = float(self.spot_amount) * current_price * 1.02
                 required_margin = float(self.spot_amount) * current_price / self.leverage * 1.05
 
-                if required_usdt > self.gateio_usdt:
-                    raise Exception(f"Gate.io USDT余额不足，需要约 {required_usdt:.2f} USDT，当前余额 {self.gateio_usdt:.2f} USDT")
+                if required_usdt > self.gateio_usdt or self.gateio_usdt <= 50:
                     # raise Exception(f"Gate.io USDT余额不足，需要约 {required_usdt:.2f} USDT，当前余额 {self.gateio_usdt:.2f} USDT")
-                    redeem_earn('USDT', required_usdt * 1.01)
+                    redeem_earn('USDT', max(required_usdt * 1.01, 50))
                     # 重新获取并保存账户余额
                     self.gateio_usdt, self.bitget_usdt = await self.check_balances()
                     if required_usdt > self.gateio_usdt:
