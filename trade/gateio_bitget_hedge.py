@@ -274,7 +274,7 @@ class HedgeTrader:
                             f"价格检查 - Gate.io卖1: {spread_data['gateio_ask']} (量: {spread_data['gateio_ask_volume']}), "
                             f"Bitget买1: {spread_data['bitget_bid']} (量: {spread_data['bitget_bid_volume']}), "
                             f"价差: {spread_percent * 100:.4f}%")
-                        logger.debug(f"价差条件不满足: {spread_percent * 100:.4f}% < {self.min_spread * 100:.4f}%")
+                        logger.debug(f"{self.symbol}价差条件不满足: {spread_percent * 100:.4f}% < {self.min_spread * 100:.4f}%")
 
                 except asyncio.TimeoutError:
                     logger.warning(f"{self.symbol}等待价差数据超时，重新订阅订单簿")
