@@ -116,16 +116,19 @@ def get_earn_positions(login_token=okx_login_token):
         'valuationUnit': 'USDT',
         'type': 'all',
     }
-    cookies = {
-        'accept': 'application/json',
+    headers = {
         'authorization': login_token,
-        'app-type': 'web'
+        # 'app-type': 'web'
+        # "accept": "application/json",
+        # "content-type": "application/json",
+        # "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0",
     }
     try:
-        r = requests.get(url, params=params, proxies=proxies, cookies=cookies)
+        r = requests.get(url, params=params, proxies=proxies, headers=headers)
         if r.status_code == 200:
             # logger.info(f"get gateio earn positions success, response: {r.text}")
-            positions = r.json().get('data').get('list')
+            positions = r.json()
+            print(positions)
         else:
             logger.error(f"get gateio earn positions failed, code:{r.status_code}, response: {r.text}")
     except Exception as e:
@@ -137,9 +140,6 @@ if __name__ == '__main__':
     # token = 'KAVA'
     positions = get_earn_positions()
     # print(positions)
-    for p in positions:
-        if float(p['curr_amount_usdt']) >= 1:
-            print(f"{p['asset']}: 持仓金额:{p['curr_amount_usdt']} USDT,数量: {p['curr_amount']}, 价格:{p['price']}")
     # print([i for i in positions if i["asset"] == token])
 
     # redeem_earn(token, 10)

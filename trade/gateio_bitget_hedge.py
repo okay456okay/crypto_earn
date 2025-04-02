@@ -165,10 +165,10 @@ class HedgeTrader:
                             ob = task.result()
                             if task == tasks[0]:  # gateio task
                                 self.orderbooks['gateio'] = ob
-                                logger.debug(f"收到Gate.io订单簿更新")
+                                logger.debug(f"{self.symbol}收到Gate.io订单簿更新")
                             else:  # bitget task
                                 self.orderbooks['bitget'] = ob
-                                logger.debug(f"收到Bitget订单簿更新")
+                                logger.debug(f"{self.symbol} 收到Bitget订单簿更新")
 
                             # 如果两个订单簿都有数据，检查价差
                             if self.orderbooks['gateio'] and self.orderbooks['bitget']:
@@ -231,7 +231,7 @@ class HedgeTrader:
             await self.price_updates.put(spread_data)
 
         except Exception as e:
-            logger.error(f"检查订单簿价差时出错: {str(e)}")
+            logger.error(f"{self.symbol}检查订单簿价差时出错: {str(e)}")
 
     async def wait_for_spread(self):
         """等待价差达到要求"""
@@ -253,21 +253,23 @@ class HedgeTrader:
 
                     if spread_percent >= self.min_spread:
                         logger.info(
+                            f"{self.symbol}"
                             f"价格检查 - Gate.io卖1: {spread_data['gateio_ask']} (量: {spread_data['gateio_ask_volume']}), "
                             f"Bitget买1: {spread_data['bitget_bid']} (量: {spread_data['bitget_bid_volume']}), "
                             f"价差: {spread_percent * 100:.4f}%")
-                        logger.info(f"价差条件满足: {spread_percent * 100:.4f}% >= {self.min_spread * 100:.4f}%")
+                        logger.info(f"{self.symbol}价差条件满足: {spread_percent * 100:.4f}% >= {self.min_spread * 100:.4f}%")
                         return (spread_percent, spread_data['gateio_ask'], spread_data['bitget_bid'],
                                 spread_data['gateio_ask_volume'], spread_data['bitget_bid_volume'])
                     else:
                         logger.debug(
+                            f"{self.symbol}"
                             f"价格检查 - Gate.io卖1: {spread_data['gateio_ask']} (量: {spread_data['gateio_ask_volume']}), "
                             f"Bitget买1: {spread_data['bitget_bid']} (量: {spread_data['bitget_bid_volume']}), "
                             f"价差: {spread_percent * 100:.4f}%")
                         logger.debug(f"价差条件不满足: {spread_percent * 100:.4f}% < {self.min_spread * 100:.4f}%")
 
                 except asyncio.TimeoutError:
-                    logger.warning("等待价差数据超时，重新订阅订单簿")
+                    logger.warning(f"{self.symbol}等待价差数据超时，重新订阅订单簿")
                     # 重新启动订阅
                     if subscription_task:
                         subscription_task.cancel()
@@ -278,7 +280,7 @@ class HedgeTrader:
                     subscription_task = asyncio.create_task(self.subscribe_orderbooks())
 
         except Exception as e:
-            logger.error(f"等待价差时出错: {str(e)}")
+            logger.error(f"{self.symbol}等待价差时出错: {str(e)}")
             raise
         finally:
             # 确保WebSocket订阅被停止
