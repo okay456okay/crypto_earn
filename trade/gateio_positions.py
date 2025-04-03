@@ -19,6 +19,7 @@ def print_earn_info():
     total_usdt_value = 0
     total_interest = 0
     total_assets = 0
+    earn_infos = {}
     
     # 打印每个持仓的详细信息
     print("\n【持仓详情】")
@@ -28,6 +29,7 @@ def print_earn_info():
     for p in positions:
         if float(p['curr_amount_usdt']) >= 1:
             earn_info = api.get_gateio_flexible_product(p['asset'])
+            earn_infos[p['asset']] = earn_info
             
             # 计算汇总数据
             total_usdt_value += float(p['curr_amount_usdt'])
@@ -66,7 +68,7 @@ def print_earn_info():
         total_apy = 0
         for p in positions:
             if float(p['curr_amount_usdt']) >= 1:
-                earn_info = api.get_gateio_flexible_product(p['asset'])
+                earn_info = earn_infos.get(p['asset'])
                 weight = float(p['curr_amount_usdt']) / total_usdt_value
                 total_apy += float(earn_info['apy']) * weight
         print(f"加权平均年化率: {total_apy:.2f}%")

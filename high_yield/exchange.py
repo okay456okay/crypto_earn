@@ -401,7 +401,7 @@ class ExchangeAPI:
         product = {
             "exchange": "GateIO",
             "token": token,
-            "apy": apy_day[-1]['apy'],
+            "apy": apy_day[-2]['apy'],
             'apy_day': apy_day,
             'apy_month': apy_month,
             "min_purchase": "无",
