@@ -46,18 +46,18 @@ class BitgetPositionFetcher:
             positions = await self.exchange.fetch_positions()
             
             if not positions:
-                logger.info("当前没有持仓")
+                print("当前没有持仓")
                 return positions
 
             # 打印持仓信息
-            logger.info("\n=== Bitget合约持仓信息 ===")
-            logger.info(f"查询时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            logger.info("-" * 120)
+            print("\n=== Bitget合约持仓信息 ===")
+            print(f"查询时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            print("-" * 120)
             
             # 打印表头
             header = f"{'交易对':<12} {'方向':<4} {'数量':<10} {'杠杆':<6} {'开仓价':<10} {'标记价':<10} {'未实现盈亏':<12} {'保证金':<10} {'名义价值':<10} {'风险率':<8} {'强平价':<10}"
-            logger.info(header)
-            logger.info("-" * 120)
+            print(header)
+            print("-" * 120)
 
             total_notional = Decimal('0')
             total_unrealized_pnl = Decimal('0')
@@ -89,17 +89,17 @@ class BitgetPositionFetcher:
                 position_line = (
                     f"{symbol:<12} "
                     f"{'多' if side == 'long' else '空':<4} "
-                    f"{contracts:<10.4f} "
+                    f"{contracts:<10.2f} "
                     f"{leverage:<6}x "
-                    f"{entry_price:<10.4f} "
-                    f"{mark_price:<10.4f} "
+                    f"{entry_price:<10.6f} "
+                    f"{mark_price:<10.6f} "
                     f"{unrealized_pnl:<12.2f} "
                     f"{margin:<10.2f} "
                     f"{notional:<10.2f} "
                     f"{risk_ratio:<8.2f}% "
-                    f"{liquidation_price:<10.4f}"
+                    f"{liquidation_price:<10.6f}"
                 )
-                logger.info(position_line)
+                print(position_line)
 
                 # 累加统计数据
                 total_notional += Decimal(str(notional))
@@ -121,16 +121,15 @@ class BitgetPositionFetcher:
                 }
                 processed_positions.append(processed_position)
 
-            logger.info("-" * 120)
+            print("-" * 120)
             
             # 打印汇总信息
-            logger.info("\n=== 持仓汇总信息 ===")
-            logger.info(f"总名义价值: {float(total_notional):.2f} USDT")
-            logger.info(f"总未实现盈亏: {float(total_unrealized_pnl):.2f} USDT")
-            logger.info(f"总持仓保证金: {float(total_margin):.2f} USDT")
-            logger.info(f"总风险率: {(float(total_margin) / float(total_notional) * 100):.2f}%")
-            logger.info("=" * 120)
-            logger.info(f"processed_positions: {processed_positions}")
+            print("\n=== 持仓汇总信息 ===")
+            print(f"总名义价值: {float(total_notional):.2f} USDT")
+            print(f"总未实现盈亏: {float(total_unrealized_pnl):.2f} USDT")
+            print(f"总持仓保证金: {float(total_margin):.2f} USDT")
+            print(f"总风险率: {(float(total_margin) / float(total_notional) * 100):.2f}%")
+            print("=" * 120)
             return processed_positions
 
         except Exception as e:

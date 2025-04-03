@@ -367,7 +367,7 @@ class ExchangeAPI:
         start = end - 1 * 24 * 60 * 60
         start_30 = end - 30 * 24 * 60 * 60
         apy_month = []
-        apy_day = []
+        apy_day = [0]
         try:
             if not self.gateio_volumes:
                 self.get_gateio_volumes()

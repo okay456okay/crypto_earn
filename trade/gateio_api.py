@@ -136,7 +136,7 @@ if __name__ == '__main__':
     # print(positions)
     for p in positions:
         if float(p['curr_amount_usdt']) >= 1:
-            print(f"{p['asset']}: 持仓金额:{p['curr_amount_usdt']} USDT,数量: {p['curr_amount']}, 价格:{p['price']}")
+            print(f"{p['asset']}: 持仓金额:{p['curr_amount_usdt']:.2f} USDT,数量: {p['curr_amount']}, 价格:{p['price']:.5f}")
     # print([i for i in positions if i["asset"] == token])
 
     # redeem_earn(token, 10)
