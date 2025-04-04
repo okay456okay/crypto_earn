@@ -56,7 +56,7 @@ class BitgetPositionFetcher:
             print("-" * 140)
             
             # 打印表头
-            header = f"{'交易对':<10} {'方向':<4} {'数量':<8} {'杠杆':<6} {'开仓价':<10} {'标记价':<10} {'未实现盈亏':<12} {'保证金':<10} {'名义价值':<10} {'风险率':<8} {'强平价':<10} {'资金费率':<8}"
+            header = f"{'交易对':<12} {'方向':<4} {'数量':<10} {'杠杆':<6} {'资金费率':<8} {'开仓价':<10} {'标记价':<10} {'未实现盈亏':<12} {'保证金':<10} {'名义价值':<10} {'风险率':<8} {'强平价':<10}"
             print(header)
             print("-" * 140)
 
@@ -95,18 +95,18 @@ class BitgetPositionFetcher:
 
                 # 格式化输出一行
                 position_line = (
-                    f"{symbol:<10} "
+                    f"{symbol:<12} "
                     f"{'多' if side == 'long' else '空':<4} "
-                    f"{contracts:<8.2f} "
+                    f"{contracts:<10.2f} "
                     f"{leverage:<6}x "
+                    f"{funding_rate_value:<8.4f}% "
                     f"{entry_price:<10.6f} "
                     f"{mark_price:<10.6f} "
                     f"{unrealized_pnl:<12.2f} "
                     f"{margin:<10.2f} "
                     f"{notional:<10.2f} "
                     f"{risk_ratio:<8.2f}% "
-                    f"{liquidation_price:<10.6f} "
-                    f"{funding_rate_value:<8.4f}%"
+                    f"{liquidation_price:<10.6f}"
                 )
                 print(position_line)
 
