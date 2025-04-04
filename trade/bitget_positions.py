@@ -22,6 +22,7 @@ from datetime import datetime
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tools.logger import logger
 from config import bitget_api_key, bitget_api_secret, bitget_api_passphrase, proxies
+from tools.proxy import get_proxy_ip
 
 class BitgetPositionFetcher:
     def __init__(self):
@@ -52,12 +53,12 @@ class BitgetPositionFetcher:
             # 打印持仓信息
             print("\n=== Bitget合约持仓信息 ===")
             print(f"查询时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            print("-" * 120)
+            print("-" * 140)
             
             # 打印表头
-            header = f"{'交易对':<12} {'方向':<4} {'数量':<10} {'杠杆':<6} {'开仓价':<10} {'标记价':<10} {'未实现盈亏':<12} {'保证金':<10} {'名义价值':<10} {'风险率':<8} {'强平价':<10}"
+            header = f"{'交易对':<10} {'方向':<4} {'数量':<8} {'杠杆':<6} {'开仓价':<10} {'标记价':<10} {'未实现盈亏':<12} {'保证金':<10} {'名义价值':<10} {'风险率':<8} {'强平价':<10} {'资金费率':<8}"
             print(header)
-            print("-" * 120)
+            print("-" * 140)
 
             total_notional = Decimal('0')
             total_unrealized_pnl = Decimal('0')
@@ -70,7 +71,6 @@ class BitgetPositionFetcher:
                     continue
 
                 # 处理symbol格式，去掉/USDT:USDT后缀
-                # symbol = position['symbol'].replace('/USDT:USDT', '')
                 symbol = position['symbol']
                 side = position['side']
                 contracts = float(position.get('contracts', 0))
@@ -82,14 +82,22 @@ class BitgetPositionFetcher:
                 notional = float(position.get('notional', 0))
                 liquidation_price = float(position.get('liquidationPrice', 0))
 
+                # 获取资金费率
+                try:
+                    funding_rate = await self.exchange.fetch_funding_rate(symbol)
+                    funding_rate_value = float(funding_rate['fundingRate']) * 100
+                except Exception as e:
+                    logger.warning(f"获取{symbol}资金费率失败: {str(e)}")
+                    funding_rate_value = 0.0
+
                 # 计算风险率
                 risk_ratio = (margin / notional * 100) if notional > 0 else 0
 
                 # 格式化输出一行
                 position_line = (
-                    f"{symbol:<12} "
+                    f"{symbol:<10} "
                     f"{'多' if side == 'long' else '空':<4} "
-                    f"{contracts:<10.2f} "
+                    f"{contracts:<8.2f} "
                     f"{leverage:<6}x "
                     f"{entry_price:<10.6f} "
                     f"{mark_price:<10.6f} "
@@ -97,7 +105,8 @@ class BitgetPositionFetcher:
                     f"{margin:<10.2f} "
                     f"{notional:<10.2f} "
                     f"{risk_ratio:<8.2f}% "
-                    f"{liquidation_price:<10.6f}"
+                    f"{liquidation_price:<10.6f} "
+                    f"{funding_rate_value:<8.4f}%"
                 )
                 print(position_line)
 
@@ -117,11 +126,12 @@ class BitgetPositionFetcher:
                     'unrealizedPnl': unrealized_pnl,
                     'initialMargin': margin,
                     'notional': notional,
-                    'liquidationPrice': liquidation_price
+                    'liquidationPrice': liquidation_price,
+                    'fundingRate': funding_rate_value
                 }
                 processed_positions.append(processed_position)
 
-            print("-" * 120)
+            print("-" * 140)
             
             # 打印汇总信息
             print("\n=== 持仓汇总信息 ===")
@@ -129,7 +139,7 @@ class BitgetPositionFetcher:
             print(f"总未实现盈亏: {float(total_unrealized_pnl):.2f} USDT")
             print(f"总持仓保证金: {float(total_margin):.2f} USDT")
             print(f"总风险率: {(float(total_margin) / float(total_notional) * 100):.2f}%")
-            print("=" * 120)
+            print("=" * 140)
             return processed_positions
 
         except Exception as e:
@@ -141,6 +151,7 @@ class BitgetPositionFetcher:
 async def main():
     """主函数"""
     try:
+        get_proxy_ip()
         fetcher = BitgetPositionFetcher()
         await fetcher.fetch_positions()
     except Exception as e:
