@@ -384,7 +384,7 @@ class ExchangeAPI:
             data = response.json().get('data', [])
             apy_day = [{'timestamp': int(i['time']) * 1000, 'apy': float(i['value'])} for i in data]
             apy_day = sorted(apy_day, key=lambda item: item['timestamp'], reverse=False)
-            sleep(2)
+            sleep(1)
             url = f'https://www.gate.io/apiw/v2/uni-loan/earn/chart?from={start_30}&to={end}&asset={token}&type=2'
             logger.debug(f"get gateio {token}近30天收益率曲线, url: {url}")
             response = requests.get(
@@ -395,7 +395,7 @@ class ExchangeAPI:
                     f"gateio get 30days asset charts, url: {url}, status: {response.status_code}, response: {response.text}")
             data = response.json().get('data', [])
             apy_month = [{'timestamp': i['time'] * 1000, 'apy': float(i['value'])} for i in data]
-            sleep(2)
+            sleep(1)
         except Exception as e:
             logger.error(f"get asset chart {token} error: {str(e)}")
         product = {

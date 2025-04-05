@@ -161,6 +161,15 @@ class CryptoYieldMonitor:
         logger.info(f"已发送{len(notifications)}条高收益加密货币通知")
 
     def get_estimate_apy(self, apy, fundingRate, fundingIntervalHours, leverage_ratio=leverage_ratio):
+        """
+        bitget吃单费率: 0.02%,持单费率: 0.06%
+        避免资金费率结算平衡线： ((0.06 * 2) * (24 / 4) * 365)/ 4 = 65.7%，年化收益超过这个值时，值得重新建立仓位。
+        :param apy:
+        :param fundingRate:
+        :param fundingIntervalHours:
+        :param leverage_ratio:
+        :return:
+        """
         return 1 * leverage_ratio / (leverage_ratio + 1) * (apy + fundingRate * (24 / fundingIntervalHours) * 365)
 
     def product_filter(self, all_products):
@@ -192,12 +201,13 @@ class CryptoYieldMonitor:
                 i for i in futures_results if
                 self.get_estimate_apy(product['apy'], i['fundingRate'],
                                       i['fundingIntervalHours']) >= stability_buy_apy_threshold and # 考虑资金费率后收益率超过基准值
-                i['fundingRate'] > -0.02 and  # 资金费率大于某个值
+                # i['fundingRate'] > -0.02 and  # 资金费率大于某个值
                 i['markPrice'] > 0.0001 and  # 币值大于某个值
                 i['volume_24h'] > volume_24h_threshold  # 合约交易额大于某个值
             ]
-            illegible_funding_rate = [ i for i in futures_results if i['fundingRate'] < -0.1]
-            if len(eligible_funding_rate) == 0 or len(illegible_funding_rate) > 0:
+            # illegible_funding_rate = [ i for i in futures_results if i['fundingRate'] < -0.1]
+            # if len(eligible_funding_rate) == 0 or len(illegible_funding_rate) > 0:
+            if len(eligible_funding_rate) == 0:
                 continue
             apy_percentile = 0.0
             if product['apy_day']:
