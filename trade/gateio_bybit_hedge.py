@@ -33,7 +33,7 @@ class HedgeTrader:
     现货-合约对冲交易类，实现Gate.io现货买入与Bybit合约空单对冲
     """
 
-    def __init__(self, symbol, spot_amount=None, min_spread=0.001, leverage=20):
+    def __init__(self, symbol, spot_amount=None, min_spread=0.001, leverage=10):
         """
         初始化基本属性
 
@@ -41,7 +41,7 @@ class HedgeTrader:
             symbol (str): 交易对符号，例如 'ETH/USDT'
             spot_amount (float, optional): 现货买入数量. Defaults to None.
             min_spread (float, optional): 最小价差要求. Defaults to 0.001.
-            leverage (int, optional): 合约杠杆倍数. Defaults to 20.
+            leverage (int, optional): 合约杠杆倍数. Defaults to 5.
         """
         self.symbol = symbol
         self.spot_amount = spot_amount
@@ -455,7 +455,7 @@ def parse_arguments():
     parser.add_argument('-s', '--symbol', type=str, required=True, help='交易对符号，例如 ETH/USDT')
     parser.add_argument('-a', '--amount', type=float, required=True, help='购买的现货数量')
     parser.add_argument('-p', '--min-spread', type=float, default=0.001, help='最小价差要求，默认0.001 (0.1%%)')
-    parser.add_argument('-l', '--leverage', type=int, default=20, help='合约杠杆倍数，默认20倍')
+    parser.add_argument('-l', '--leverage', type=int, default=5, help='合约杠杆倍数，默认5倍')
     parser.add_argument('--test-earn', action='store_true', help='测试余币宝申购功能')
     parser.add_argument('-d', '--debug', action='store_true', help='启用调试日志')  # 添加调试参数
     return parser.parse_args()

@@ -28,7 +28,7 @@ from trade.gateio_api import subscrible_earn as gateio_subscrible_earn, redeem_e
 
 
 class HedgeTrader:
-    def __init__(self, symbol, spot_amount=None, min_spread=0.001, leverage=20, test_mode=False):
+    def __init__(self, symbol, spot_amount=None, min_spread=0.001, leverage=10, test_mode=False):
         """
         初始化基本属性
         """
