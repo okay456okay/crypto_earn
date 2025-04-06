@@ -99,12 +99,32 @@ class HedgeTrader:
         try:
             # 设置Bybit合约参数
             params = {
-                'symbol': self.contract_symbol,
-                'leverage': str(self.leverage),
                 'category': 'linear',
+                'symbol': self.contract_symbol,
+                'buyLeverage': str(self.leverage),
+                'sellLeverage': str(self.leverage)
             }
-            await self.bybit.set_leverage(self.leverage, self.contract_symbol, params)
-            logger.info(f"设置Bybit合约杠杆倍数为: {self.leverage}倍")
+            
+            try:
+                # 先尝试设置持仓模式为单向持仓
+                await self.bybit.privatePostV5PositionSwitchMode({
+                    'category': 'linear',
+                    'symbol': self.contract_symbol,
+                    'mode': 0  # 0: 单向持仓, 3: 双向持仓
+                })
+                logger.info("设置Bybit持仓模式为单向持仓")
+            except Exception as e:
+                logger.warning(f"设置持仓模式失败（可能已经是单向持仓）: {str(e)}")
+
+            # 设置杠杆
+            try:
+                await self.bybit.privatePostV5PositionSetLeverage(params)
+                logger.info(f"设置Bybit合约杠杆倍数为: {self.leverage}倍")
+            except Exception as e:
+                if "leverage not modified" in str(e).lower():
+                    logger.info(f"杠杆倍数已经是 {self.leverage}倍，无需修改")
+                else:
+                    raise
 
             logger.info(f"初始化完成: 交易对={self.symbol}, 合约对={self.contract_symbol}, "
                         f"最小价差={self.min_spread * 100}%, 杠杆={self.leverage}倍")
