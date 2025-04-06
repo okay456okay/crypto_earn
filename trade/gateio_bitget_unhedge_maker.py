@@ -286,6 +286,12 @@ class UnhedgeTrader:
             # 准备下单参数
             trade_amount = self.spot_amount
             contract_amount = self.bitget.amount_to_precision(self.contract_symbol, trade_amount)
+            
+            # 获取合约下单价格，使用卖1价格加上一个小额溢价以确保成交
+            contract_price = float(spread_data['bitget_ask'])
+            markup = 0.0001  # 0.01% 的价格溢价
+            limit_price = contract_price * (1 + markup)
+            limit_price = self.bitget.price_to_precision(self.contract_symbol, limit_price)
 
             # 执行交易
             spot_order, contract_order = await asyncio.gather(
@@ -293,10 +299,14 @@ class UnhedgeTrader:
                     symbol=self.symbol,
                     amount=trade_amount
                 ),
-                self.bitget.create_market_buy_order(
+                self.bitget.create_limit_buy_order(
                     symbol=self.contract_symbol,
                     amount=contract_amount,
-                    params={"reduceOnly": True}  # 确保是平仓操作
+                    price=limit_price,
+                    params={
+                        "reduceOnly": "YES",  # 确保是平仓操作
+                        "force": "gtc"  # 无法立即成交的部分就撤销
+                    }
                 )
             )
 
