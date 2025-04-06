@@ -50,7 +50,7 @@ class HedgeTrader:
 
         # 设置合约交易对
         base, quote = symbol.split('/')
-        self.contract_symbol = f"{base}/{quote}:USDT"  # Bybit的USDT永续合约格式
+        self.contract_symbol = f"{base}{quote}"  # 例如: ETHUSDT
 
         # 使用 ccxt pro 初始化交易所
         self.gateio = ccxtpro.gateio({
@@ -68,6 +68,10 @@ class HedgeTrader:
             'apiKey': bybit_api_key,
             'secret': bybit_api_secret,
             'enableRateLimit': True,
+            'options': {
+                'defaultType': 'linear',  # 设置默认为USDT永续合约
+                'createMarketBuyOrderRequiresPrice': False,
+            },
             'proxies': proxies,
             'aiohttp_proxy': proxies.get('https', None),
             'ws_proxy': proxies.get('https', None),
@@ -94,7 +98,12 @@ class HedgeTrader:
         """
         try:
             # 设置Bybit合约参数
-            await self.bybit.set_leverage(self.leverage, self.contract_symbol)
+            params = {
+                'symbol': self.contract_symbol,
+                'leverage': str(self.leverage),
+                'category': 'linear',
+            }
+            await self.bybit.set_leverage(self.leverage, self.contract_symbol, params)
             logger.info(f"设置Bybit合约杠杆倍数为: {self.leverage}倍")
 
             logger.info(f"初始化完成: 交易对={self.symbol}, 合约对={self.contract_symbol}, "
@@ -326,7 +335,11 @@ class HedgeTrader:
                 self.bybit.create_market_sell_order(
                     symbol=self.contract_symbol,
                     amount=contract_amount,
-                    params={"reduceOnly": False}
+                    params={
+                        "category": "linear",
+                        "positionIdx": 0,  # 单向持仓
+                        "reduceOnly": False
+                    }
                 )
             )
 
@@ -369,7 +382,7 @@ class HedgeTrader:
 
             # 并行获取两个交易所的持仓信息
             gateio_balance_task = self.gateio.fetch_balance()
-            positions_task = self.bybit.fetch_positions([self.contract_symbol])
+            positions_task = self.bybit.fetch_positions([self.contract_symbol], {'category': 'linear'})
 
             gateio_balance, positions = await asyncio.gather(
                 gateio_balance_task,
