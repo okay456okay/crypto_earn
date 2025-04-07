@@ -2,6 +2,6 @@
 
 source ../venv/bin/activate
 
- ../trade/gateio_positions.py
- ../trade/bitget_positions.py
- ../trade/bybit_positions.py
+ python ../trade/gateio_positions.py
+ python ../trade/bitget_positions.py
+ python ../trade/bybit_positions.py
