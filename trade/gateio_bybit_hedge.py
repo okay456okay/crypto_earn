@@ -41,7 +41,7 @@ class HedgeTrader:
             symbol (str): 交易对符号，例如 'ETH/USDT'
             spot_amount (float, optional): 现货买入数量. Defaults to None.
             min_spread (float, optional): 最小价差要求. Defaults to 0.001.
-            leverage (int, optional): 合约杠杆倍数. Defaults to 5.
+            leverage (int, optional): 合约杠杆倍数. Defaults to 10.
         """
         self.symbol = symbol
         self.spot_amount = spot_amount
@@ -455,7 +455,7 @@ def parse_arguments():
     parser.add_argument('-s', '--symbol', type=str, required=True, help='交易对符号，例如 ETH/USDT')
     parser.add_argument('-a', '--amount', type=float, required=True, help='购买的现货数量')
     parser.add_argument('-p', '--min-spread', type=float, default=0.001, help='最小价差要求，默认0.001 (0.1%%)')
-    parser.add_argument('-l', '--leverage', type=int, default=5, help='合约杠杆倍数，默认5倍')
+    parser.add_argument('-l', '--leverage', type=int, default=10, help='合约杠杆倍数，默认10倍')
     parser.add_argument('--test-earn', action='store_true', help='测试余币宝申购功能')
     parser.add_argument('-d', '--debug', action='store_true', help='启用调试日志')  # 添加调试参数
     return parser.parse_args()
