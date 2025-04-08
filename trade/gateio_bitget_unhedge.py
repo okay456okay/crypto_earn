@@ -236,7 +236,7 @@ class UnhedgeTrader:
             await self.price_updates.put(spread_data)
 
         except Exception as e:
-            logger.error(f"检查订单簿价差时出错: {str(e)}")
+            logger.error(f"{self.symbol}检查订单簿价差时出错: {str(e)}")
 
     async def wait_for_spread(self):
         """等待价差达到要求"""
@@ -254,24 +254,25 @@ class UnhedgeTrader:
                     spread_percent = spread_data['spread_percent']
 
                     logger.info(
+                        f"{self.symbol}"
                         f"价格检查 - Gate.io买1: {spread_data['gateio_bid']} (量: {spread_data['gateio_bid_volume']}), "
                         f"Bitget卖1: {spread_data['bitget_ask']} (量: {spread_data['bitget_ask_volume']}), "
                         f"价差: {spread_percent * 100:.4f}%")
 
                     if spread_percent >= self.min_spread:
-                        logger.info(f"价差条件满足: {spread_percent * 100:.4f}% >= {self.min_spread * 100:.4f}%")
+                        logger.info(f"{self.symbol}价差条件满足: {spread_percent * 100:.4f}% >= {self.min_spread * 100:.4f}%")
                         return spread_data
 
-                    logger.info(f"价差条件不满足: {spread_percent * 100:.4f}% < {self.min_spread * 100:.4f}%")
+                    logger.info(f"{self.symbol}价差条件不满足: {spread_percent * 100:.4f}% < {self.min_spread * 100:.4f}%")
 
                 except asyncio.TimeoutError:
-                    logger.warning("等待价差数据超时，重新订阅订单簿")
+                    logger.warning(f"{self.symbol}等待价差数据超时，重新订阅订单簿")
                     if subscription_task:
                         subscription_task.cancel()
                     subscription_task = asyncio.create_task(self.subscribe_orderbooks())
 
         except Exception as e:
-            logger.error(f"等待价差时出错: {str(e)}")
+            logger.error(f"{self.symbol}等待价差时出错: {str(e)}")
             raise
         finally:
             self.ws_running = False
