@@ -24,6 +24,10 @@ from tools.logger import logger
 from config import bybit_api_key, bybit_api_secret, proxies
 from tools.proxy import get_proxy_ip
 
+import logging
+from tools.logger import logger
+logger.setLevel(logging.ERROR)
+
 class BybitPositionFetcher:
     def __init__(self):
         """初始化Bybit交易所连接"""

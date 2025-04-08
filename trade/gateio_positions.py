@@ -6,6 +6,10 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 from high_yield.exchange import ExchangeAPI
 from gateio_api import get_earn_positions
 
+import logging
+from tools.logger import logger
+logger.setLevel(logging.ERROR)
+
 def print_earn_info():
     positions = get_earn_positions()
     api = ExchangeAPI()

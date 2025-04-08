@@ -20,9 +20,12 @@ from datetime import datetime
 
 # 添加项目根目录到系统路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from tools.logger import logger
 from config import bitget_api_key, bitget_api_secret, bitget_api_passphrase, proxies
 from tools.proxy import get_proxy_ip
+
+import logging
+from tools.logger import logger
+logger.setLevel(logging.ERROR)
 
 class BitgetPositionFetcher:
     def __init__(self):
