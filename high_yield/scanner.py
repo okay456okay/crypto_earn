@@ -13,6 +13,8 @@ from datetime import datetime
 import sys
 import os
 
+from pycparser.ply.yacc import token
+
 # import traceback
 
 # 获取当前脚本的目录
@@ -276,8 +278,9 @@ class CryptoYieldMonitor:
                     bitget_positions[position['symbol']] = position
         except Exception as e:
             logger.error(f"获取Bitget合约持仓信息失败: {str(e)}")
-
         logger.debug(f"bitget positions: {bitget_positions}")
+
+        logger.info(f"检查理财持仓信息，共{len(tokens)}个产品")
         for token in tokens:
             # 获取理财产品最新利率
             sell_wechat_bot = WeChatWorkBot(token['webhook_url'])

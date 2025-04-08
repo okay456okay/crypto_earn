@@ -16,7 +16,7 @@ class WECOM_APP(object):
     def get_token(self):
         url = f"https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid={self.corp_id}&corpsecret={self.agent_secret}"
         r = self.s.get(url=url)
-        logger.info(f"get access_token, url: {url}, response: {r.status_code}:{r.text}")
+        logger.debug(f"get access_token, url: {url}, response: {r.status_code}:{r.text}")
         self.access_token = r.json()['access_token']
 
     def txt_send2user(self, userid, text):
@@ -32,11 +32,12 @@ class WECOM_APP(object):
             "safe": "0"
         }
         r = self.s.post(url=url, json=data)
-        logger.info(f"send message to user, url: {url}, data: {data}, response: {r.status_code}:{r.text}")
+        logger.debug(f"send message to user, url: {url}, data: {data}, response: {r.status_code}:{r.text}")
         if r.json().get('errcode', 0) == 42001:
+            logger.error(f"send message to user, url: {url}, data: {data}, response: {r.json()}, retry...")
             url = f"https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token={self.access_token}"
             r = self.s.post(url=url, json=data)
-            logger.info(f"send message to user, url: {url}, data: {data}, response: {r.status_code}:{r.text}")
+            logger.debug(f"send message to user, url: {url}, data: {data}, response: {r.status_code}:{r.text}")
     def markdown_send2user(self, userid, text):
         self.get_token()
         url = f"https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token={self.access_token}"
@@ -50,11 +51,12 @@ class WECOM_APP(object):
             "safe": "0"
         }
         r = self.s.post(url=url, json=data)
-        logger.info(f"send message to user, url: {url}, data: {data}, response: {r.status_code}:{r.text}")
+        logger.debug(f"send message to user, url: {url}, data: {data}, response: {r.status_code}:{r.text}")
         if r.json().get('errcode', 0) == 42001:
+            logger.error(f"send message to user, url: {url}, data: {data}, response: {r.json()}, retry...")
             url = f"https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token={self.access_token}"
             r = self.s.post(url=url, json=data)
-            logger.info(f"send message to user, url: {url}, data: {data}, response: {r.status_code}:{r.text}")
+            logger.debug(f"send message to user, url: {url}, data: {data}, response: {r.status_code}:{r.text}")
 
     def get_all_userids(self):
         self.get_token()

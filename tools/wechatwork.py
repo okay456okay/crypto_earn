@@ -20,7 +20,7 @@ class WeChatWorkBot:
             data["text"]["mentioned_list"] = mentioned_list
 
         try:
-            logger.info(f"开始发送企微消息，webhook_url: {self.webhook_url}, data: {data}")
+            logger.debug(f"开始发送企微消息，webhook_url: {self.webhook_url}, data: {data}")
             response = requests.post(self.webhook_url, json=data)
             result = response.json()
 
