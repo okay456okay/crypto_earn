@@ -78,11 +78,11 @@ class FundingArbitrageTrader:
             await self.exchange.set_leverage(self.leverage, self.contract_symbol)
             logger.info(f"设置合约杠杆倍数为: {self.leverage}倍")
 
-            # 检查当前持仓
-            await self.check_position()
-            
-            if not self.position_amount or self.position_side != 'short':
-                raise ValueError("未检测到空单持仓，请确保已有空单持仓")
+            # # 检查当前持仓
+            # await self.check_position()
+            #
+            # if not self.position_amount or self.position_side != 'short':
+            #     raise ValueError("未检测到空单持仓，请确保已有空单持仓")
 
             logger.info(f"初始化完成: 交易对={self.contract_symbol}, "
                        f"资金费率阈值={self.funding_threshold*100}%, 杠杆={self.leverage}倍")
@@ -112,7 +112,7 @@ class FundingArbitrageTrader:
                               f" {self.contract_symbol}, 开仓均价: {self.entry_price}")
                     return True
 
-            logger.warning("未检测到持仓")
+            # logger.warning("未检测到持仓")
             self.position = None
             self.position_side = None
             self.position_amount = None
@@ -131,14 +131,16 @@ class FundingArbitrageTrader:
             tuple: (funding_rate, next_funding_time)
         """
         try:
-            funding_rate = await self.exchange.fetch_funding_rate(self.contract_symbol)
-            current_rate = float(funding_rate['fundingRate'])
-            next_funding_time = funding_rate['nextFundingTime']
+            funding_data = await self.exchange.fetch_funding_rate(self.contract_symbol)
             
-            logger.info(f"当前资金费率: {current_rate*100:.4f}%, "
+            # 从返回的数据结构中提取资金费率和下次结算时间
+            funding_rate = float(funding_data['info']['fundingRate'])
+            next_funding_time = int(funding_data['info']['nextUpdate'])
+            
+            logger.info(f"当前资金费率: {funding_rate*100:.4f}%, "
                        f"下次结算时间: {datetime.fromtimestamp(next_funding_time/1000)}")
             
-            return current_rate, next_funding_time
+            return funding_rate, next_funding_time
 
         except Exception as e:
             logger.error(f"获取资金费率信息失败: {str(e)}")
@@ -170,7 +172,6 @@ class FundingArbitrageTrader:
             # 更新持仓状态
             await self.check_position()
             return order
-
         except Exception as e:
             logger.error(f"平仓操作失败: {str(e)}")
             raise
@@ -241,6 +242,7 @@ class FundingArbitrageTrader:
                 funding_rate, next_funding_time = await self.get_funding_info()
                 
                 # 3. 计算距离下次结算的时间
+                next_funding_time = int(time.time()*1000) + 60*1000  # 测试用
                 now = datetime.now().timestamp() * 1000
                 time_to_funding = (next_funding_time - now) / 1000  # 转换为秒
 
@@ -299,9 +301,6 @@ class FundingArbitrageTrader:
         except Exception as e:
             logger.error(f"执行资金费率套利时出错: {str(e)}")
             raise
-        finally:
-            # 最后检查一次持仓状况
-            await self.check_position()
 
 
 def parse_arguments():
@@ -309,7 +308,7 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description='Bitget合约资金费率套利')
     parser.add_argument('-s', '--symbol', type=str, required=True,
                       help='交易对符号，例如 ETH/USDT')
-    parser.add_argument('-t', '--threshold', type=float, default=-0.0008,
+    parser.add_argument('-t', '--threshold', type=float, default=-0.0002,
                       help='资金费率阈值，默认-0.08%%')
     parser.add_argument('-l', '--leverage', type=int, default=20,
                       help='合约杠杆倍数，默认20倍')
