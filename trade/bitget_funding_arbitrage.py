@@ -68,6 +68,7 @@ class FundingArbitrageTrader:
         self.position_side = None
         self.position_amount = None
         self.entry_price = None
+        self.last_position_amount = None
 
     async def initialize(self):
         """
@@ -169,9 +170,13 @@ class FundingArbitrageTrader:
             logger.info(f"平仓订单执行结果: 数量={self.position_amount}, "
                        f"价格≈{close_price}, 订单ID={order.get('id')}")
 
+            # 保存平仓数量用于后续开仓
+            self.last_position_amount = self.position_amount
+
             # 更新持仓状态
             await self.check_position()
             return order
+
         except Exception as e:
             logger.error(f"平仓操作失败: {str(e)}")
             raise
@@ -184,8 +189,8 @@ class FundingArbitrageTrader:
             price (float, optional): 限价单价格，如果不指定则使用市价单
         """
         try:
-            if self.position_amount:
-                logger.warning("已有持仓，不能开新仓")
+            if not hasattr(self, 'last_position_amount') or not self.last_position_amount:
+                logger.error("没有可用的持仓数量信息")
                 return None
 
             # 获取当前市场价格作为参考
@@ -204,18 +209,18 @@ class FundingArbitrageTrader:
             if order_type == 'limit':
                 order = await self.exchange.create_limit_sell_order(
                     symbol=self.contract_symbol,
-                    amount=self.position_amount,  # 使用之前的持仓数量
+                    amount=self.last_position_amount,
                     price=order_price,
                     params=order_params
                 )
             else:
                 order = await self.exchange.create_market_sell_order(
                     symbol=self.contract_symbol,
-                    amount=self.position_amount,  # 使用之前的持仓数量
+                    amount=self.last_position_amount,
                     params=order_params
                 )
 
-            logger.info(f"开仓订单执行结果: 数量={self.position_amount}, "
+            logger.info(f"开仓订单执行结果: 数量={self.last_position_amount}, "
                        f"价格={'市价' if not price else price}, 订单ID={order.get('id')}")
 
             # 更新持仓状态
@@ -242,7 +247,7 @@ class FundingArbitrageTrader:
                 funding_rate, next_funding_time = await self.get_funding_info()
                 
                 # 3. 计算距离下次结算的时间
-                next_funding_time = int(time.time()*1000) + 60*1000  # 测试用
+                # next_funding_time = int(time.time()*1000) + 60*1000  # 测试用
                 now = datetime.now().timestamp() * 1000
                 time_to_funding = (next_funding_time - now) / 1000  # 转换为秒
 
@@ -308,7 +313,7 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description='Bitget合约资金费率套利')
     parser.add_argument('-s', '--symbol', type=str, required=True,
                       help='交易对符号，例如 ETH/USDT')
-    parser.add_argument('-t', '--threshold', type=float, default=-0.0002,
+    parser.add_argument('-t', '--threshold', type=float, default=-0.0008,
                       help='资金费率阈值，默认-0.08%%')
     parser.add_argument('-l', '--leverage', type=int, default=20,
                       help='合约杠杆倍数，默认20倍')
