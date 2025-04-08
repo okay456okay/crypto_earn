@@ -77,7 +77,7 @@ class FundingArbitrageTrader:
         try:
             # 设置合约杠杆
             await self.exchange.set_leverage(self.leverage, self.contract_symbol)
-            logger.info(f"设置合约杠杆倍数为: {self.leverage}倍")
+            logger.info(f"[{self.symbol}] 设置合约杠杆倍数为: {self.leverage}倍")
 
             # # 检查当前持仓
             # await self.check_position()
@@ -85,11 +85,11 @@ class FundingArbitrageTrader:
             # if not self.position_amount or self.position_side != 'short':
             #     raise ValueError("未检测到空单持仓，请确保已有空单持仓")
 
-            logger.info(f"初始化完成: 交易对={self.contract_symbol}, "
+            logger.info(f"[{self.symbol}] 初始化完成: 交易对={self.contract_symbol}, "
                        f"资金费率阈值={self.funding_threshold*100}%, 杠杆={self.leverage}倍")
 
         except Exception as e:
-            logger.error(f"初始化失败: {str(e)}")
+            logger.error(f"[{self.symbol}] 初始化失败: {str(e)}")
             raise
 
     async def check_position(self):
@@ -109,7 +109,7 @@ class FundingArbitrageTrader:
                     self.position_amount = abs(float(position['contracts']))
                     self.entry_price = float(position.get('entryPrice', 0))
                     
-                    logger.info(f"当前持仓: {self.position_side} {self.position_amount} 张"
+                    logger.info(f"[{self.symbol}] 当前持仓: {self.position_side} {self.position_amount} 张"
                               f" {self.contract_symbol}, 开仓均价: {self.entry_price}")
                     return True
 
@@ -121,7 +121,7 @@ class FundingArbitrageTrader:
             return False
 
         except Exception as e:
-            logger.error(f"检查持仓时出错: {str(e)}")
+            logger.error(f"[{self.symbol}] 检查持仓时出错: {str(e)}")
             raise
 
     async def get_funding_info(self):
@@ -138,13 +138,13 @@ class FundingArbitrageTrader:
             funding_rate = float(funding_data['info']['fundingRate'])
             next_funding_time = int(funding_data['info']['nextUpdate'])
             
-            logger.info(f"当前资金费率: {funding_rate*100:.4f}%, "
+            logger.info(f"[{self.symbol}] 当前资金费率: {funding_rate*100:.4f}%, "
                        f"下次结算时间: {datetime.fromtimestamp(next_funding_time/1000)}")
             
             return funding_rate, next_funding_time
 
         except Exception as e:
-            logger.error(f"获取资金费率信息失败: {str(e)}")
+            logger.error(f"[{self.symbol}] 获取资金费率信息失败: {str(e)}")
             raise
 
     async def close_position(self):
@@ -153,7 +153,7 @@ class FundingArbitrageTrader:
         """
         try:
             if not self.position_amount:
-                logger.warning("没有持仓需要平仓")
+                logger.warning(f"[{self.symbol}] 没有持仓需要平仓")
                 return None
 
             # 获取当前市场价格
@@ -167,7 +167,7 @@ class FundingArbitrageTrader:
                 params={"reduceOnly": True}  # 确保是平仓操作
             )
 
-            logger.info(f"平仓订单执行结果: 数量={self.position_amount}, "
+            logger.info(f"[{self.symbol}] 平仓订单执行结果: 数量={self.position_amount}, "
                        f"价格≈{close_price}, 订单ID={order.get('id')}")
 
             # 保存平仓数量用于后续开仓
@@ -178,7 +178,7 @@ class FundingArbitrageTrader:
             return order
 
         except Exception as e:
-            logger.error(f"平仓操作失败: {str(e)}")
+            logger.error(f"[{self.symbol}] 平仓操作失败: {str(e)}")
             raise
 
     async def open_position(self, price=None):
@@ -190,7 +190,7 @@ class FundingArbitrageTrader:
         """
         try:
             if not hasattr(self, 'last_position_amount') or not self.last_position_amount:
-                logger.error("没有可用的持仓数量信息")
+                logger.error(f"[{self.symbol}] 没有可用的持仓数量信息")
                 return None
 
             # 获取当前市场价格作为参考
@@ -220,7 +220,7 @@ class FundingArbitrageTrader:
                     params=order_params
                 )
 
-            logger.info(f"开仓订单执行结果: 数量={self.last_position_amount}, "
+            logger.info(f"[{self.symbol}] 开仓订单执行结果: 数量={self.last_position_amount}, "
                        f"价格={'市价' if not price else price}, 订单ID={order.get('id')}")
 
             # 更新持仓状态
@@ -228,7 +228,7 @@ class FundingArbitrageTrader:
             return order
 
         except Exception as e:
-            logger.error(f"开仓操作失败: {str(e)}")
+            logger.error(f"[{self.symbol}] 开仓操作失败: {str(e)}")
             raise
 
     async def execute_funding_arbitrage(self):
@@ -240,7 +240,7 @@ class FundingArbitrageTrader:
                 # 1. 检查持仓状态
                 has_position = await self.check_position()
                 if not has_position:
-                    logger.info("没有检测到持仓，退出执行")
+                    logger.info(f"[{self.symbol}] 没有检测到持仓，退出执行")
                     return False
 
                 # 2. 获取下次资金费率结算时间
@@ -254,7 +254,7 @@ class FundingArbitrageTrader:
                 # 如果距离结算时间超过50秒，等待到结算前50秒
                 if time_to_funding > 50:
                     wait_time = time_to_funding - 50
-                    logger.info(f"等待 {wait_time:.0f} 秒后检查资金费率")
+                    logger.info(f"[{self.symbol}] 等待 {wait_time:.0f} 秒后检查资金费率")
                     await asyncio.sleep(wait_time)
 
                 # 重新获取资金费率信息
@@ -262,7 +262,7 @@ class FundingArbitrageTrader:
 
                 # 检查是否满足套利条件
                 if funding_rate > self.funding_threshold:
-                    logger.info(f"当前资金费率 {funding_rate*100:.4f}% > {self.funding_threshold*100:.4f}%, "
+                    logger.info(f"[{self.symbol}] 当前资金费率 {funding_rate*100:.4f}% > {self.funding_threshold*100:.4f}%, "
                               "不满足套利条件，等待300秒后重试")
                     await asyncio.sleep(300)
                     continue
@@ -272,7 +272,7 @@ class FundingArbitrageTrader:
                 time_to_funding = (next_funding_time - now) / 1000
                 if time_to_funding > 30:
                     wait_time = time_to_funding - 30
-                    logger.info(f"等待 {wait_time:.0f} 秒后平仓")
+                    logger.info(f"[{self.symbol}] 等待 {wait_time:.0f} 秒后平仓")
                     await asyncio.sleep(wait_time)
 
                 # 记录平仓前的价格
@@ -282,29 +282,29 @@ class FundingArbitrageTrader:
                 # 执行平仓
                 close_order = await self.close_position()
                 if not close_order:
-                    logger.error("平仓失败")
+                    logger.error(f"[{self.symbol}] 平仓失败")
                     await asyncio.sleep(300)
                     continue
 
                 # 5. 等待资金费率结算完成（额外等待30秒以确保结算完成）
-                logger.info("等待资金费率结算完成...")
+                logger.info(f"[{self.symbol}] 等待资金费率结算完成...")
                 await asyncio.sleep(60)  # 等待60秒
 
                 # 6. 以相同价格重新开空单
-                logger.info(f"准备以价格 {close_price} 重新开空单")
+                logger.info(f"[{self.symbol}] 准备以价格 {close_price} 重新开空单")
                 open_order = await self.open_position(price=close_price)
                 
                 if open_order:
-                    logger.info("本轮资金费率套利执行完成")
+                    logger.info(f"[{self.symbol}] 本轮资金费率套利执行完成")
                 else:
-                    logger.error("重新开仓失败")
+                    logger.error(f"[{self.symbol}] 重新开仓失败")
 
                 # 等待300秒后继续下一轮检查
-                logger.info("等待300秒后开始下一轮检查")
+                logger.info(f"[{self.symbol}] 等待300秒后开始下一轮检查")
                 await asyncio.sleep(300)
 
         except Exception as e:
-            logger.error(f"执行资金费率套利时出错: {str(e)}")
+            logger.error(f"[{self.symbol}] 执行资金费率套利时出错: {str(e)}")
             raise
 
 
