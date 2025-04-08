@@ -11,42 +11,37 @@ debug_log_file_path = os.path.join(logs_dir, "debug.log")
 # 确保logs目录存在
 os.makedirs(logs_dir, exist_ok=True)
 
-# 创建正式logger
+# 创建logger
 logger = logging.getLogger("crypto")
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)  # 设置最低级别为DEBUG，让所有级别的日志都能被处理
 
-# 创建调试logger
-debug_logger = logging.getLogger("debug")
-debug_logger.setLevel(logging.DEBUG)
+# 日志格式
+formatter = logging.Formatter("[%(asctime)-15s] %(levelname)s %(filename)s:%(lineno)d) %(message)s")
 
-# 正式日志的格式
-formal_formatter = logging.Formatter("[%(asctime)-15s] %(levelname)s %(filename)s:%(lineno)d): %(message)s")
-
-# 调试日志的格式
-debug_formatter = logging.Formatter("[%(asctime)-15s] %(levelname)s %(filename)s:%(lineno)d) (%(funcName)s(): %(message)s")
-
-# 正式日志的处理器
-formal_file_handler = RotatingFileHandler(
+# 正式日志处理器 - 处理INFO及以上级别
+info_file_handler = RotatingFileHandler(
     log_file_path,
     maxBytes=20 * 1024 * 1024,  # 20MB
     backupCount=20,
 )
-formal_file_handler.setFormatter(formal_formatter)
-formal_console_handler = logging.StreamHandler()
-formal_console_handler.setFormatter(formal_formatter)
+info_file_handler.setLevel(logging.INFO)
+info_file_handler.setFormatter(formatter)
 
-logger.addHandler(formal_file_handler)
-logger.addHandler(formal_console_handler)
-
-# 调试日志的处理器
+# 调试日志处理器 - 处理DEBUG级别
 debug_file_handler = RotatingFileHandler(
     debug_log_file_path,
-    maxBytes=50 * 1024 * 1024,  # 50MB，调试日志通常更大
+    maxBytes=50 * 1024 * 1024,  # 50MB
     backupCount=10,
 )
-debug_file_handler.setFormatter(debug_formatter)
-debug_console_handler = logging.StreamHandler()
-debug_console_handler.setFormatter(debug_formatter)
+debug_file_handler.setLevel(logging.DEBUG)
+debug_file_handler.setFormatter(formatter)
 
-debug_logger.addHandler(debug_file_handler)
-debug_logger.addHandler(debug_console_handler)
+# 控制台处理器 - 处理所有级别
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.DEBUG)
+console_handler.setFormatter(formatter)
+
+# 添加所有处理器到logger
+logger.addHandler(info_file_handler)
+logger.addHandler(debug_file_handler)
+logger.addHandler(console_handler)
