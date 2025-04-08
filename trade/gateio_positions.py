@@ -21,7 +21,7 @@ def print_earn_info():
 
     # 汇总信息
     total_usdt_value = 0
-    total_interest = 0
+    total_interest_usdt = 0  # 修改为USDT计价的收益
     total_assets = 0
     earn_infos = {}
 
@@ -37,7 +37,7 @@ def print_earn_info():
 
             # 计算汇总数据
             total_usdt_value += float(p['curr_amount_usdt'])
-            total_interest += float(p['interest'])
+            total_interest_usdt += float(p['interest']) * float(p['price'])  # 将收益转换为USDT
             total_assets += 1
 
             # 准备额外奖励信息
@@ -65,7 +65,7 @@ def print_earn_info():
     print("\n【汇总信息】")
     print(f"总资产数量: {total_assets} 种")
     print(f"总资产价值: {total_usdt_value:.2f} USDT")
-    print(f"今日收益: {total_interest:.2f} USDT")
+    print(f"今日收益: {total_interest_usdt:.2f} USDT")  # 使用USDT计价的收益
 
     # 计算平均年化率
     if total_assets > 0:

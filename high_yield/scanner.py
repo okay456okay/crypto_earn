@@ -48,35 +48,35 @@ class CryptoYieldMonitor:
         # 检查Binance
         try:
             binance_rate = self.exchange_api.get_binance_futures_funding_rate(token)
-            logger.info(f"{token} Binance Perp info: {binance_rate}")
+            logger.debug(f"{token} Binance Perp info: {binance_rate}")
         except Exception as e:
             binance_rate = None
             logger.error(f"获取{token}的合约资金费率报错：: {str(e)}")
 
         try:
             bitget_rate = self.exchange_api.get_bitget_futures_funding_rate(token)
-            logger.info(f"{token} Bitget Perp info: {bitget_rate}")
+            logger.debug(f"{token} Bitget Perp info: {bitget_rate}")
         except Exception as e:
             bitget_rate = None
             logger.error(f"获取Bitget {token}的合约资金费率报错：: {str(e)}")
 
         try:
             bybit_rate = self.exchange_api.get_bybit_futures_funding_rate(token)
-            logger.info(f"{token} Bybit Perp info: {bybit_rate}")
+            logger.debug(f"{token} Bybit Perp info: {bybit_rate}")
         except Exception as e:
             bybit_rate = None
             logger.error(f"获取Bybit {token}的合约资金费率报错：: {str(e)}")
 
         try:
             gate_io_rate = self.exchange_api.get_gateio_futures_funding_rate(token)
-            logger.info(f"{token} GateIO Perp info: {gate_io_rate}")
+            logger.debug(f"{token} GateIO Perp info: {gate_io_rate}")
         except Exception as e:
             bybit_rate = None
             logger.error(f"获取GateIO {token}的合约资金费率报错：: {str(e)}")
 
         try:
             okx_rate = self.exchange_api.get_okx_futures_funding_rate(token)
-            logger.info(f"{token} GateIO Perp info: {okx_rate}")
+            logger.debug(f"{token} GateIO Perp info: {okx_rate}")
         except Exception as e:
             okx_rate = None
             logger.error(f"获取OKX {token}的合约资金费率报错：: {str(e)}")
@@ -188,11 +188,11 @@ class CryptoYieldMonitor:
 
         for product in eligible_products:
             token = product["token"]
-            logger.info(f"检查Token {token} 的合约交易情况")
+            logger.debug(f"检查Token {token} 的合约交易情况")
             # 检查合约交易条件
             perp_token = f"{token}USDT"
             futures_results = self.get_futures_trading(perp_token)
-            logger.info(f"{perp_token} get future results: {futures_results}")
+            logger.debug(f"{perp_token} get future results: {futures_results}")
             # 如果没有合约支持，跳过
             if not futures_results:
                 continue
@@ -229,12 +229,13 @@ class CryptoYieldMonitor:
                 "min_purchase": product["min_purchase"],
                 "max_purchase": product["max_purchase"],
             }
-            logger.info(f"filter high yield product: {product}")
             # 稳定收益： 24小时Pxx收益率达到最低k
             if apy_percentile > stability_buy_apy_threshold:
+                logger.debug(f"add {product} to stability_product_notifications, future results: {futures_results}")
                 stability_product_notifications.append(notification)
             if len([i for i in product['apy_day'][-3:] if
                     i['apy'] >= highyield_buy_apy_threshold]) == highyield_checkpoints and product['apy'] >= highyield_buy_apy_threshold:
+                logger.debug(f"add {product} to highyield_product_notifications, future results: {futures_results}")
                 highyield_product_notifications.append(notification)
 
         # 发送通知
@@ -262,7 +263,7 @@ class CryptoYieldMonitor:
         except Exception as e:
             logger.error(f"获取GateIO理财持仓信息失败: {str(e)}")
 
-        logger.info(f"gateio positions: {gateio_positions}")
+        logger.debug(f"gateio positions: {gateio_positions}")
         # 获取Bitget合约持仓信息
         bitget_positions = {}
         try:
@@ -276,7 +277,7 @@ class CryptoYieldMonitor:
         except Exception as e:
             logger.error(f"获取Bitget合约持仓信息失败: {str(e)}")
 
-        logger.info(f"bitget positions: {bitget_positions}")
+        logger.debug(f"bitget positions: {bitget_positions}")
         for token in tokens:
             # 获取理财产品最新利率
             sell_wechat_bot = WeChatWorkBot(token['webhook_url'])
@@ -287,7 +288,7 @@ class CryptoYieldMonitor:
                 # 发送未找到理财产品通知
                 content = f"在{token['spot_exchange']}交易所中未找到 {token['token']} 理财产品"
                 # sell_wechat_bot.send_message(content)
-                logger.info(content)
+                logger.debug(content)
                 if token['spot_exchange'] == 'GateIO':
                     product = self.exchange_api.get_gateio_flexible_product(token['token'])
             else:
@@ -366,7 +367,7 @@ class CryptoYieldMonitor:
             # 对所有已购买产品做检查
             token_manger = TokenManager()
             purchased_tokens = token_manger.query_tokens()
-            logger.info(f"获取到的活期理财账户仓位如下：{purchased_tokens}")
+            logger.debug(f"获取到的活期理财账户仓位如下：{purchased_tokens}")
             self.check_tokens(purchased_tokens, all_products)
         except Exception as e:
             logger.exception(f"对所有已购买产品做检查失败 {e}")
