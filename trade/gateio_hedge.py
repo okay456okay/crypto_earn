@@ -286,15 +286,15 @@ class GateioHedgeTrader:
                     
                     spread_percent = spread_data['spread_percent']
                     
-                    logger.info(f"价格检查 - Gate.io现货卖1: {spread_data['spot_ask']} (量: {spread_data['spot_ask_volume']}), "
+                    logger.debug(f"{self.symbol}价格检查 - Gate.io现货卖1: {spread_data['spot_ask']} (量: {spread_data['spot_ask_volume']}), "
                                f"Gate.io合约买1: {spread_data['futures_bid']} (量: {spread_data['futures_bid_volume']}), "
                                f"价差: {spread_percent*100:.4f}%")
                     
                     if spread_percent >= self.min_spread:
-                        logger.info(f"价差条件满足: {spread_percent*100:.4f}% >= {self.min_spread*100:.4f}%")
+                        logger.info(f"{self.symbol}价差条件满足: {spread_percent*100:.4f}% >= {self.min_spread*100:.4f}%")
                         return spread_data
                     
-                    logger.info(f"价差条件不满足: {spread_percent*100:.4f}% < {self.min_spread*100:.4f}%")
+                    logger.debug(f"{self.symbol}价差条件不满足: {spread_percent*100:.4f}% < {self.min_spread*100:.4f}%")
                     
                 except asyncio.TimeoutError:
                     logger.warning("等待价差数据超时，重新订阅订单簿")
@@ -303,7 +303,7 @@ class GateioHedgeTrader:
                     subscription_task = asyncio.create_task(self.subscribe_orderbooks())
                     
         except Exception as e:
-            logger.error(f"等待价差时出错: {str(e)}")
+            logger.error(f"{self.symbol}等待价差时出错: {str(e)}")
             raise
         finally:
             self.ws_running = False

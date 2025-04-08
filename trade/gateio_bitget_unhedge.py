@@ -253,7 +253,7 @@ class UnhedgeTrader:
 
                     spread_percent = spread_data['spread_percent']
 
-                    logger.info(
+                    logger.debug(
                         f"{self.symbol}"
                         f"价格检查 - Gate.io买1: {spread_data['gateio_bid']} (量: {spread_data['gateio_bid_volume']}), "
                         f"Bitget卖1: {spread_data['bitget_ask']} (量: {spread_data['bitget_ask_volume']}), "
@@ -263,7 +263,7 @@ class UnhedgeTrader:
                         logger.info(f"{self.symbol}价差条件满足: {spread_percent * 100:.4f}% >= {self.min_spread * 100:.4f}%")
                         return spread_data
 
-                    logger.info(f"{self.symbol}价差条件不满足: {spread_percent * 100:.4f}% < {self.min_spread * 100:.4f}%")
+                    logger.debug(f"{self.symbol}价差条件不满足: {spread_percent * 100:.4f}% < {self.min_spread * 100:.4f}%")
 
                 except asyncio.TimeoutError:
                     logger.warning(f"{self.symbol}等待价差数据超时，重新订阅订单簿")

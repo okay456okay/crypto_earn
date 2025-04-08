@@ -335,7 +335,7 @@ class ExchangeAPI:
                             apy_day = [{'apy': int(i['apr_e8']) / 1000000, 'timestamp': int(i['timestamp']) * 1000} for
                                        i in data]
                             apy_day = sorted(apy_day, key=lambda item: item['timestamp'], reverse=False)
-                            logger.info(f"获取bybit {token}近24小时收益率曲线, 数据：{data}")
+                            logger.debug(f"获取bybit {token}近24小时收益率曲线, 数据：{data}")
                             # apy_percentile = get_percentile(data, percentile=yield_percentile, reverse=True)
                     except Exception as e:
                         logger.error(f"获取 {token}的收益曲线失败： {str(e)}")
@@ -463,7 +463,7 @@ class ExchangeAPI:
                         try:
                             # https://www.gate.io/apiw/v2/uni-loan/earn/chart?from=1741874400&to=1741957200&asset=SOL&type=1
                             url = f'https://www.gate.io/apiw/v2/uni-loan/earn/chart?from={start}&to={end}&asset={token}&type=1'
-                            logger.info(f"get gateio {token}近1天收益率曲线, url: {url}")
+                            logger.debug(f"get gateio {token}近1天收益率曲线, url: {url}")
                             response = requests.get(
                                 url=url,
                                 proxies=proxies)
@@ -477,7 +477,7 @@ class ExchangeAPI:
                             apy_day = [{'timestamp': int(i['time']) * 1000, 'apy': float(i['value'])} for i in data]
                             apy_day = sorted(apy_day, key=lambda item: item['timestamp'], reverse=False)
                             url = f'https://www.gate.io/apiw/v2/uni-loan/earn/chart?from={start_30}&to={end}&asset={token}&type=2'
-                            logger.info(f"get gateio {token}近30天收益率曲线, url: {url}")
+                            logger.debug(f"get gateio {token}近30天收益率曲线, url: {url}")
                             response = requests.get(
                                 url=url,
                                 proxies=proxies)
@@ -547,7 +547,7 @@ class ExchangeAPI:
                     if apy > stability_buy_apy_threshold:
                         try:
                             url = f'https://www.okx.com/priapi/v2/financial/rate-history?currencyId={toked_id}&t={now_timestamp_ms}'
-                            logger.info(f"get okx {token}近1天收益率曲线, url: {url}")
+                            logger.debug(f"get okx {token}近1天收益率曲线, url: {url}")
                             headers = {
                                 "accept": "application/json",
                                 "content-type": "application/json",
@@ -648,7 +648,7 @@ class ExchangeAPI:
                 logger.error(
                     f"binance future funding rate history failed, url:{url}, status:{response.status_code}, response:{response.text}")
             else:
-                logger.info(
+                logger.debug(
                     f"binance future funding rate history success, url:{url}, status:{response.status_code}, response:{response.text}")
             history = [{'fundingTime': int(i['fundingTime']), 'fundingRate': float(i['fundingRate']), 'symbol': token}
                        for i in response.json()]
@@ -950,7 +950,7 @@ class ExchangeAPI:
 
             # 获取资金费率
             funding_rate_info = exchange.fetch_funding_rate(symbol)
-            logger.info(f"okx get future, result: {funding_rate_info}")
+            logger.debug(f"okx get future, result: {funding_rate_info}")
             funding_rate = funding_rate_info['fundingRate']
             next_funding_time = funding_rate_info['nextFundingTimestamp']
             fundingIntervalHours = int(
