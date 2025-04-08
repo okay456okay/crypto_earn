@@ -8,7 +8,7 @@ Bybit合约持仓信息查询脚本
 1. 所有合约的持仓情况
 2. 持仓方向、数量、杠杆倍数
 3. 未实现盈亏和已实现盈亏
-4. 持仓保证金和风险率
+4. 资金费率和结算信息
 """
 
 import sys
@@ -23,6 +23,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tools.logger import logger
 from config import bybit_api_key, bybit_api_secret, proxies
 from tools.proxy import get_proxy_ip
+from high_yield.exchange import ExchangeAPI
 
 import logging
 from tools.logger import logger
@@ -44,6 +45,7 @@ class BybitPositionFetcher:
                 'defaultType': 'linear',  # 使用USDT永续合约
             }
         })
+        self.exchange_api = ExchangeAPI()
 
     async def fetch_positions(self):
         """获取所有合约持仓信息"""
@@ -62,13 +64,11 @@ class BybitPositionFetcher:
             print("-" * 140)
 
             # 打印表头
-            header = f"{'交易对':<8} {'方向':<4} {'数量':<12} {'杠杆':<4} {'资金费率':<8} {'开仓价':<10} {'标记价':<10} {'未实现盈亏':<12} {'保证金':<10} {'名义价值':<10} {'风险率':<8} {'强平价':<10}"
+            header = f"{'交易对':<8} {'方向':<4} {'数量':<12} {'杠杆':<4} {'资金费率':<8} {'开仓价':<10} {'标记价':<10} {'未实现盈亏':<12} {'结算周期':<8} {'下次结算':<19}"
             print(header)
             print("-" * 140)
 
-            total_notional = Decimal('0')
             total_unrealized_pnl = Decimal('0')
-            total_margin = Decimal('0')
 
             # 处理持仓数据
             processed_positions = []
@@ -84,20 +84,13 @@ class BybitPositionFetcher:
                 entry_price = float(position.get('entryPrice', 0))
                 mark_price = float(position.get('markPrice', 0))
                 unrealized_pnl = float(position.get('unrealizedPnl', 0))
-                margin = float(position.get('initialMargin', 0))
-                notional = float(position.get('notional', 0))
-                liquidation_price = float(position.get('liquidationPrice', 0))
 
-                # 获取资金费率
-                try:
-                    funding_rate = await self.exchange.fetch_funding_rate(symbol)
-                    funding_rate_value = float(funding_rate['fundingRate']) * 100
-                except Exception as e:
-                    logger.warning(f"获取{symbol}资金费率失败: {str(e)}")
-                    funding_rate_value = 0.0
-
-                # 计算风险率
-                risk_ratio = (margin / notional * 100) if notional > 0 else 0
+                # 获取资金费率信息
+                funding_info = self.exchange_api.get_bybit_futures_funding_rate(symbol.replace('/USDT:USDT', 'USDT'))
+                funding_rate = funding_info.get('fundingRate', 0)
+                funding_interval = funding_info.get('fundingIntervalHoursText', '无')
+                next_funding_time = funding_info.get('fundingTime', 0)
+                next_funding_time_str = datetime.fromtimestamp(next_funding_time/1000).strftime('%Y-%m-%d %H:%M:%S') if next_funding_time else '无'
 
                 # 格式化输出一行
                 position_line = (
@@ -105,21 +98,17 @@ class BybitPositionFetcher:
                     f"{'多' if side == 'long' else '空':<4} "
                     f"{contracts:<14.2f} "
                     f"{int(leverage):<6} "
-                    f"{funding_rate_value:<12.4f}"
+                    f"{funding_rate:<12.4f}"
                     f"{entry_price:<13.6f} "
                     f"{mark_price:<14.6f} "
                     f"{unrealized_pnl:<16.2f} "
-                    f"{margin:<14.2f} "
-                    f"{notional:<14.2f} "
-                    f"{risk_ratio:<12.2f}"
-                    f"{liquidation_price:<10.6f}"
+                    f"{funding_interval:<6} "
+                    f"{next_funding_time_str:<19}"
                 )
                 print(position_line)
 
                 # 累加统计数据
-                total_notional += Decimal(str(notional))
                 total_unrealized_pnl += Decimal(str(unrealized_pnl))
-                total_margin += Decimal(str(margin))
 
                 # 构建处理后的持仓数据
                 processed_position = {
@@ -130,10 +119,9 @@ class BybitPositionFetcher:
                     'entryPrice': entry_price,
                     'markPrice': mark_price,
                     'unrealizedPnl': unrealized_pnl,
-                    'initialMargin': margin,
-                    'notional': notional,
-                    'liquidationPrice': liquidation_price,
-                    'fundingRate': funding_rate_value
+                    'fundingRate': funding_rate,
+                    'fundingInterval': funding_interval,
+                    'nextFundingTime': next_funding_time
                 }
                 processed_positions.append(processed_position)
 
@@ -141,11 +129,7 @@ class BybitPositionFetcher:
 
             # 打印汇总信息
             print("\n=== 持仓汇总信息 ===")
-            print(f"总名义价值: {float(total_notional):.2f} USDT")
             print(f"总未实现盈亏: {float(total_unrealized_pnl):.2f} USDT")
-            print(f"总持仓保证金: {float(total_margin):.2f} USDT")
-            if float(total_notional) > 0:
-                print(f"总风险率: {(float(total_margin) / float(total_notional) * 100):.2f}%")
             print("=" * 140)
             return processed_positions
 

@@ -22,6 +22,7 @@ from datetime import datetime
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import bitget_api_key, bitget_api_secret, bitget_api_passphrase, proxies
 from tools.proxy import get_proxy_ip
+from high_yield.exchange import ExchangeAPI
 
 import logging
 from tools.logger import logger
@@ -41,6 +42,7 @@ class BitgetPositionFetcher:
             'wss_proxy':  proxies.get('https', None),
             'ws_socks_proxy':  proxies.get('https', None),
         })
+        self.exchange_api = ExchangeAPI()
 
     async def fetch_positions(self):
         """获取所有合约持仓信息"""
@@ -59,7 +61,7 @@ class BitgetPositionFetcher:
             print("-" * 140)
 
             # 打印表头
-            header = f"{'交易对':<8} {'方向':<4} {'数量':<12} {'杠杆':<4} {'资金费率':<8} {'开仓价':<10} {'标记价':<10} {'未实现盈亏':<12} {'保证金':<10} {'名义价值':<10} {'风险率':<8} {'强平价':<10}"
+            header = f"{'交易对':<8} {'方向':<4} {'数量':<12} {'杠杆':<4} {'资金费率':<8} {'结算周期':<8} {'下次结算':<16} {'开仓价':<10} {'标记价':<10} {'未实现盈亏':<12} {'强平价':<10}"
             print(header)
             print("-" * 140)
 
@@ -85,30 +87,32 @@ class BitgetPositionFetcher:
                 notional = float(position.get('notional', 0))
                 liquidation_price = float(position.get('liquidationPrice', 0))
 
-                # 获取资金费率
+                # 获取资金费率和结算信息
                 try:
-                    funding_rate = await self.exchange.fetch_funding_rate(symbol)
-                    funding_rate_value = float(funding_rate['fundingRate']) * 100
+                    # 使用ExchangeAPI获取资金费率信息
+                    funding_info = self.exchange_api.get_bitget_futures_funding_rate(symbol.replace('/USDT:USDT', 'USDT'))
+                    funding_rate_value = funding_info.get('fundingRate', 0.0)
+                    funding_interval = funding_info.get('fundingIntervalHours', 0)
+                    next_funding_time = funding_info.get('fundingTime', 0)
+                    next_funding_datetime = datetime.fromtimestamp(next_funding_time/1000).strftime('%Y-%m-%d %H:%M') if next_funding_time else 'N/A'
                 except Exception as e:
                     logger.warning(f"获取{symbol}资金费率失败: {str(e)}")
                     funding_rate_value = 0.0
-
-                # 计算风险率
-                risk_ratio = (margin / notional * 100) if notional > 0 else 0
+                    funding_interval = 0
+                    next_funding_datetime = 'N/A'
 
                 # 格式化输出一行
                 position_line = (
-                    f"{symbol.replace('/USDT:USDT', ''):<12} "
+                    f"{symbol.replace('/USDT:USDT', ''):<12}"
                     f"{'多' if side == 'long' else '空':<4} "
-                    f"{contracts:<14.2f} "
-                    f"{int(leverage):<6} "
+                    f"{contracts:<14.2f}"
+                    f"{int(leverage):<6}"
                     f"{funding_rate_value:<12.4f}"
-                    f"{entry_price:<13.6f} "
-                    f"{mark_price:<14.6f} "
-                    f"{unrealized_pnl:<16.2f} "
-                    f"{margin:<14.2f} "
-                    f"{notional:<14.2f} "
-                    f"{risk_ratio:<12.2f}"
+                    f"{funding_interval:<8}"
+                    f"{next_funding_datetime:<22}"
+                    f"{entry_price:<13.6f}"
+                    f"{mark_price:<14.6f}"
+                    f"{unrealized_pnl:<16.2f}"
                     f"{liquidation_price:<10.6f}"
                 )
                 print(position_line)
@@ -138,10 +142,7 @@ class BitgetPositionFetcher:
 
             # 打印汇总信息
             print("\n=== 持仓汇总信息 ===")
-            print(f"总名义价值: {float(total_notional):.2f} USDT")
             print(f"总未实现盈亏: {float(total_unrealized_pnl):.2f} USDT")
-            print(f"总持仓保证金: {float(total_margin):.2f} USDT")
-            print(f"总风险率: {(float(total_margin) / float(total_notional) * 100):.2f}%")
             print("=" * 140)
             return processed_positions
 

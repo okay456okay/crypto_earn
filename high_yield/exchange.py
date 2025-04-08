@@ -1015,14 +1015,14 @@ class ExchangeAPI:
 if __name__ == "__main__":
     api = ExchangeAPI()
     # api.get_binance_funding_info()
-    token = 'REZUSDT'
+    token = 'L3USDT'
     start = 1739318400000
     end = 1741939200000
-    print(api.get_binance_futures_funding_rate(token))
-    print(api.get_bitget_futures_funding_rate(token))
+    # print(api.get_binance_futures_funding_rate(token))
+    # print(api.get_bitget_futures_funding_rate(token))
     print(api.get_bybit_futures_funding_rate(token))
-    print(api.get_okx_futures_funding_rate(token))
-    print(api.get_gateio_futures_funding_rate(token))
+    # print(api.get_okx_futures_funding_rate(token))
+    # print(api.get_gateio_futures_funding_rate(token))
     # print(api.get_binance_futures_funding_rate(token))
     # print(api.get_bitget_futures_funding_rate(token))
     # print(api.get_gateio_flexible_products())
