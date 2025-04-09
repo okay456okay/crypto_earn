@@ -38,7 +38,7 @@ class UnhedgeTrader:
     现货-合约对冲平仓类，实现Gate.io现货卖出与Bitget合约平空单
     """
 
-    def __init__(self, symbol, spot_amount=None, min_spread=0.001):
+    def __init__(self, symbol, spot_amount=None, min_spread=0.001, price_adjust=0.0005):
         """
         初始化基本属性
         
@@ -46,10 +46,12 @@ class UnhedgeTrader:
             symbol (str): 交易对，如 'ETH/USDT'
             spot_amount (float): 要卖出的现货数量
             min_spread (float): 最小价差要求，默认0.001 (0.1%)
+            price_adjust (float): 价格调整比例，默认0.0005 (0.05%)，现货卖一价格下调此比例，合约买一价格上调此比例
         """
         self.symbol = symbol
         self.spot_amount = spot_amount
         self.min_spread = min_spread
+        self.price_adjust = price_adjust
 
         # 设置合约交易对
         base, quote = symbol.split('/')
@@ -99,7 +101,7 @@ class UnhedgeTrader:
         """
         try:
             logger.info(f"初始化: 交易对={self.symbol}, 合约对={self.contract_symbol}, "
-                        f"最小价差={self.min_spread * 100}%")
+                        f"最小价差={self.min_spread * 100}%, 价格调整={self.price_adjust * 100}%")
 
             # 检查当前持仓情况
             await self.check_positions()
@@ -348,9 +350,15 @@ class UnhedgeTrader:
             trade_amount = self.spot_amount
             contract_amount = self.bitget.amount_to_precision(self.contract_symbol, trade_amount)
             
-            # 使用订单簿中的最优价格
-            spot_price = self.gateio.price_to_precision(self.symbol, spread_data['gateio_ask'])
-            contract_price = self.bitget.price_to_precision(self.contract_symbol, spread_data['bitget_bid'])
+            # 使用订单簿中的最优价格，并根据调整比例调整
+            # 现货卖一价格下调price_adjust比例，提高成交可能性
+            spot_ask_price = spread_data['gateio_ask'] * (1 - self.price_adjust)
+            # 合约买一价格上调price_adjust比例，提高成交可能性
+            contract_bid_price = spread_data['bitget_bid'] * (1 + self.price_adjust)
+            
+            # 精确价格到交易所要求的精度
+            spot_price = self.gateio.price_to_precision(self.symbol, spot_ask_price)
+            contract_price = self.bitget.price_to_precision(self.contract_symbol, contract_bid_price)
 
             # 执行限价单交易
             spot_order, contract_order = await asyncio.gather(
@@ -369,8 +377,8 @@ class UnhedgeTrader:
 
             base_currency = self.symbol.split('/')[0]
             logger.info(f"下单信息:")
-            logger.info(f"Gate.io限价卖出: 数量={trade_amount} {base_currency}, 价格={spot_price}")
-            logger.info(f"Bitget限价平空: 数量={contract_amount} {base_currency}, 价格={contract_price}")
+            logger.info(f"Gate.io限价卖出: 数量={trade_amount} {base_currency}, 原始卖一价={spread_data['gateio_ask']}, 调整后价格={spot_price}")
+            logger.info(f"Bitget限价平空: 数量={contract_amount} {base_currency}, 原始买一价={spread_data['bitget_bid']}, 调整后价格={contract_price}")
 
             # 等待订单完全成交
             final_spot_order, final_contract_order = await self.wait_for_orders_filled(spot_order, contract_order)
@@ -415,6 +423,7 @@ def parse_arguments():
     parser.add_argument('-s', '--symbol', type=str, required=True, help='交易对符号，例如 ETH/USDT')
     parser.add_argument('-a', '--amount', type=float, required=True, help='卖出的现货数量')
     parser.add_argument('-p', '--min-spread', type=float, default=0.001, help='最小价差要求，默认0.001 (0.1%%)')
+    parser.add_argument('-j', '--price-adjust', type=float, default=0.0005, help='价格调整比例，默认0.0005 (0.05%%)')
     return parser.parse_args()
 
 
@@ -426,7 +435,8 @@ async def main():
         trader = UnhedgeTrader(
             symbol=args.symbol,
             spot_amount=args.amount,
-            min_spread=args.min_spread
+            min_spread=args.min_spread,
+            price_adjust=args.price_adjust
         )
         await trader.initialize()
 
