@@ -298,7 +298,7 @@ class UnhedgeTrader:
                     contract_filled = contract_status['status'] == 'closed'
                     
                     if not (spot_filled and contract_filled):
-                        logger.info(f"订单状态 - Gate.io: {spot_status['status']}, Bitget: {contract_status['status']}")
+                        logger.debug(f"订单状态 - Gate.io: {spot_status['status']}, Bitget: {contract_status['status']}")
                         await asyncio.sleep(1)  # 等待1秒再次检查
                     
                 except Exception as e:
