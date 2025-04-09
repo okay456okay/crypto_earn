@@ -286,23 +286,56 @@ class UnhedgeTrader:
             contract_filled = False
             
             while not (spot_filled and contract_filled):
-                spot_status, contract_status = await asyncio.gather(
-                    self.gateio.fetch_order(spot_order['id'], self.symbol),
-                    self.bitget.fetch_order(contract_order['id'], self.contract_symbol)
-                )
-                
-                spot_filled = spot_status['status'] == 'closed'
-                contract_filled = contract_status['status'] == 'closed'
-                
-                if not (spot_filled and contract_filled):
-                    logger.info(f"订单状态 - Gate.io: {spot_status['status']}, Bitget: {contract_status['status']}")
-                    await asyncio.sleep(1)  # 等待1秒再次检查
+                try:
+                    spot_status, contract_status = await asyncio.gather(
+                        self.gateio.fetch_order(spot_order['id'], self.symbol),
+                        self.bitget.fetch_order(contract_order['id'], self.contract_symbol)
+                    )
+                    
+                    spot_filled = spot_status['status'] == 'closed'
+                    contract_filled = contract_status['status'] == 'closed'
+                    
+                    if not (spot_filled and contract_filled):
+                        logger.info(f"订单状态 - Gate.io: {spot_status['status']}, Bitget: {contract_status['status']}")
+                        await asyncio.sleep(1)  # 等待1秒再次检查
+                    
+                except Exception as e:
+                    # 获取详细的错误信息
+                    error_msg = str(e)
+                    if hasattr(e, 'response'):
+                        try:
+                            error_msg += f"\nResponse: {await e.response.text()}"
+                        except:
+                            pass
+                    if hasattr(e, 'url'):
+                        error_msg += f"\nURL: {e.url}"
+                    if hasattr(e, 'status'):
+                        error_msg += f"\nStatus: {e.status}"
+                    if hasattr(e, 'headers'):
+                        error_msg += f"\nHeaders: {e.headers}"
+                    
+                    logger.error(f"检查订单状态时出错: {error_msg}")
+                    raise
                 
             logger.info("所有订单已完全成交")
             return spot_status, contract_status
             
         except Exception as e:
-            logger.error(f"检查订单状态时出错: {str(e)}")
+            # 获取详细的错误信息
+            error_msg = str(e)
+            if hasattr(e, 'response'):
+                try:
+                    error_msg += f"\nResponse: {await e.response.text()}"
+                except:
+                    pass
+            if hasattr(e, 'url'):
+                error_msg += f"\nURL: {e.url}"
+            if hasattr(e, 'status'):
+                error_msg += f"\nStatus: {e.status}"
+            if hasattr(e, 'headers'):
+                error_msg += f"\nHeaders: {e.headers}"
+            
+            logger.error(f"检查订单状态时出错: {error_msg}")
             raise
 
     async def execute_unhedge_trade(self):
@@ -358,7 +391,21 @@ class UnhedgeTrader:
             return final_spot_order, final_contract_order
 
         except Exception as e:
-            logger.error(f"执行平仓交易时出错: {str(e)}")
+            # 获取详细的错误信息
+            error_msg = str(e)
+            if hasattr(e, 'response'):
+                try:
+                    error_msg += f"\nResponse: {await e.response.text()}"
+                except:
+                    pass
+            if hasattr(e, 'url'):
+                error_msg += f"\nURL: {e.url}"
+            if hasattr(e, 'status'):
+                error_msg += f"\nStatus: {e.status}"
+            if hasattr(e, 'headers'):
+                error_msg += f"\nHeaders: {e.headers}"
+            
+            logger.error(f"执行平仓交易时出错: {error_msg}")
             raise
 
 
@@ -390,7 +437,21 @@ async def main():
             logger.info("未执行平仓交易")
 
     except Exception as e:
-        logger.error(f"程序执行过程中发生错误: {str(e)}")
+        # 获取详细的错误信息
+        error_msg = str(e)
+        if hasattr(e, 'response'):
+            try:
+                error_msg += f"\nResponse: {await e.response.text()}"
+            except:
+                pass
+        if hasattr(e, 'url'):
+            error_msg += f"\nURL: {e.url}"
+        if hasattr(e, 'status'):
+            error_msg += f"\nStatus: {e.status}"
+        if hasattr(e, 'headers'):
+            error_msg += f"\nHeaders: {e.headers}"
+        
+        logger.error(f"程序执行过程中发生错误: {error_msg}")
         return 1
     finally:
         if 'trader' in locals():
