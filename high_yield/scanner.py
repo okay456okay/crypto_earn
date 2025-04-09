@@ -407,7 +407,7 @@ class CryptoYieldMonitor:
             logger.info(f"总共获取到{len(all_products)}个活期理财产品")
             self.exchange_api.get_binance_funding_info()
             # 过滤和处理高收益理财产品
-            self.product_filter(all_products)
+            # self.product_filter(all_products)
             self.position_check(all_products)
         except Exception as e:
             logger.exception(f"运行监控任务时发生错误: {str(e)}")

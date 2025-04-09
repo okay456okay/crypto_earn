@@ -398,6 +398,7 @@ class ExchangeAPI:
             sleep(1.5)
         except Exception as e:
             logger.error(f"get asset chart {token} error: {str(e)}")
+        logger.info(f"apy_day: {token}, {apy_day}")
         product = {
             "exchange": "GateIO",
             "token": token,
