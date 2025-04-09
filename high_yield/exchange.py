@@ -668,9 +668,8 @@ class ExchangeAPI:
             
             url = f"https://fapi.binance.com/fapi/v1/premiumIndex?symbol={token}"
             response = requests.get(url, proxies=proxies)
-            if response.status_code != 200:
-                logger.error(
-                    f"binance get future failed, url: {url}, status: {response.status_code}, response: {response.text}")
+            if response.status_code != 200 and response.text.find('Invalid symbol') == -1:
+                logger.debug(f"binance get future failed, url: {url}, status: {response.status_code}, response: {response.text}")
             data = response.json()
             if not self.binance_funding_info:
                 self.get_binance_funding_info()
@@ -686,7 +685,7 @@ class ExchangeAPI:
                 'volume_24h': self.binance_futures_volumes.get(token, 0),
             }  # 转换为百分比
         except Exception as e:
-            logger.error(f"获取{exchange} {token}合约资金费率时出错: {str(e)}")
+            logger.debug(f"获取{exchange} {token}合约资金费率时出错: {str(e)}")
             return {}
 
     def get_bybit_futures_funding_rate_history(self, token, startTime, endTime):
@@ -823,8 +822,8 @@ class ExchangeAPI:
             }
             response = self.session.get(url, params=params)
             if response.status_code != 200:
-                logger.error(
-                    f"bitget get future, url: {url}, status: {response.status_code}, response: {response.text}")
+                if response.text.find('does not exis') == -1:
+                    logger.error(f"bitget get future, url: {url}, status: {response.status_code}, response: {response.text}")
             data = response.json()
 
             if data["code"] == "00000" and "data" in data:
@@ -911,9 +910,8 @@ class ExchangeAPI:
             gate_io_token = token.replace('USDT', '_USDT')
             url = f"https://api.gateio.ws/api/v4/futures/usdt/contracts/{gate_io_token}"
             response = self.session.get(url)
-            if response.status_code != 200:
-                logger.error(
-                    f"gateio get future failed, url: {url}, status: {response.status_code}, response: {response.text}")
+            if response.status_code != 200 and response.text.find("CONTRACT_NOT_FOUND") == -1:
+                logger.error(f"gateio get future failed, url: {url}, status: {response.status_code}, response: {response.text}")
             data = response.json()
             if data['in_delisting'] is False:
                 fundingIntervalHours = int(data['funding_interval'] / 60 / 60)
@@ -965,7 +963,8 @@ class ExchangeAPI:
                 'volume_24h': self.okx_futures_volumes.get(token, 0),
             }
         except Exception as e:
-            logger.error(f"获取{exchange} {token}合约资金费率时出错: {str(e)}")
+            if str(e).find('okx does not have market symbol') == -1:
+                logger.error(f"获取{exchange} {token}合约资金费率时出错: {str(e)}")
             return {}
 
     def get_okx_futures_funding_rate_history(self, token, startTime, endTime):
