@@ -1010,18 +1010,23 @@ class ExchangeAPI:
             logger.error(f"get get_gateio_future_funding_rate_history failed, code: {str(e)}")
         return history
 
+    def get_funding_rate(self, token):
+        rates = []
+        rates.append(self.get_binance_futures_funding_rate(token))
+        rates.append(self.get_bitget_futures_funding_rate(token))
+        rates.append(self.get_bybit_futures_funding_rate(token))
+        rates.append(self.get_okx_futures_funding_rate(token))
+        rates.append(self.get_gateio_futures_funding_rate(token))
+        return rates
+
 
 if __name__ == "__main__":
     api = ExchangeAPI()
     # api.get_binance_funding_info()
-    token = 'L3USDT'
+    token = 'SERAPHUSDT'
     start = 1739318400000
     end = 1741939200000
-    # print(api.get_binance_futures_funding_rate(token))
-    # print(api.get_bitget_futures_funding_rate(token))
-    print(api.get_bybit_futures_funding_rate(token))
-    # print(api.get_okx_futures_funding_rate(token))
-    # print(api.get_gateio_futures_funding_rate(token))
+    print(api.get_funding_rate(token))
     # print(api.get_binance_futures_funding_rate(token))
     # print(api.get_bitget_futures_funding_rate(token))
     # print(api.get_gateio_flexible_products())

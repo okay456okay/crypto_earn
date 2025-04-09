@@ -251,9 +251,9 @@ class FundingArbitrageTrader:
                 now = datetime.now().timestamp() * 1000
                 time_to_funding = (next_funding_time - now) / 1000  # 转换为秒
 
-                # 如果距离结算时间超过50秒，等待到结算前50秒
-                if time_to_funding > 50:
-                    wait_time = time_to_funding - 50
+                # 如果距离结算时间超过30秒，等待到结算前30秒
+                if time_to_funding > 30:
+                    wait_time = time_to_funding - 30
                     logger.info(f"[{self.symbol}] 等待 {wait_time:.0f} 秒后检查资金费率")
                     await asyncio.sleep(wait_time)
 
