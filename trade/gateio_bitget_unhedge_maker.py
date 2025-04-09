@@ -5,11 +5,11 @@
 Gate.io现货卖出与Bitget合约平空单的套利脚本
 
 此脚本实现以下功能：
-1. 从Gate.io市价卖出指定token的现货
-2. 从Bitget平掉对应的合约空单进行对冲
+1. 从Gate.io限价卖出指定token的现货
+2. 从Bitget限价平掉对应的合约空单进行对冲
 3. 确保现货和合约仓位保持一致
 4. 检查价差是否满足最小套利条件
-5. 监控和记录交易执行情况
+5. 监控订单成交情况直至全部成交
 """
 
 import sys
@@ -24,6 +24,7 @@ import aiohttp
 import ccxt.pro as ccxtpro
 from collections import defaultdict
 from typing import Dict, Optional
+
 
 # 添加项目根目录到系统路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -40,7 +41,7 @@ class UnhedgeTrader:
     def __init__(self, symbol, spot_amount=None, min_spread=0.001):
         """
         初始化基本属性
-
+        
         Args:
             symbol (str): 交易对，如 'ETH/USDT'
             spot_amount (float): 要卖出的现货数量
@@ -216,26 +217,26 @@ class UnhedgeTrader:
             if not gateio_ob or not bitget_ob:
                 return
 
-            gateio_bid = Decimal(str(gateio_ob['bids'][0][0]))  # 现货卖出价(买1)
-            gateio_bid_volume = Decimal(str(gateio_ob['bids'][0][1]))
+            gateio_ask = Decimal(str(gateio_ob['asks'][0][0]))  # 现货卖一价
+            gateio_ask_volume = Decimal(str(gateio_ob['asks'][0][1]))
 
-            bitget_ask = Decimal(str(bitget_ob['asks'][0][0]))  # 合约买入价(卖1)
-            bitget_ask_volume = Decimal(str(bitget_ob['asks'][0][1]))
+            bitget_bid = Decimal(str(bitget_ob['bids'][0][0]))  # 合约买一价
+            bitget_bid_volume = Decimal(str(bitget_ob['bids'][0][1]))
 
-            spread = gateio_bid - bitget_ask
-            spread_percent = spread / bitget_ask
+            spread = gateio_ask - bitget_bid
+            spread_percent = spread / bitget_bid
 
             spread_data = {
                 'spread_percent': float(spread_percent),
-                'gateio_bid': float(gateio_bid),
-                'bitget_ask': float(bitget_ask),
-                'gateio_bid_volume': float(gateio_bid_volume),
-                'bitget_ask_volume': float(bitget_ask_volume)
+                'gateio_ask': float(gateio_ask),
+                'bitget_bid': float(bitget_bid),
+                'gateio_ask_volume': float(gateio_ask_volume),
+                'bitget_bid_volume': float(bitget_bid_volume)
             }
             await self.price_updates.put(spread_data)
 
         except Exception as e:
-            logger.error(f"检查订单簿价差时出错: {str(e)}")
+            logger.error(f"{self.symbol}检查订单簿价差时出错: {str(e)}")
 
     async def wait_for_spread(self):
         """等待价差达到要求"""
@@ -252,30 +253,57 @@ class UnhedgeTrader:
 
                     spread_percent = spread_data['spread_percent']
 
-                    logger.info(
-                        f"价格检查 - Gate.io买1: {spread_data['gateio_bid']} (量: {spread_data['gateio_bid_volume']}), "
-                        f"Bitget卖1: {spread_data['bitget_ask']} (量: {spread_data['bitget_ask_volume']}), "
+                    logger.debug(
+                        f"{self.symbol}"
+                        f"价格检查 - Gate.io卖1: {spread_data['gateio_ask']} (量: {spread_data['gateio_ask_volume']}), "
+                        f"Bitget买1: {spread_data['bitget_bid']} (量: {spread_data['bitget_bid_volume']}), "
                         f"价差: {spread_percent * 100:.4f}%")
 
                     if spread_percent >= self.min_spread:
-                        logger.info(f"价差条件满足: {spread_percent * 100:.4f}% >= {self.min_spread * 100:.4f}%")
+                        logger.info(f"{self.symbol}价差条件满足: {spread_percent * 100:.4f}% >= {self.min_spread * 100:.4f}%")
                         return spread_data
 
-                    logger.info(f"价差条件不满足: {spread_percent * 100:.4f}% < {self.min_spread * 100:.4f}%")
+                    logger.debug(f"{self.symbol}价差条件不满足: {spread_percent * 100:.4f}% < {self.min_spread * 100:.4f}%")
 
                 except asyncio.TimeoutError:
-                    logger.warning("等待价差数据超时，重新订阅订单簿")
+                    logger.warning(f"{self.symbol}等待价差数据超时，重新订阅订单簿")
                     if subscription_task:
                         subscription_task.cancel()
                     subscription_task = asyncio.create_task(self.subscribe_orderbooks())
 
         except Exception as e:
-            logger.error(f"等待价差时出错: {str(e)}")
+            logger.error(f"{self.symbol}等待价差时出错: {str(e)}")
             raise
         finally:
             self.ws_running = False
             if subscription_task:
                 subscription_task.cancel()
+
+    async def wait_for_orders_filled(self, spot_order, contract_order):
+        """等待订单完全成交"""
+        try:
+            spot_filled = False
+            contract_filled = False
+            
+            while not (spot_filled and contract_filled):
+                spot_status, contract_status = await asyncio.gather(
+                    self.gateio.fetch_order(spot_order['id'], self.symbol),
+                    self.bitget.fetch_order(contract_order['id'], self.contract_symbol)
+                )
+                
+                spot_filled = spot_status['status'] == 'closed'
+                contract_filled = contract_status['status'] == 'closed'
+                
+                if not (spot_filled and contract_filled):
+                    logger.info(f"订单状态 - Gate.io: {spot_status['status']}, Bitget: {contract_status['status']}")
+                    await asyncio.sleep(1)  # 等待1秒再次检查
+                
+            logger.info("所有订单已完全成交")
+            return spot_status, contract_status
+            
+        except Exception as e:
+            logger.error(f"检查订单状态时出错: {str(e)}")
+            raise
 
     async def execute_unhedge_trade(self):
         """执行平仓交易"""
@@ -287,46 +315,47 @@ class UnhedgeTrader:
             trade_amount = self.spot_amount
             contract_amount = self.bitget.amount_to_precision(self.contract_symbol, trade_amount)
             
-            # 获取合约下单价格，使用卖1价格加上一个小额溢价以确保成交
-            contract_price = float(spread_data['bitget_ask'])
-            markup = 0.0001  # 0.01% 的价格溢价
-            limit_price = contract_price * (1 + markup)
-            limit_price = self.bitget.price_to_precision(self.contract_symbol, limit_price)
+            # 使用订单簿中的最优价格
+            spot_price = self.gateio.price_to_precision(self.symbol, spread_data['gateio_ask'])
+            contract_price = self.bitget.price_to_precision(self.contract_symbol, spread_data['bitget_bid'])
 
-            # 执行交易
+            # 执行限价单交易
             spot_order, contract_order = await asyncio.gather(
-                self.gateio.create_market_sell_order(
+                self.gateio.create_limit_sell_order(
                     symbol=self.symbol,
-                    amount=trade_amount
+                    amount=trade_amount,
+                    price=spot_price
                 ),
                 self.bitget.create_limit_buy_order(
                     symbol=self.contract_symbol,
                     amount=contract_amount,
-                    price=limit_price,
-                    params={
-                        "reduceOnly": "YES",  # 确保是平仓操作
-                        "force": "gtc"  # 无法立即成交的部分就撤销
-                    }
+                    price=contract_price,
+                    params={"reduceOnly": True}  # 确保是平仓操作
                 )
             )
 
             base_currency = self.symbol.split('/')[0]
-            logger.info(f"计划平仓数量: {trade_amount} {base_currency}")
-            logger.info(f"在Gate.io市价卖出 {trade_amount} {base_currency}")
-            logger.info(f"在Bitget市价平空单 {contract_amount} {base_currency}")
+            logger.info(f"下单信息:")
+            logger.info(f"Gate.io限价卖出: 数量={trade_amount} {base_currency}, 价格={spot_price}")
+            logger.info(f"Bitget限价平空: 数量={contract_amount} {base_currency}, 价格={contract_price}")
+
+            # 等待订单完全成交
+            final_spot_order, final_contract_order = await self.wait_for_orders_filled(spot_order, contract_order)
 
             # 获取实际成交结果
-            filled_amount = float(spot_order['filled'])
-            fees = spot_order.get('fees', [])
-            quote_fee = sum(float(fee['cost']) for fee in fees if fee['currency'] == 'USDT')
+            spot_filled_amount = float(final_spot_order['filled'])
+            spot_avg_price = float(final_spot_order['average'])
+            contract_filled_amount = float(final_contract_order['filled'])
+            contract_avg_price = float(final_contract_order['average'])
 
-            logger.info(f"Gate.io实际成交数量: {filled_amount} {base_currency}, "
-                        f"手续费: {quote_fee} USDT")
+            logger.info(f"交易完成:")
+            logger.info(f"Gate.io实际成交: 数量={spot_filled_amount} {base_currency}, 均价={spot_avg_price}")
+            logger.info(f"Bitget实际成交: 数量={contract_filled_amount} {base_currency}, 均价={contract_avg_price}")
 
             # 检查平仓后的持仓情况
             await self.check_positions()
 
-            return spot_order, contract_order
+            return final_spot_order, final_contract_order
 
         except Exception as e:
             logger.error(f"执行平仓交易时出错: {str(e)}")
