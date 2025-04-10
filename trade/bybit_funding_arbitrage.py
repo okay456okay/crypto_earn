@@ -97,22 +97,32 @@ class FundingArbitrageTrader:
             positions = await self.exchange.fetch_positions([self.contract_symbol])
             
             for position in positions:
-                if position['symbol'] == self.contract_symbol and float(position.get('contracts', 0)) > 0:
+                # 检查是否有持仓
+                if position['info']['symbol'] == self.contract_symbol and float(position.get('contracts', 0)) > 0:
                     self.position = position
-                    self.position_side = position['side']
+                    self.position_side = position['side']  # 已经是'short'或'long'
                     self.position_amount = abs(float(position['contracts']))
                     self.entry_price = float(position.get('entryPrice', 0))
-                    self.leverage = float(position.get('leverage', 20))  # 从持仓信息中获取杠杆倍数
+                    
+                    # 从info中获取杠杆倍数
+                    self.leverage = float(position['info'].get('leverage', 20))
                     
                     # 设置合约杠杆
                     await self.exchange.set_leverage(self.leverage, self.contract_symbol)
                     logger.info(f"[{self.symbol}] 设置合约杠杆倍数为: {self.leverage}倍")
                     
+                    # 记录更多持仓信息
+                    unrealized_pnl = float(position.get('unrealizedPnl', 0))
+                    mark_price = float(position.get('markPrice', 0))
+                    liquidation_price = float(position.get('liquidationPrice', 0))
+                    
                     logger.info(f"[{self.symbol}] 当前持仓: {self.position_side} {self.position_amount} 张"
-                              f" {self.contract_symbol}, 开仓均价: {self.entry_price}, 杠杆倍数: {self.leverage}倍")
+                              f" {self.contract_symbol}, 开仓均价: {self.entry_price}, 杠杆倍数: {self.leverage}倍"
+                              f", 未实现盈亏: {unrealized_pnl:.2f} USDT"
+                              f", 标记价格: {mark_price}, 强平价格: {liquidation_price}")
                     return True
 
-            # logger.warning("未检测到持仓")
+            # 没有持仓时清除所有信息
             self.position = None
             self.position_side = None
             self.position_amount = None
