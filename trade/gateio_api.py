@@ -99,7 +99,6 @@ def redeem_earn(token, amount, login_token=gateio_login_token):
 
 def get_earn_positions(login_token=gateio_login_token, limit=50, page=1):
     """
-
     :param login_token:
     :param limit:
     :param page:
@@ -129,14 +128,52 @@ def get_earn_positions(login_token=gateio_login_token, limit=50, page=1):
         print(f"get gateio earn positions failed, code:{r.status_code}, error: {r.text}")
     return positions
 
+def get_earn_interest(token, limit=24, page=1, login_token=gateio_login_token):
+    """
+    :param login_token:
+    :param limit: 1小时1个点，limit为多少表示多少个小时
+    :param page:
+    :return:
+    [
+    {'id': 2261796242, 'amount': '66.48493886', 'asset': 'B3', 'type': 3, 'lend_principal': '669873.439459', 'lend_rate_year': '86.95%', 'reinvest_type': '', 'time_at': 1744239760},
+    {'id': 2260963852, 'amount': '66.50512724', 'asset': 'B3', 'type': 3, 'lend_principal': '669806.901447', 'lend_rate_year': '86.98%', 'reinvest_type': '', 'time_at': 1744236167},
+    {'id': 2260387066, 'amount': '66.53801138', 'asset': 'B3', 'type': 3, 'lend_principal': '669733.380844', 'lend_rate_year': '87.04%', 'reinvest_type': '', 'time_at': 1744232597}
+    ]
+    """
+    interests = []
+    url = "https://www.gate.io/apiw/v2/uni-loan/earn/history"
+    params = {
+        'limit': limit,
+        'page': page,
+        "asset": token,
+        "type": 3,
+    }
+    cookies = {
+        'token_type': 'Bearer',
+        'token': login_token,
+    }
+    try:
+        r = requests.get(url, params=params, proxies=proxies, cookies=cookies)
+        if r.status_code == 200:
+            # logger.info(f"get gateio earn positions success, response: {r.text}")
+            interests = r.json().get('data')
+        else:
+            logger.error(f"get gateio earn positions failed, code:{r.status_code}, response: {r.text}")
+    except Exception as e:
+        print(f"get {token} gateio earn interests failed, code:{r.status_code}, error: {r.text}")
+    sleep(2)
+    return interests
+
+
 
 if __name__ == '__main__':
     # token = 'KAVA'
-    positions = get_earn_positions()
+    # positions = get_earn_positions()
     # print(positions)
-    for p in positions:
-        if float(p['curr_amount_usdt']) >= 1:
-            print(f"{p['asset']}: 持仓金额:{p['curr_amount_usdt']:.2f} USDT,数量: {p['curr_amount']}, 价格:{p['price']:.5f}")
+    # for p in positions:
+    #     if float(p['curr_amount_usdt']) >= 1:
+    #         print(f"{p['asset']}: 持仓金额:{p['curr_amount_usdt']:.2f} USDT,数量: {p['curr_amount']}, 价格:{p['price']:.5f}")
+    print(len(get_earn_interest('B3')))
     # print([i for i in positions if i["asset"] == token])
 
     # redeem_earn(token, 10)
