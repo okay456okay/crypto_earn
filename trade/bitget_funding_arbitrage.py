@@ -33,18 +33,17 @@ class FundingArbitrageTrader:
     实现在资金费率结算前平仓、结算后重新开仓的套利策略
     """
 
-    def __init__(self, symbol, funding_threshold=-0.0008, leverage=20):
+    def __init__(self, symbol, funding_threshold=-0.0008):
         """
         初始化基本属性
         
         Args:
             symbol (str): 交易对，如 'ETH/USDT'
             funding_threshold (float): 资金费率阈值，默认-0.08%
-            leverage (int): 合约杠杆倍数，默认20倍
         """
         self.symbol = symbol
         self.funding_threshold = funding_threshold
-        self.leverage = leverage
+        self.leverage = None  # 将在检查持仓时设置
 
         # 设置合约交易对
         base, quote = symbol.split('/')
@@ -75,15 +74,11 @@ class FundingArbitrageTrader:
         初始化交易设置和检查持仓状况
         """
         try:
-            # 设置合约杠杆
-            await self.exchange.set_leverage(self.leverage, self.contract_symbol)
-            logger.info(f"[{self.symbol}] 设置合约杠杆倍数为: {self.leverage}倍")
-
-            # # 检查当前持仓
-            # await self.check_position()
-            #
-            # if not self.position_amount or self.position_side != 'short':
-            #     raise ValueError("未检测到空单持仓，请确保已有空单持仓")
+            # 检查当前持仓
+            await self.check_position()
+            
+            if not self.position_amount or self.position_side != 'short':
+                raise ValueError("未检测到空单持仓，请确保已有空单持仓")
 
             logger.info(f"[{self.symbol}] 初始化完成: 交易对={self.contract_symbol}, "
                        f"资金费率阈值={self.funding_threshold*100}%, 杠杆={self.leverage}倍")
@@ -108,9 +103,14 @@ class FundingArbitrageTrader:
                     self.position_side = position['side']
                     self.position_amount = abs(float(position['contracts']))
                     self.entry_price = float(position.get('entryPrice', 0))
+                    self.leverage = float(position.get('leverage', 20))  # 从持仓信息中获取杠杆倍数
+                    
+                    # 设置合约杠杆
+                    await self.exchange.set_leverage(self.leverage, self.contract_symbol)
+                    logger.info(f"[{self.symbol}] 设置合约杠杆倍数为: {self.leverage}倍")
                     
                     logger.info(f"[{self.symbol}] 当前持仓: {self.position_side} {self.position_amount} 张"
-                              f" {self.contract_symbol}, 开仓均价: {self.entry_price}")
+                              f" {self.contract_symbol}, 开仓均价: {self.entry_price}, 杠杆倍数: {self.leverage}倍")
                     return True
 
             # logger.warning("未检测到持仓")
@@ -118,6 +118,7 @@ class FundingArbitrageTrader:
             self.position_side = None
             self.position_amount = None
             self.entry_price = None
+            self.leverage = None
             return False
 
         except Exception as e:
@@ -315,8 +316,6 @@ def parse_arguments():
                       help='交易对符号，例如 ETH/USDT')
     parser.add_argument('-t', '--threshold', type=float, default=-0.0008,
                       help='资金费率阈值，默认-0.08%%')
-    parser.add_argument('-l', '--leverage', type=int, default=20,
-                      help='合约杠杆倍数，默认20倍')
     return parser.parse_args()
 
 
@@ -328,8 +327,7 @@ async def main():
         # 创建交易器实例
         trader = FundingArbitrageTrader(
             symbol=args.symbol,
-            funding_threshold=args.threshold,
-            leverage=args.leverage
+            funding_threshold=args.threshold
         )
         
         # 初始化

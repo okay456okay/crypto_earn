@@ -331,12 +331,20 @@ def parse_arguments():
     parser.add_argument('-s', '--symbol', type=str, required=True, help='交易对符号，例如 ETH/USDT')
     parser.add_argument('-a', '--amount', type=float, required=True, help='卖出的现货数量')
     parser.add_argument('-p', '--min-spread', type=float, default=0.001, help='最小价差要求，默认0.001 (0.1%%)')
+    parser.add_argument('-d', '--debug', action='store_true', help='启用调试日志模式')
     return parser.parse_args()
 
 
 async def main():
     """异步主函数"""
     args = parse_arguments()
+    
+    # 设置日志级别
+    if args.debug:
+        logger.setLevel(logging.DEBUG)
+        logger.debug("已启用调试日志模式")
+    else:
+        logger.setLevel(logging.INFO)
 
     try:
         trader = UnhedgeTrader(
