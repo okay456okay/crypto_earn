@@ -24,6 +24,7 @@ def print_earn_info():
     total_24h_interest_usdt = 0  # 24小时收益(USDT)
     total_assets = 0
     earn_infos = {}
+    total_24h_apy = 0  # 用于计算24小时加权平均年化率
 
     # 打印每个持仓的详细信息
     print("\n【持仓详情】")
@@ -36,7 +37,8 @@ def print_earn_info():
             earn_infos[p['asset']] = earn_info
 
             # 计算汇总数据
-            total_usdt_value += float(p['curr_amount_usdt'])
+            curr_amount_usdt = float(p['curr_amount_usdt'])
+            total_usdt_value += curr_amount_usdt
             total_assets += 1
 
             # 计算24小时收益
@@ -53,6 +55,9 @@ def print_earn_info():
             else:
                 interest_24h_apy = 0
 
+            # 累加24小时年化率（用于计算加权平均）
+            total_24h_apy += interest_24h_apy * curr_amount_usdt
+
             # 准备额外奖励信息
             award_info = ""
             if p['is_open_award_pool'] == 1 and p['award_asset'] and float(p['ext_award_rate_year']) > 0:
@@ -63,7 +68,6 @@ def print_earn_info():
 
             # 格式化数值，价格保留6位小数，其他保留2位小数
             curr_amount = float(p['curr_amount'])
-            curr_amount_usdt = float(p['curr_amount_usdt'])
             price = float(p['price'])
             apy = float(earn_info['apy'])
             frozen_amount = float(p['frozen_amount'])
@@ -77,6 +81,7 @@ def print_earn_info():
     print(f"总资产数量: {total_assets} 种")
     print(f"总资产价值: {total_usdt_value:.2f} USDT")
     print(f"近24小时收益: {total_24h_interest_usdt:.2f} USDT")
+    print(f"近24小时加权平均年化率: {total_24h_apy/total_usdt_value:.2f}%")
 
     # 计算平均年化率
     if total_assets > 0:
@@ -86,7 +91,7 @@ def print_earn_info():
                 earn_info = earn_infos.get(p['asset'])
                 weight = float(p['curr_amount_usdt']) / total_usdt_value
                 total_apy += float(earn_info['apy']) * weight
-        print(f"加权平均年化率: {total_apy:.2f}%")
+        print(f"当前加权平均年化率: {total_apy:.2f}%")
 
     print("="*80)
 
