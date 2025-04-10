@@ -120,7 +120,7 @@ class UnhedgeTrader:
 
                 contract_position = 0
                 for position in self.bybit_position:
-                    if position['symbol'] == self.contract_symbol and position['side'] == 'short':
+                    if position['info']['symbol'] == self.contract_symbol and position['side'] == 'short':
                         contract_position = abs(float(position['contracts']))
 
                 if contract_position < self.spot_amount:
@@ -148,7 +148,7 @@ class UnhedgeTrader:
 
             contract_position = 0
             for position in self.bybit_position:
-                if position['symbol'] == self.contract_symbol and position['side'] == 'short':
+                if position['info']['symbol'] == self.contract_symbol and position['side'] == 'short':
                     contract_position = abs(float(position['contracts']))
                     logger.info(f"Bybit合约空单持仓: {contract_position} {base_currency}")
 
