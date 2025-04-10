@@ -302,7 +302,7 @@ class FundingArbitrageTrader:
 
                 # 等待300秒后继续下一轮检查
                 logger.info(f"[{self.symbol}] 等待300秒后开始下一轮检查")
-                await asyncio.sleep(300)
+                await asyncio.sleep(3400)
 
         except Exception as e:
             logger.error(f"[{self.symbol}] 执行资金费率套利时出错: {str(e)}")
