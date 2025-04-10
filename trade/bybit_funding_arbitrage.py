@@ -109,7 +109,7 @@ class FundingArbitrageTrader:
                     
                     # 设置合约杠杆
                     # await self.exchange.set_leverage(self.leverage, self.contract_symbol)
-                    logger.info(f"[{self.symbol}] 设置合约杠杆倍数为: {self.leverage}倍")
+                    # logger.info(f"[{self.symbol}] 设置合约杠杆倍数为: {self.leverage}倍")
                     
                     # 记录更多持仓信息
                     unrealized_pnl = float(position.get('unrealizedPnl', 0))
