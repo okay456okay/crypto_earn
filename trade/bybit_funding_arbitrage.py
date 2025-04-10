@@ -258,6 +258,7 @@ class FundingArbitrageTrader:
                 
                 # 3. 计算距离下次结算的时间
                 now = datetime.now().timestamp() * 1000
+                # next_funding_time = int(time.time()*1000) + 60 * 1000
                 time_to_funding = (next_funding_time - now) / 1000  # 转换为秒
 
                 # 如果距离结算时间超过30秒，等待到结算前30秒
