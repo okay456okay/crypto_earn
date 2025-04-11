@@ -471,7 +471,8 @@ class HedgeTrader:
             if response and 'result' in response and 'list' in response['result']:
                 for instrument in response['result']['list']:
                     if instrument['symbol'] == self.contract_symbol:
-                        max_leverage = int(instrument['leverageFilter']['maxLeverage'])
+                        # 先将字符串转换为float，再转换为int
+                        max_leverage = int(float(instrument['leverageFilter']['maxLeverage']))
                         logger.info(f"获取到{self.contract_symbol}最大杠杆倍数: {max_leverage}倍")
                         return max_leverage
             

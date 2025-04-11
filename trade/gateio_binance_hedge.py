@@ -98,9 +98,15 @@ class HedgeTrader:
             if response and 'symbols' in response:
                 for symbol_info in response['symbols']:
                     if symbol_info['symbol'] == self.contract_symbol:
-                        max_leverage = int(symbol_info['leverageBrackets'][0]['initialLeverage'])
-                        logger.info(f"获取到{self.contract_symbol}最大杠杆倍数: {max_leverage}倍")
-                        return max_leverage
+                        # 获取杠杆倍数信息
+                        leverage_info = await self.binance.fapiPrivateGetLeverageBracket({
+                            'symbol': self.contract_symbol
+                        })
+                        
+                        if leverage_info and 'brackets' in leverage_info[0]:
+                            max_leverage = int(leverage_info[0]['brackets'][0]['initialLeverage'])
+                            logger.info(f"获取到{self.contract_symbol}最大杠杆倍数: {max_leverage}倍")
+                            return max_leverage
             
             raise Exception(f"未能获取到{self.contract_symbol}的最大杠杆倍数")
             
