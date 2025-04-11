@@ -61,12 +61,12 @@ class BybitPositionFetcher:
             # 打印持仓信息
             print("\n=== Bybit合约持仓信息 ===")
             print(f"查询时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            print("-" * 140)
+            print("-" * 160)
 
             # 打印表头
-            header = f"{'交易对':<8} {'方向':<4} {'数量':<12} {'杠杆':<4} {'资金费率':<8} {'开仓价':<10} {'标记价':<10} {'未实现盈亏':<12} {'结算周期':<8} {'下次结算':<19}"
+            header = f"{'交易对':<8} {'方向':<4} {'数量':<12} {'杠杆':<4} {'资金费率':<8} {'开仓价':<10} {'标记价':<10} {'强平价':<10} {'未实现盈亏':<12} {'结算周期':<8} {'下次结算':<19}"
             print(header)
-            print("-" * 140)
+            print("-" * 160)
 
             total_unrealized_pnl = Decimal('0')
 
@@ -83,6 +83,7 @@ class BybitPositionFetcher:
                 leverage = position.get('leverage', 0)
                 entry_price = float(position.get('entryPrice', 0))
                 mark_price = float(position.get('markPrice', 0))
+                liquidation_price = float(position.get('liquidationPrice', 0))
                 unrealized_pnl = float(position.get('unrealizedPnl', 0))
 
                 # 获取资金费率信息
@@ -101,6 +102,7 @@ class BybitPositionFetcher:
                     f"{funding_rate:<12.4f}"
                     f"{entry_price:<13.6f} "
                     f"{mark_price:<14.6f} "
+                    f"{liquidation_price:<14.6f} "
                     f"{unrealized_pnl:<16.2f} "
                     f"{funding_interval:<6} "
                     f"{next_funding_time_str:<19}"
@@ -118,6 +120,7 @@ class BybitPositionFetcher:
                     'leverage': leverage,
                     'entryPrice': entry_price,
                     'markPrice': mark_price,
+                    'liquidationPrice': liquidation_price,
                     'unrealizedPnl': unrealized_pnl,
                     'fundingRate': funding_rate,
                     'fundingInterval': funding_interval,
@@ -125,12 +128,12 @@ class BybitPositionFetcher:
                 }
                 processed_positions.append(processed_position)
 
-            print("-" * 140)
+            print("-" * 160)
 
             # 打印汇总信息
             print("\n=== 持仓汇总信息 ===")
             print(f"总未实现盈亏: {float(total_unrealized_pnl):.2f} USDT")
-            print("=" * 140)
+            print("=" * 160)
             return processed_positions
 
         except Exception as e:
