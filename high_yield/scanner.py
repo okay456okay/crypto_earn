@@ -69,12 +69,12 @@ class CryptoYieldMonitor:
             bybit_rate = None
             logger.error(f"获取Bybit {token}的合约资金费率报错：: {str(e)}")
 
-        try:
-            gate_io_rate = self.exchange_api.get_gateio_futures_funding_rate(token)
-            logger.debug(f"{token} GateIO Perp info: {gate_io_rate}")
-        except Exception as e:
-            bybit_rate = None
-            logger.error(f"获取GateIO {token}的合约资金费率报错：: {str(e)}")
+        # try:
+        #     gate_io_rate = self.exchange_api.get_gateio_futures_funding_rate(token)
+        #     logger.debug(f"{token} GateIO Perp info: {gate_io_rate}")
+        # except Exception as e:
+        #     bybit_rate = None
+        #     logger.error(f"获取GateIO {token}的合约资金费率报错：: {str(e)}")
 
         try:
             okx_rate = self.exchange_api.get_okx_futures_funding_rate(token)
@@ -103,11 +103,11 @@ class CryptoYieldMonitor:
                                                                                                endTime=end)
             results.append(bybit_rate)
 
-        if gate_io_rate:
-            gate_io_rate['d7history'] = self.exchange_api.get_gateio_futures_funding_rate_history(token,
-                                                                                                  startTime=start,
-                                                                                                  endTime=end)
-            results.append(gate_io_rate)
+        # if gate_io_rate:
+        #     gate_io_rate['d7history'] = self.exchange_api.get_gateio_futures_funding_rate_history(token,
+        #                                                                                           startTime=start,
+        #                                                                                           endTime=end)
+        #     results.append(gate_io_rate)
 
         if okx_rate:
             okx_rate['d7history'] = self.exchange_api.get_okx_futures_funding_rate_history(token, startTime=start,
@@ -207,9 +207,9 @@ class CryptoYieldMonitor:
                 i['markPrice'] > 0.0001 and  # 币值大于某个值
                 i['volume_24h'] > volume_24h_threshold  # 合约交易额大于某个值
             ]
-            # illegible_funding_rate = [ i for i in futures_results if i['fundingRate'] < -0.1]
-            # if len(eligible_funding_rate) == 0 or len(illegible_funding_rate) > 0:
-            if len(eligible_funding_rate) == 0:
+            illegible_funding_rate = [ i for i in futures_results if i['fundingRate'] < -0.1]
+            # if len(eligible_funding_rate) == 0:
+            if len(eligible_funding_rate) == 0 or len(illegible_funding_rate) > 0:
                 continue
             apy_percentile = 0.0
             if product['apy_day']:
