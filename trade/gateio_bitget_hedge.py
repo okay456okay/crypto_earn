@@ -88,6 +88,25 @@ class HedgeTrader:
         异步初始化方法，执行需要网络请求的初始化操作
         """
         try:
+            # 获取市场信息以确定最大杠杆倍数
+            markets = await self.bitget.fetch_markets()
+            contract_market = next((m for m in markets if m['symbol'] == self.contract_symbol), None)
+            
+            if not contract_market:
+                raise Exception(f"未找到合约 {self.contract_symbol} 的市场信息")
+            
+            # 如果命令行参数没有指定杠杆倍数，则使用最大杠杆倍数
+            if self.leverage is None:
+                max_leverage = contract_market.get('limits', {}).get('leverage', {}).get('max', 20)
+                self.leverage = max_leverage
+                logger.info(f"使用合约最大杠杆倍数: {self.leverage}倍")
+            else:
+                # 检查指定的杠杆倍数是否超过最大限制
+                max_leverage = contract_market.get('limits', {}).get('leverage', {}).get('max', 20)
+                if self.leverage > max_leverage:
+                    logger.warning(f"指定的杠杆倍数 {self.leverage} 超过最大限制 {max_leverage}，将使用最大杠杆倍数")
+                    self.leverage = max_leverage
+
             # 设置Bitget合约参数
             await self.bitget.set_leverage(self.leverage, self.contract_symbol)
             logger.info(f"设置Bitget合约杠杆倍数为: {self.leverage}倍")
@@ -418,7 +437,7 @@ def parse_arguments():
     parser.add_argument('-s', '--symbol', type=str, required=True, help='交易对符号，例如 ETH/USDT')
     parser.add_argument('-a', '--amount', type=float, required=True, help='购买的现货数量')
     parser.add_argument('-p', '--min-spread', type=float, default=0.001, help='最小价差要求，默认0.001 (0.1%%)')
-    parser.add_argument('-l', '--leverage', type=int, default=20, help='合约杠杆倍数，默认20倍')
+    parser.add_argument('-l', '--leverage', type=int, help='合约杠杆倍数，如果不指定则使用该交易对支持的最大杠杆倍数')
     parser.add_argument('--test-earn', action='store_true', help='测试余币宝申购功能')
     parser.add_argument('-d', '--debug', action='store_true', help='启用调试日志')  # 添加调试参数
     return parser.parse_args()
@@ -464,7 +483,7 @@ async def main():
             symbol=args.symbol,
             spot_amount=args.amount,
             min_spread=args.min_spread,
-            leverage=args.leverage
+            leverage=args.leverage  # 如果没有指定，这里会是None
         )
         await trader.initialize()
 
