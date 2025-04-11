@@ -81,11 +81,50 @@ class HedgeTrader:
         self.ws_running = False
         self.price_updates = asyncio.Queue()
 
+    async def get_max_leverage(self):
+        """
+        获取Binance交易所支持的最大杠杆倍数
+        
+        Returns:
+            int: 最大杠杆倍数
+            
+        Raises:
+            Exception: 获取最大杠杆倍数失败时抛出异常
+        """
+        try:
+            # 获取交易对信息
+            response = await self.binance.fapiPublicGetExchangeInfo()
+            
+            if response and 'symbols' in response:
+                for symbol_info in response['symbols']:
+                    if symbol_info['symbol'] == self.contract_symbol:
+                        max_leverage = int(symbol_info['leverageBrackets'][0]['initialLeverage'])
+                        logger.info(f"获取到{self.contract_symbol}最大杠杆倍数: {max_leverage}倍")
+                        return max_leverage
+            
+            raise Exception(f"未能获取到{self.contract_symbol}的最大杠杆倍数")
+            
+        except Exception as e:
+            logger.error(f"获取最大杠杆倍数时出错: {str(e)}")
+            raise Exception(f"获取{self.contract_symbol}最大杠杆倍数失败: {str(e)}")
+
     async def initialize(self):
         """
         异步初始化方法，执行需要网络请求的初始化操作
         """
         try:
+            # 如果杠杆倍数未指定，获取最大杠杆倍数
+            if self.leverage is None:
+                max_leverage = await self.get_max_leverage()
+                self.leverage = max_leverage
+                logger.info(f"使用Binance支持的最大杠杆倍数: {self.leverage}倍")
+            else:
+                # 检查指定的杠杆倍数是否超过最大限制
+                max_leverage = await self.get_max_leverage()
+                if self.leverage > max_leverage:
+                    logger.warning(f"指定的杠杆倍数 {self.leverage} 超过最大限制 {max_leverage}，将使用最大杠杆倍数")
+                    self.leverage = max_leverage
+
             # 设置Binance合约参数
             await self.binance.fapiPrivatePostLeverage({
                 'symbol': self.contract_symbol,
@@ -425,7 +464,7 @@ def parse_arguments():
     parser.add_argument('-s', '--symbol', type=str, required=True, help='交易对符号，例如 ETH/USDT')
     parser.add_argument('-a', '--amount', type=float, required=True, help='购买的现货数量')
     parser.add_argument('-p', '--min-spread', type=float, default=0.001, help='最小价差要求，默认0.001 (0.1%%)')
-    parser.add_argument('-l', '--leverage', type=int, default=20, help='合约杠杆倍数，默认20倍')
+    parser.add_argument('-l', '--leverage', type=int, default=None, help='合约杠杆倍数，如果不指定则使用该交易对支持的最大杠杆倍数')
     parser.add_argument('--test-earn', action='store_true', help='测试余币宝申购功能')
     parser.add_argument('-t', '--test', action='store_true', help='测试模式，只打印交易信息，不实际下单')
     parser.add_argument('-d', '--debug', action='store_true', help='启用调试日志')

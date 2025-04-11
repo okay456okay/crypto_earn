@@ -116,6 +116,14 @@ class HedgeTrader:
             except Exception as e:
                 logger.warning(f"设置持仓模式失败（可能已经是单向持仓）: {str(e)}")
 
+            # 如果杠杆倍数未指定，获取最大杠杆倍数
+            if self.leverage is None:
+                max_leverage = await self.get_max_leverage()
+                self.leverage = max_leverage
+                params['buyLeverage'] = str(max_leverage)
+                params['sellLeverage'] = str(max_leverage)
+                logger.info(f"使用Bybit支持的最大杠杆倍数: {max_leverage}倍")
+
             # 设置杠杆
             try:
                 await self.bybit.privatePostV5PositionSetLeverage(params)
@@ -446,6 +454,34 @@ class HedgeTrader:
         except Exception as e:
             logger.error(f"获取Bybit合约持仓信息失败: {str(e)}")
 
+    async def get_max_leverage(self):
+        """
+        获取Bybit交易所支持的最大杠杆倍数
+        
+        Returns:
+            int: 最大杠杆倍数
+        """
+        try:
+            # 获取交易对信息
+            response = await self.bybit.publicGetV5MarketInstrumentsInfo({
+                'category': 'linear',
+                'symbol': self.contract_symbol
+            })
+            
+            if response and 'result' in response and 'list' in response['result']:
+                for instrument in response['result']['list']:
+                    if instrument['symbol'] == self.contract_symbol:
+                        max_leverage = int(instrument['leverageFilter']['maxLeverage'])
+                        logger.info(f"获取到{self.contract_symbol}最大杠杆倍数: {max_leverage}倍")
+                        return max_leverage
+            
+            logger.warning(f"未能获取到{self.contract_symbol}的最大杠杆倍数，使用默认值10倍")
+            return 10  # 如果获取失败，返回默认值10倍
+            
+        except Exception as e:
+            logger.error(f"获取最大杠杆倍数时出错: {str(e)}")
+            return 10  # 如果出错，返回默认值10倍
+
 
 def parse_arguments():
     """
@@ -455,9 +491,9 @@ def parse_arguments():
     parser.add_argument('-s', '--symbol', type=str, required=True, help='交易对符号，例如 ETH/USDT')
     parser.add_argument('-a', '--amount', type=float, required=True, help='购买的现货数量')
     parser.add_argument('-p', '--min-spread', type=float, default=0.001, help='最小价差要求，默认0.001 (0.1%%)')
-    parser.add_argument('-l', '--leverage', type=int, default=10, help='合约杠杆倍数，默认10倍')
+    parser.add_argument('-l', '--leverage', type=int, help='合约杠杆倍数，如果不指定则使用交易所支持的最大杠杆倍数')
     parser.add_argument('--test-earn', action='store_true', help='测试余币宝申购功能')
-    parser.add_argument('-d', '--debug', action='store_true', help='启用调试日志')  # 添加调试参数
+    parser.add_argument('-d', '--debug', action='store_true', help='启用调试日志')
     return parser.parse_args()
 
 
