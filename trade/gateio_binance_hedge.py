@@ -506,7 +506,9 @@ async def main():
     if args.debug:
         logger.setLevel(logging.DEBUG)
         logger.debug("已启用调试日志模式")
-    
+    else:
+        logger.setLevel(logging.INFO)
+
     # 如果是测试模式，只测试余币宝功能
     if args.test_earn:
         await test_earn_subscription()
