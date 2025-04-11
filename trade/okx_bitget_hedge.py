@@ -416,7 +416,7 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description='OKX现货与Bitget合约对冲交易')
     parser.add_argument('-s', '--symbol', type=str, required=True, help='交易对符号，例如 ETH/USDT')
     parser.add_argument('-a', '--amount', type=float, required=True, help='购买的现货数量')
-    parser.add_argument('-p', '--min-spread', type=float, default=0.001, help='最小价差要求，默认0.001 (0.1%%)')
+    parser.add_argument('-p', '--min-spread', type=float, default=-0.0001, help='最小价差要求，默认0.001 (0.1%%)')
     parser.add_argument('-l', '--leverage', type=int, default=20, help='合约杠杆倍数，默认20倍')
     parser.add_argument('--test-earn', action='store_true', help='测试活期理财申购功能')
     parser.add_argument('-d', '--debug', action='store_true', help='启用调试日志')
