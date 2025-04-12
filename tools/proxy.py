@@ -16,3 +16,5 @@ def get_proxy_ip(proxies=proxies):
         logger.info(f"获取代理IP失败: {e}")
         return "无法获取"
 
+if __name__ == '__main__':
+    get_proxy_ip()

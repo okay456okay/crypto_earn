@@ -70,35 +70,44 @@ class ContractInfoFetcher:
     async def fetch_binance_info(self) -> List[Dict]:
         """获取Binance合约信息"""
         try:
-            # 获取所有合约交易对
-            markets = await self.binance.load_markets()
-            futures_markets = {k: v for k, v in markets.items() if v['type'] == 'future'}
+            # 获取所有USDT永续合约交易对
+            response = await self.binance.fapiPublicGetExchangeInfo()
+            if not response or 'symbols' not in response:
+                logger.error("获取Binance合约信息失败")
+                return []
+
+            # 过滤出USDT永续合约
+            futures_markets = [
+                symbol_info for symbol_info in response['symbols']
+                if symbol_info['contractType'] == 'PERPETUAL' and 
+                symbol_info['quoteAsset'] == 'USDT' and
+                symbol_info['status'] == 'TRADING'
+            ]
 
             results = []
-            for symbol, market in futures_markets.items():
+            for market in futures_markets:
                 try:
-                    # 格式化交易对符号
-                    formatted_symbol = self._format_binance_symbol(symbol)
+                    symbol = market['symbol']
                     
                     # 获取杠杆信息
                     leverage_info = await self.binance.fapiPrivateGetLeverageBracket({
-                        'symbol': formatted_symbol
+                        'symbol': symbol
                     })
                     max_leverage = int(leverage_info[0]['brackets'][0]['initialLeverage'])
 
                     # 获取资金费率
-                    funding_rate = await self.binance.fapiPublicGetPremiumIndex({
-                        'symbol': formatted_symbol
+                    funding_info = await self.binance.fapiPublicGetPremiumIndex({
+                        'symbol': symbol
                     })
-                    funding_rate = float(funding_rate['lastFundingRate'])
-                    next_funding_time = funding_rate['nextFundingTime']
+                    funding_rate = float(funding_info['lastFundingRate'])
+                    next_funding_time = int(funding_info['nextFundingTime'])
 
                     # 获取24小时交易量
-                    ticker = await self.binance.fetch_ticker(formatted_symbol)
+                    ticker = await self.binance.fetch_ticker(symbol)
                     volume_24h = float(ticker.get('quoteVolume', 0))
 
                     # 获取订单簿
-                    orderbook = await self.binance.fetch_order_book(formatted_symbol)
+                    orderbook = await self.binance.fetch_order_book(symbol)
                     bid_price = float(orderbook['bids'][0][0])
                     bid_amount = float(orderbook['bids'][0][1])
                     ask_price = float(orderbook['asks'][0][0])
@@ -106,7 +115,7 @@ class ContractInfoFetcher:
 
                     results.append({
                         'exchange': 'Binance',
-                        'symbol': formatted_symbol,
+                        'symbol': symbol,
                         'max_leverage': max_leverage,
                         'funding_rate': funding_rate,
                         'next_funding_time': datetime.fromtimestamp(next_funding_time/1000).strftime('%Y-%m-%d %H:%M:%S'),
@@ -118,7 +127,7 @@ class ContractInfoFetcher:
                     })
 
                 except Exception as e:
-                    logger.error(f"获取Binance {symbol} 信息时出错: {str(e)}")
+                    logger.exception(f"获取Binance {symbol} 信息时出错: {str(e)}")
                     continue
 
             return results
@@ -145,13 +154,13 @@ class ContractInfoFetcher:
                     max_leverage = int(float(instrument_info['result']['list'][0]['leverageFilter']['maxLeverage']))
 
                     # 获取资金费率
-                    funding_rate = await self.bybit.publicGetV5MarketFundingHistory({
+                    funding_info = await self.bybit.publicGetV5MarketFundingHistory({
                         'category': 'linear',
                         'symbol': symbol,
                         'limit': 1
                     })
-                    funding_rate = float(funding_rate['result']['list'][0]['fundingRate'])
-                    next_funding_time = funding_rate['result']['list'][0]['fundingRateTimestamp']
+                    funding_rate = float(funding_info['result']['list'][0]['fundingRate'])
+                    next_funding_time = funding_info['result']['list'][0]['fundingRateTimestamp']
 
                     # 获取24小时交易量
                     ticker = await self.bybit.fetch_ticker(symbol)
