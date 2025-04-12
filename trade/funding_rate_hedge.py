@@ -58,6 +58,15 @@ class ContractInfoFetcher:
             }
         })
 
+    def _format_binance_symbol(self, symbol: str) -> str:
+        """格式化Binance合约交易对符号"""
+        # 移除USD后缀和日期后缀
+        if symbol.endswith('USD'):
+            symbol = symbol[:-3]
+        if ':' in symbol:
+            symbol = symbol.split(':')[0]
+        return symbol
+
     async def fetch_binance_info(self) -> List[Dict]:
         """获取Binance合约信息"""
         try:
@@ -68,25 +77,28 @@ class ContractInfoFetcher:
             results = []
             for symbol, market in futures_markets.items():
                 try:
+                    # 格式化交易对符号
+                    formatted_symbol = self._format_binance_symbol(symbol)
+                    
                     # 获取杠杆信息
                     leverage_info = await self.binance.fapiPrivateGetLeverageBracket({
-                        'symbol': symbol
+                        'symbol': formatted_symbol
                     })
                     max_leverage = int(leverage_info[0]['brackets'][0]['initialLeverage'])
 
                     # 获取资金费率
                     funding_rate = await self.binance.fapiPublicGetPremiumIndex({
-                        'symbol': symbol
+                        'symbol': formatted_symbol
                     })
                     funding_rate = float(funding_rate['lastFundingRate'])
                     next_funding_time = funding_rate['nextFundingTime']
 
                     # 获取24小时交易量
-                    ticker = await self.binance.fetch_ticker(symbol)
-                    volume_24h = float(ticker['quoteVolume'])
+                    ticker = await self.binance.fetch_ticker(formatted_symbol)
+                    volume_24h = float(ticker.get('quoteVolume', 0))
 
                     # 获取订单簿
-                    orderbook = await self.binance.fetch_order_book(symbol)
+                    orderbook = await self.binance.fetch_order_book(formatted_symbol)
                     bid_price = float(orderbook['bids'][0][0])
                     bid_amount = float(orderbook['bids'][0][1])
                     ask_price = float(orderbook['asks'][0][0])
@@ -94,7 +106,7 @@ class ContractInfoFetcher:
 
                     results.append({
                         'exchange': 'Binance',
-                        'symbol': symbol,
+                        'symbol': formatted_symbol,
                         'max_leverage': max_leverage,
                         'funding_rate': funding_rate,
                         'next_funding_time': datetime.fromtimestamp(next_funding_time/1000).strftime('%Y-%m-%d %H:%M:%S'),
@@ -143,7 +155,7 @@ class ContractInfoFetcher:
 
                     # 获取24小时交易量
                     ticker = await self.bybit.fetch_ticker(symbol)
-                    volume_24h = float(ticker['quoteVolume'])
+                    volume_24h = float(ticker.get('quoteVolume', 0))
 
                     # 获取订单簿
                     orderbook = await self.bybit.fetch_order_book(symbol)
@@ -186,6 +198,10 @@ class ContractInfoFetcher:
 
             # 合并所有数据
             all_info = binance_info + bybit_info
+
+            if not all_info:
+                logger.warning("未能获取到任何合约信息")
+                return pd.DataFrame()
 
             # 转换为DataFrame
             df = pd.DataFrame(all_info)
