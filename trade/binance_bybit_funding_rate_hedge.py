@@ -211,11 +211,40 @@ class FundingRateMonitor:
             logger.error(f"获取Bybit {symbol} 最大杠杆倍数时出错: {str(e)}")
             return 10  # 如果出错，返回默认值10倍
 
+    async def get_binance_order_book(self, symbol: str) -> Dict:
+        """获取Binance指定交易对的订单簿数据"""
+        try:
+            order_book = await self.binance.fetch_order_book(symbol, limit=1)
+            return {
+                'bid_price': float(order_book['bids'][0][0]),
+                'bid_size': float(order_book['bids'][0][1]),
+                'ask_price': float(order_book['asks'][0][0]),
+                'ask_size': float(order_book['asks'][0][1])
+            }
+        except Exception as e:
+            logger.error(f"获取Binance {symbol} 订单簿数据失败: {str(e)}")
+            return None
+
+    async def get_bybit_order_book(self, symbol: str) -> Dict:
+        """获取Bybit指定交易对的订单簿数据"""
+        try:
+            order_book = await self.bybit.fetch_order_book(symbol, limit=1)
+            return {
+                'bid_price': float(order_book['bids'][0][0]),
+                'bid_size': float(order_book['bids'][0][1]),
+                'ask_price': float(order_book['asks'][0][0]),
+                'ask_size': float(order_book['asks'][0][1])
+            }
+        except Exception as e:
+            logger.error(f"获取Bybit {symbol} 订单簿数据失败: {str(e)}")
+            return None
+
     async def find_arbitrage_opportunities(self, 
                                    binance_rates: Dict[str, Dict], 
                                    bybit_rates: Dict[str, Dict], 
-                                   min_spread: float = 0.01) -> List[Dict]:
-        """找出资金费率差超过阈值的交易对"""
+                                   min_spread: float = 0.01,
+                                   max_price_spread: float = 0.001) -> List[Dict]:
+        """找出资金费率差超过阈值且价格差满足条件的交易对"""
         logger.info("正在分析套利机会...")
         opportunities = []
         
@@ -248,22 +277,56 @@ class FundingRateMonitor:
                     # 取较小的杠杆倍数
                     max_leverage = min(binance_leverage, bybit_leverage)
                     
-                    opportunities.append({
-                        'symbol': symbol,
-                        'binance_rate': binance_rate,
-                        'bybit_rate': bybit_rate,
-                        'spread': spread,
-                        'binance_next_time': datetime.fromtimestamp(binance_rates[symbol]['next_funding_time']/1000),
-                        'bybit_next_time': datetime.fromtimestamp(bybit_rates[symbol]['next_funding_time']/1000),
-                        'max_leverage': max_leverage,
-                        'binance_leverage': binance_leverage,
-                        'bybit_leverage': bybit_leverage
-                    })
-                    logger.debug(f"发现套利机会: {symbol}, "
-                               f"Binance费率: {binance_rate*100:.4f}%, "
-                               f"Bybit费率: {bybit_rate*100:.4f}%, "
-                               f"价差: {spread*100:.4f}%, "
-                               f"最大可用杠杆: {max_leverage}倍")
+                    # 并发获取两个交易所的订单簿数据
+                    binance_order_book, bybit_order_book = await asyncio.gather(
+                        self.get_binance_order_book(symbol),
+                        self.get_bybit_order_book(symbol)
+                    )
+                    
+                    if binance_order_book and bybit_order_book:
+                        # 判断价格差条件
+                        if binance_rate < bybit_rate:
+                            # Binance费率低，在Binance做多，Bybit做空
+                            price_spread = (bybit_order_book['bid_price'] - binance_order_book['ask_price']) / binance_order_book['ask_price']
+                            if price_spread <= max_price_spread:
+                                opportunities.append({
+                                    'symbol': symbol,
+                                    'binance_rate': binance_rate,
+                                    'bybit_rate': bybit_rate,
+                                    'spread': spread,
+                                    'binance_next_time': datetime.fromtimestamp(binance_rates[symbol]['next_funding_time']/1000),
+                                    'bybit_next_time': datetime.fromtimestamp(bybit_rates[symbol]['next_funding_time']/1000),
+                                    'max_leverage': max_leverage,
+                                    'binance_leverage': binance_leverage,
+                                    'bybit_leverage': bybit_leverage,
+                                    'price_spread': price_spread,
+                                    'binance_ask_price': binance_order_book['ask_price'],
+                                    'binance_ask_size': binance_order_book['ask_size'],
+                                    'bybit_bid_price': bybit_order_book['bid_price'],
+                                    'bybit_bid_size': bybit_order_book['bid_size'],
+                                    'direction': 'long_binance_short_bybit'
+                                })
+                        else:
+                            # Bybit费率低，在Bybit做多，Binance做空
+                            price_spread = (binance_order_book['bid_price'] - bybit_order_book['ask_price']) / bybit_order_book['ask_price']
+                            if price_spread <= max_price_spread:
+                                opportunities.append({
+                                    'symbol': symbol,
+                                    'binance_rate': binance_rate,
+                                    'bybit_rate': bybit_rate,
+                                    'spread': spread,
+                                    'binance_next_time': datetime.fromtimestamp(binance_rates[symbol]['next_funding_time']/1000),
+                                    'bybit_next_time': datetime.fromtimestamp(bybit_rates[symbol]['next_funding_time']/1000),
+                                    'max_leverage': max_leverage,
+                                    'binance_leverage': binance_leverage,
+                                    'bybit_leverage': bybit_leverage,
+                                    'price_spread': price_spread,
+                                    'binance_bid_price': binance_order_book['bid_price'],
+                                    'binance_bid_size': binance_order_book['bid_size'],
+                                    'bybit_ask_price': bybit_order_book['ask_price'],
+                                    'bybit_ask_size': bybit_order_book['ask_size'],
+                                    'direction': 'long_bybit_short_binance'
+                                })
         
         logger.info(f"找到 {len(opportunities)} 个符合条件的套利机会")
         return opportunities
@@ -279,18 +342,31 @@ class FundingRateMonitor:
         logger.info("="*100)
         
         for opp in opportunities:
-            logger.info(f"交易对: {opp['symbol']} | "
-                       f"Binance费率: {opp['binance_rate']*100:.4f}% | "
-                       f"Bybit费率: {opp['bybit_rate']*100:.4f}% | "
-                       f"价差: {opp['spread']*100:.4f}% | "
-                       f"Binance结算: {opp['binance_next_time']} | "
-                       f"Bybit结算: {opp['bybit_next_time']} | "
-                       f"最大杠杆: {opp['max_leverage']}倍 (Binance:{opp['binance_leverage']}倍, Bybit:{opp['bybit_leverage']}倍)")
+            if opp['direction'] == 'long_binance_short_bybit':
+                logger.info(f"交易对: {opp['symbol']} | "
+                           f"Binance费率: {opp['binance_rate']*100:.4f}% | "
+                           f"Bybit费率: {opp['bybit_rate']*100:.4f}% | "
+                           f"费率差: {opp['spread']*100:.4f}% | "
+                           f"价格差: {opp['price_spread']*100:.4f}% | "
+                           f"Binance卖一: {opp['binance_ask_price']:.8f}({opp['binance_ask_size']:.4f}) | "
+                           f"Bybit买一: {opp['bybit_bid_price']:.8f}({opp['bybit_bid_size']:.4f}) | "
+                           f"最大杠杆: {opp['max_leverage']}倍 | "
+                           f"方向: Binance做多, Bybit做空")
+            else:
+                logger.info(f"交易对: {opp['symbol']} | "
+                           f"Binance费率: {opp['binance_rate']*100:.4f}% | "
+                           f"Bybit费率: {opp['bybit_rate']*100:.4f}% | "
+                           f"费率差: {opp['spread']*100:.4f}% | "
+                           f"价格差: {opp['price_spread']*100:.4f}% | "
+                           f"Binance买一: {opp['binance_bid_price']:.8f}({opp['binance_bid_size']:.4f}) | "
+                           f"Bybit卖一: {opp['bybit_ask_price']:.8f}({opp['bybit_ask_size']:.4f}) | "
+                           f"最大杠杆: {opp['max_leverage']}倍 | "
+                           f"方向: Bybit做多, Binance做空")
 
-    async def monitor(self, min_spread: float = 0.01):
+    async def monitor(self, min_spread: float = 0.01, max_price_spread: float = 0.001):
         """监控资金费率套利机会"""
         try:
-            logger.info(f"开始监控资金费率套利机会，最小价差要求: {min_spread*100:.2f}%")
+            logger.info(f"开始监控资金费率套利机会，最小费率差要求: {min_spread*100:.2f}%, 最大价格差要求: {max_price_spread*100:.2f}%")
             
             # 获取共同支持的交易对
             common_markets = await self.get_common_markets()
@@ -309,7 +385,8 @@ class FundingRateMonitor:
             opportunities = await self.find_arbitrage_opportunities(
                 binance_rates, 
                 bybit_rates, 
-                min_spread
+                min_spread,
+                max_price_spread
             )
             
             # 打印套利机会
@@ -332,6 +409,8 @@ def parse_arguments():
     parser.add_argument('-d', '--debug', action='store_true', help='启用调试日志')
     parser.add_argument('-s', '--min-spread', type=float, default=0.01, 
                        help='最小资金费率差要求，默认0.01 (1%%)')
+    parser.add_argument('-p', '--max-price-spread', type=float, default=0.001,
+                       help='最大价格差要求，默认0.001 (0.1%%)')
     return parser.parse_args()
 
 async def main():
@@ -349,7 +428,7 @@ async def main():
         
         logger.info("程序启动...")
         monitor = FundingRateMonitor()
-        await monitor.monitor(min_spread=args.min_spread)  # 使用命令行参数指定的最小价差
+        await monitor.monitor(min_spread=args.min_spread, max_price_spread=args.max_price_spread)
         
     except Exception as e:
         logger.error(f"程序执行出错: {str(e)}")
