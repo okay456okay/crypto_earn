@@ -129,7 +129,57 @@ class FundingRateMonitor:
             logger.error(f"获取Bybit资金费率失败: {str(e)}")
             return {}
 
-    def find_arbitrage_opportunities(self, 
+    async def get_binance_max_leverage(self, symbol: str) -> int:
+        """获取Binance指定交易对的最大杠杆倍数"""
+        try:
+            # 获取交易对信息
+            response = await self.binance.fapiPublicGetExchangeInfo()
+            
+            if response and 'symbols' in response:
+                for symbol_info in response['symbols']:
+                    if symbol_info['symbol'] == symbol:
+                        # 获取杠杆倍数信息
+                        leverage_info = await self.binance.fapiPrivateGetLeverageBracket({
+                            'symbol': symbol
+                        })
+                        
+                        if leverage_info and 'brackets' in leverage_info[0]:
+                            max_leverage = int(leverage_info[0]['brackets'][0]['initialLeverage'])
+                            logger.debug(f"获取到Binance {symbol} 最大杠杆倍数: {max_leverage}倍")
+                            return max_leverage
+            
+            logger.warning(f"未能获取到Binance {symbol} 的最大杠杆倍数，使用默认值10倍")
+            return 10  # 如果获取失败，返回默认值10倍
+            
+        except Exception as e:
+            logger.error(f"获取Binance {symbol} 最大杠杆倍数时出错: {str(e)}")
+            return 10  # 如果出错，返回默认值10倍
+
+    async def get_bybit_max_leverage(self, symbol: str) -> int:
+        """获取Bybit指定交易对的最大杠杆倍数"""
+        try:
+            # 获取交易对信息
+            response = await self.bybit.publicGetV5MarketInstrumentsInfo({
+                'category': 'linear',
+                'symbol': symbol
+            })
+            
+            if response and 'result' in response and 'list' in response['result']:
+                for instrument in response['result']['list']:
+                    if instrument['symbol'] == symbol:
+                        # 先将字符串转换为float，再转换为int
+                        max_leverage = int(float(instrument['leverageFilter']['maxLeverage']))
+                        logger.debug(f"获取到Bybit {symbol} 最大杠杆倍数: {max_leverage}倍")
+                        return max_leverage
+            
+            logger.warning(f"未能获取到Bybit {symbol} 的最大杠杆倍数，使用默认值10倍")
+            return 10  # 如果获取失败，返回默认值10倍
+            
+        except Exception as e:
+            logger.error(f"获取Bybit {symbol} 最大杠杆倍数时出错: {str(e)}")
+            return 10  # 如果出错，返回默认值10倍
+
+    async def find_arbitrage_opportunities(self, 
                                    binance_rates: Dict[str, Dict], 
                                    bybit_rates: Dict[str, Dict], 
                                    min_spread: float = 0.01) -> List[Dict]:
@@ -155,20 +205,33 @@ class FundingRateMonitor:
                 time_diff = abs(binance_rates[symbol]['next_funding_time'] - 
                               bybit_rates[symbol]['next_funding_time'])
                 
-                # 如果结算时间差在5分钟以内
-                if time_diff <= 300:  # 300秒 = 5分钟
+                # 如果结算时间差在1分钟以内
+                if time_diff <= 60:
+                    # 获取两个交易所的最大杠杆倍数
+                    binance_leverage, bybit_leverage = await asyncio.gather(
+                        self.get_binance_max_leverage(symbol),
+                        self.get_bybit_max_leverage(symbol)
+                    )
+                    
+                    # 取较小的杠杆倍数
+                    max_leverage = min(binance_leverage, bybit_leverage)
+                    
                     opportunities.append({
                         'symbol': symbol,
                         'binance_rate': binance_rate,
                         'bybit_rate': bybit_rate,
                         'spread': spread,
                         'binance_next_time': datetime.fromtimestamp(binance_rates[symbol]['next_funding_time']/1000),
-                        'bybit_next_time': datetime.fromtimestamp(bybit_rates[symbol]['next_funding_time']/1000)
+                        'bybit_next_time': datetime.fromtimestamp(bybit_rates[symbol]['next_funding_time']/1000),
+                        'max_leverage': max_leverage,
+                        'binance_leverage': binance_leverage,
+                        'bybit_leverage': bybit_leverage
                     })
                     logger.debug(f"发现套利机会: {symbol}, "
                                f"Binance费率: {binance_rate*100:.4f}%, "
                                f"Bybit费率: {bybit_rate*100:.4f}%, "
-                               f"价差: {spread*100:.4f}%")
+                               f"价差: {spread*100:.4f}%, "
+                               f"最大可用杠杆: {max_leverage}倍")
         
         logger.info(f"找到 {len(opportunities)} 个符合条件的套利机会")
         return opportunities
@@ -189,7 +252,8 @@ class FundingRateMonitor:
                        f"Bybit费率: {opp['bybit_rate']*100:.4f}% | "
                        f"价差: {opp['spread']*100:.4f}% | "
                        f"Binance结算: {opp['binance_next_time']} | "
-                       f"Bybit结算: {opp['bybit_next_time']}")
+                       f"Bybit结算: {opp['bybit_next_time']} | "
+                       f"最大杠杆: {opp['max_leverage']}倍 (Binance:{opp['binance_leverage']}倍, Bybit:{opp['bybit_leverage']}倍)")
 
     async def monitor(self, min_spread: float = 0.01):
         """监控资金费率套利机会"""
