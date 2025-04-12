@@ -101,6 +101,38 @@ class FundingRateMonitor:
             logger.error(f"获取Binance资金费率失败: {str(e)}")
             return {}
 
+    async def get_bybit_markets(self) -> List[str]:
+        """获取Bybit所有永续合约交易对"""
+        try:
+            logger.info("正在获取Bybit交易对信息...")
+            markets = await self.bybit.fetch_markets()
+            perpetual_markets = [m['id'] for m in markets if m['swap'] and m['linear']]
+            logger.info(f"Bybit共有 {len(perpetual_markets)} 个永续合约交易对")
+            logger.debug(f"Bybit永续合约交易对列表: {perpetual_markets}")
+            return perpetual_markets
+        except Exception as e:
+            logger.error(f"获取Bybit交易对信息失败: {str(e)}")
+            return []
+
+    async def get_common_markets(self) -> List[str]:
+        """获取两个交易所共同支持的交易对"""
+        try:
+            # 并发获取两个交易所的交易对
+            binance_markets, bybit_markets = await asyncio.gather(
+                self.get_binance_markets(),
+                self.get_bybit_markets()
+            )
+            
+            # 找出共同支持的交易对
+            common_markets = list(set(binance_markets) & set(bybit_markets))
+            logger.info(f"两个交易所共同支持 {len(common_markets)} 个交易对")
+            logger.debug(f"共同交易对列表: {common_markets}")
+            
+            return common_markets
+        except Exception as e:
+            logger.error(f"获取共同交易对失败: {str(e)}")
+            return []
+
     async def get_bybit_funding_rates(self, symbols: List[str]) -> Dict[str, Dict]:
         """获取Bybit指定交易对的资金费率信息"""
         try:
@@ -260,17 +292,17 @@ class FundingRateMonitor:
         try:
             logger.info(f"开始监控资金费率套利机会，最小价差要求: {min_spread*100:.2f}%")
             
-            # 获取Binance的交易对列表
-            binance_symbols = await self.get_binance_markets()
-            if not binance_symbols:
-                logger.error("未能获取到Binance交易对信息，程序退出")
+            # 获取共同支持的交易对
+            common_markets = await self.get_common_markets()
+            if not common_markets:
+                logger.error("未能获取到共同支持的交易对，程序退出")
                 return
             
-            # 获取两个交易所的资金费率
+            # 并发获取两个交易所的资金费率
             logger.info("正在获取交易所数据...")
             binance_rates, bybit_rates = await asyncio.gather(
-                self.get_binance_funding_rates(binance_symbols),
-                self.get_bybit_funding_rates(binance_symbols)
+                self.get_binance_funding_rates(common_markets),
+                self.get_bybit_funding_rates(common_markets)
             )
             
             # 找出套利机会
