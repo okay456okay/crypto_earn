@@ -214,7 +214,8 @@ class FundingRateMonitor:
     async def get_binance_order_book(self, symbol: str) -> Dict:
         """获取Binance指定交易对的订单簿数据"""
         try:
-            order_book = await self.binance.fetch_order_book(symbol, limit=1)
+            # Binance要求最小深度为5
+            order_book = await self.binance.fetch_order_book(symbol, limit=5)
             return {
                 'bid_price': float(order_book['bids'][0][0]),
                 'bid_size': float(order_book['bids'][0][1]),
@@ -228,7 +229,8 @@ class FundingRateMonitor:
     async def get_bybit_order_book(self, symbol: str) -> Dict:
         """获取Bybit指定交易对的订单簿数据"""
         try:
-            order_book = await self.bybit.fetch_order_book(symbol, limit=1)
+            # Bybit也使用相同的深度限制
+            order_book = await self.bybit.fetch_order_book(symbol, limit=5)
             return {
                 'bid_price': float(order_book['bids'][0][0]),
                 'bid_size': float(order_book['bids'][0][1]),
@@ -238,6 +240,48 @@ class FundingRateMonitor:
         except Exception as e:
             logger.error(f"获取Bybit {symbol} 订单簿数据失败: {str(e)}")
             return None
+
+    async def get_active_symbols(self) -> List[str]:
+        """获取两个交易所都支持且处于活跃状态的交易对"""
+        try:
+            # 获取两个交易所的交易对
+            binance_markets, bybit_markets = await asyncio.gather(
+                self.get_binance_markets(),
+                self.get_bybit_markets()
+            )
+            
+            # 获取Binance活跃的交易对
+            active_binance_symbols = []
+            for symbol in binance_markets:
+                try:
+                    # 尝试获取交易对信息，如果成功则说明交易对是活跃的
+                    await self.binance.fetch_ticker(symbol)
+                    active_binance_symbols.append(symbol)
+                except Exception as e:
+                    if "Symbol is closed" in str(e):
+                        logger.debug(f"Binance {symbol} 交易对已关闭")
+                    else:
+                        logger.warning(f"检查Binance {symbol} 状态时出错: {str(e)}")
+            
+            # 获取Bybit活跃的交易对
+            active_bybit_symbols = []
+            for symbol in bybit_markets:
+                try:
+                    # 尝试获取交易对信息，如果成功则说明交易对是活跃的
+                    await self.bybit.fetch_ticker(symbol)
+                    active_bybit_symbols.append(symbol)
+                except Exception as e:
+                    logger.warning(f"检查Bybit {symbol} 状态时出错: {str(e)}")
+            
+            # 找出共同支持的活跃交易对
+            common_symbols = list(set(active_binance_symbols) & set(active_bybit_symbols))
+            logger.info(f"两个交易所共同支持 {len(common_symbols)} 个活跃交易对")
+            logger.debug(f"共同活跃交易对列表: {common_symbols}")
+            
+            return common_symbols
+        except Exception as e:
+            logger.error(f"获取活跃交易对失败: {str(e)}")
+            return []
 
     async def find_arbitrage_opportunities(self, 
                                    binance_rates: Dict[str, Dict], 
@@ -368,10 +412,10 @@ class FundingRateMonitor:
         try:
             logger.info(f"开始监控资金费率套利机会，最小费率差要求: {min_spread*100:.2f}%, 最大价格差要求: {max_price_spread*100:.2f}%")
             
-            # 获取共同支持的交易对
-            common_markets = await self.get_common_markets()
+            # 获取共同支持的活跃交易对
+            common_markets = await self.get_active_symbols()
             if not common_markets:
-                logger.error("未能获取到共同支持的交易对，程序退出")
+                logger.error("未能获取到共同支持的活跃交易对，程序退出")
                 return
             
             # 并发获取两个交易所的资金费率
