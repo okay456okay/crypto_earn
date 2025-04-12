@@ -274,7 +274,7 @@ class FundingRateMonitor:
             )
             
             # 找出套利机会
-            opportunities = self.find_arbitrage_opportunities(
+            opportunities = await self.find_arbitrage_opportunities(
                 binance_rates, 
                 bybit_rates, 
                 min_spread
