@@ -207,9 +207,9 @@ class CryptoYieldMonitor:
                 i['markPrice'] > 0.0001 and  # 币值大于某个值
                 i['volume_24h'] > volume_24h_threshold  # 合约交易额大于某个值
             ]
-            illegible_funding_rate = [ i for i in futures_results if i['fundingRate'] < -0.1]
-            # if len(eligible_funding_rate) == 0:
-            if len(eligible_funding_rate) == 0 or len(illegible_funding_rate) > 0:
+            # illegible_funding_rate = [ i for i in futures_results if i['fundingRate'] < -0.1]
+            if len(eligible_funding_rate) == 0:
+            # if len(eligible_funding_rate) == 0 or len(illegible_funding_rate) > 0:
                 continue
             apy_percentile = 0.0
             if product['apy_day']:
