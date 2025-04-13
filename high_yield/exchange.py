@@ -6,6 +6,7 @@ import ccxt
 import requests
 import os
 import sys
+import argparse
 
 # 获取当前脚本的目录
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -932,7 +933,7 @@ class ExchangeAPI:
         """
         获取OKX合约资金费率
         """
-        exchange = 'OKX'
+        exchange_name = 'OKX'
         try:
             # 检查并获取交易量数据
             if not self.okx_futures_volumes:
@@ -954,7 +955,7 @@ class ExchangeAPI:
             fundingIntervalHours = int(
                 (funding_rate_info['nextFundingTimestamp'] - funding_rate_info['fundingTimestamp']) / 1000 / 60 / 60)
             return {
-                'exchange': exchange,
+                'exchange': exchange_name,
                 'fundingTime': next_funding_time,
                 'fundingRate': float(funding_rate) * 100,
                 'markPrice': float(current_price) * 100,
@@ -1019,24 +1020,24 @@ class ExchangeAPI:
         rates.append(self.get_gateio_futures_funding_rate(token))
         return rates
 
+    def print_funding_rate_info(self, token):
+        """
+        打印指定代币在各交易所的合约资金费率信息
+        :param token: 代币名称，如 'ETHUSDT'
+        """
+        print(f'{token}合约资金费率信息:')
+        print(f"{'交易所':<8}\t{'资金费率':<10}\t{'下次结算时间':<20}")
+        print("-" * 50)
+        for r in self.get_funding_rate(token):
+            if r:  # 只打印有效数据
+                funding_time = datetime.fromtimestamp(r['fundingTime']/1000).strftime('%Y-%m-%d %H:%M:%S')
+                print(f"{r['exchange']:<8}\t{r['fundingRate']:<10.4f}\t{funding_time}")
+
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='获取指定代币在各交易所的合约资金费率信息')
+    parser.add_argument('token', type=str, help='代币名称，例如：ETHUSDT, BTCUSDT')
+    args = parser.parse_args()
+    
     api = ExchangeAPI()
-    # api.get_binance_funding_info()
-    token = 'GLM'
-    # end = int(datetime.now().timestamp())
-    # start = end -  24*60*60
-    # product = api.get_gateio_flexible_product(token)
-    # for i in product['apy_day']:
-    #     print(f"{datetime.fromtimestamp(i['timestamp']/1000)} {i['apy']}")
-    print(api.get_funding_rate(token))
-    # print(api.get_binance_futures_funding_rate(token))
-    # print(api.get_bitget_futures_funding_rate(token))
-    # print(api.get_gateio_flexible_products())
-    # print(api.get_bitget_futures_funding_rate_history(token, startTime=start, endTime=end)[0])
-    # print(api.get_bybit_futures_funding_rate_history(token, startTime=start, endTime=end))
-    # print(api.get_okx_futures_funding_rate_history(token, startTime=start, endTime=end)[0])
-    # print(api.get_gateio_futures_funding_rate_history(token, startTime=start, endTime=end)[0])
-    # print(api.get_binance_flexible_products())
-    # print(api.get_gateio_flexible_products())
-    # print(api.get_bitget_flexible_products())
+    api.print_funding_rate_info(args.token)
