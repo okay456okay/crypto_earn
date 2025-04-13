@@ -15,7 +15,7 @@ if [ -z "$count" ]; then
 fi
 
 if [ -z "$price_diff" ]; then
-  price_diff=0.0001
+  price_diff=-0.0001
 fi
 
 script_dir=$(dirname $0)
