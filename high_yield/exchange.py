@@ -1023,13 +1023,13 @@ class ExchangeAPI:
 if __name__ == "__main__":
     api = ExchangeAPI()
     # api.get_binance_funding_info()
-    token = 'CLOUD'
+    token = 'GLM'
     # end = int(datetime.now().timestamp())
     # start = end -  24*60*60
-    product = api.get_gateio_flexible_product(token)
-    for i in product['apy_day']:
-        print(f"{datetime.fromtimestamp(i['timestamp']/1000)} {i['apy']}")
-    # print(api.get_funding_rate(token))
+    # product = api.get_gateio_flexible_product(token)
+    # for i in product['apy_day']:
+    #     print(f"{datetime.fromtimestamp(i['timestamp']/1000)} {i['apy']}")
+    print(api.get_funding_rate(token))
     # print(api.get_binance_futures_funding_rate(token))
     # print(api.get_bitget_futures_funding_rate(token))
     # print(api.get_gateio_flexible_products())
