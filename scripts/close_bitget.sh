@@ -18,5 +18,5 @@ let 'page=total/amount-1'
 
 script_dir=$(dirname $0)
 for i in $(seq 1 $page); do
-    ${script_dir}/../venv/bin/python $script_dir/../trade/gateio_bitget_unhedge.py -s $token/USDT -a $amount -p $price_diff ;
+    ${script_dir}/../venv/bin/python $script_dir/../trade/gateio_bitget_unhedge.py -s $token/USDT -a $amount -p $price_diff -d;
 done

@@ -20,5 +20,5 @@ fi
 
 script_dir=$(dirname $0)
 for i in $(seq 1 $count); do
-    ${script_dir}/../venv/bin/python $script_dir/../trade/gateio_bybit_hedge.py -s $token/USDT -a $amount -p $price_diff;
+    ${script_dir}/../venv/bin/python $script_dir/../trade/gateio_bybit_hedge.py -s $token/USDT -a $amount -p $price_diff -d;
 done
