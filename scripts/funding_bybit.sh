@@ -1,6 +1,6 @@
 #!/bin/bash
 
-if [ $# -eq 1 ]; then
+if [ $# -ne 1 ]; then
     echo "Usage: $(basename $0) token"
     exit 1
 fi
