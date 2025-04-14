@@ -181,7 +181,7 @@ class CryptoYieldMonitor:
         logger.info(f"筛选出{len(eligible_products)}个年化利率高于{stability_buy_apy_threshold}%的产品")
 
         if not eligible_products:
-            logger.info(f"未找到年化利率高于{stability_buy_apy_threshold}%且24小时交易额大于10000USDT的产品")
+            logger.info(f"未找到年化利率高于{stability_buy_apy_threshold}%且24小时交易额大于{volume_24h_threshold}USDT的产品")
             return
 
         # 检查每个高收益产品是否满足合约交易条件
@@ -201,8 +201,8 @@ class CryptoYieldMonitor:
             # 是否有预估收益率低于最低收率益的交易所（合约负费率太多了）
             eligible_funding_rate = [
                 i for i in futures_results if
-                self.get_estimate_apy(product['apy'], i['fundingRate'],
-                                      i['fundingIntervalHours']) >= stability_buy_apy_threshold and # 考虑资金费率后收益率超过基准值
+                # self.get_estimate_apy(product['apy'], i['fundingRate'],
+                #                       i['fundingIntervalHours']) >= stability_buy_apy_threshold and # 考虑资金费率后收益率超过基准值
                 # i['fundingRate'] > -0.02 and  # 资金费率大于某个值
                 i['markPrice'] > 0.0001 and  # 币值大于某个值
                 i['volume_24h'] > volume_24h_threshold  # 合约交易额大于某个值
