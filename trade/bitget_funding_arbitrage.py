@@ -258,6 +258,12 @@ class FundingArbitrageTrader:
                     logger.info(f"[{self.symbol}] 等待 {wait_time:.0f} 秒后检查资金费率")
                     await asyncio.sleep(wait_time)
 
+                # 4. 再次检查持仓状态
+                has_position = await self.check_position()
+                if not has_position:
+                    logger.info(f"[{self.symbol}] 没有检测到持仓，退出执行")
+                    return False
+
                 # 重新获取资金费率信息
                 funding_rate, _ = await self.get_funding_info()
 
