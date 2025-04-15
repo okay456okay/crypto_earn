@@ -15,6 +15,7 @@ import sys
 import os
 import asyncio
 import ccxt.pro as ccxtpro
+import requests
 from decimal import Decimal
 from datetime import datetime
 import subprocess
@@ -47,6 +48,47 @@ class BinancePositionFetcher:
             }
         })
         self.exchange_api = ExchangeAPI()
+        self.binance_funding_info = {}
+        self.binance_futures_volumes = {}
+
+    def get_binance_funding_info(self):
+        """获取币安合约资金费率周期数据"""
+        url = "https://www.binance.com/bapi/futures/v1/public/future/common/get-funding-info"
+        try:
+            response = requests.get(url, proxies=proxies)
+            if response.status_code == 200:
+                data = response.json()
+                for i in data.get('data', []):
+                    self.binance_funding_info[i['symbol']] = i
+        except Exception as e:
+            logger.error(f"binance get funding info failed, url: {url}, error: {str(e)}")
+
+    def get_binance_futures_funding_rate(self, token):
+        """获取币安合约资金费率"""
+        try:
+            url = f"https://fapi.binance.com/fapi/v1/premiumIndex?symbol={token}"
+            response = requests.get(url, proxies=proxies)
+            if response.status_code != 200 and response.text.find('Invalid symbol') == -1:
+                logger.debug(f"binance get {token} future failed, url: {url}, status: {response.status_code}, response: {response.text}")
+                return {}
+            
+            data = response.json()
+            if not self.binance_funding_info:
+                self.get_binance_funding_info()
+            
+            fundingIntervalHours = self.binance_funding_info.get(token, {}).get('fundingIntervalHours', 8)
+            fundingIntervalHoursText = f"{fundingIntervalHours}小时"
+            
+            return {
+                "fundingTime": data['nextFundingTime'],
+                "fundingRate": float(data["lastFundingRate"]) * 100,  # 转换为百分比
+                "markPrice": float(data["markPrice"]),
+                "fundingIntervalHours": fundingIntervalHours,
+                "fundingIntervalHoursText": fundingIntervalHoursText
+            }
+        except Exception as e:
+            logger.error(f"获取Binance {token}合约资金费率时出错: {str(e)}")
+            return {}
 
     def run_funding_script(self, token):
         """运行资金费率脚本"""
@@ -106,17 +148,11 @@ class BinancePositionFetcher:
                     unrealized_pnl = float(position.get('unrealizedPnl', 0))
 
                     # 获取资金费率信息
-                    try:
-                        funding_info = self.exchange_api.get_binance_futures_funding_rate(symbol.replace('USDT', ''))
-                        funding_rate = float(funding_info.get('fundingRate', 0))
-                        funding_interval = funding_info.get('fundingIntervalHoursText', '无')
-                        next_funding_time = funding_info.get('fundingTime', 0)
-                        next_funding_time_str = datetime.fromtimestamp(next_funding_time/1000).strftime('%Y-%m-%d %H:%M:%S') if next_funding_time else '无'
-                    except Exception as e:
-                        logger.error(f"获取资金费率信息失败: {symbol}, 错误: {str(e)}")
-                        funding_rate = 0.0
-                        funding_interval = '无'
-                        next_funding_time_str = '无'
+                    funding_info = self.get_binance_futures_funding_rate(symbol)
+                    funding_rate = funding_info.get('fundingRate', 0.0)
+                    funding_interval = funding_info.get('fundingIntervalHoursText', '无')
+                    next_funding_time = funding_info.get('fundingTime', 0)
+                    next_funding_time_str = datetime.fromtimestamp(next_funding_time/1000).strftime('%Y-%m-%d %H:%M:%S') if next_funding_time else '无'
 
                     # 检查资金费率是否为负
                     if funding_rate < 0:
