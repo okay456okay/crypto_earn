@@ -90,16 +90,16 @@ class BinancePositionFetcher:
                     if float(position.get('contracts', 0)) == 0:
                         continue
 
-                    # 安全获取symbol
-                    symbol = position.get('info', {}).get('symbol')
+                    # 从info中获取symbol
+                    symbol = position.get('info', {}).get('symbol', '')
                     if not symbol:
                         logger.warning(f"跳过无效的持仓数据: {position}")
                         continue
 
-                    # 安全获取其他字段
+                    # 获取其他字段
                     side = position.get('side', 'unknown')
                     contracts = float(position.get('contracts', 0))
-                    leverage = position.get('leverage', 0)
+                    leverage = position.get('leverage', 0) or position.get('info', {}).get('leverage', 0)
                     entry_price = float(position.get('entryPrice', 0))
                     mark_price = float(position.get('markPrice', 0))
                     liquidation_price = float(position.get('liquidationPrice', 0))
@@ -107,27 +107,27 @@ class BinancePositionFetcher:
 
                     # 获取资金费率信息
                     try:
-                        funding_info = self.exchange_api.get_binance_futures_funding_rate(symbol.replace('/USDT', 'USDT'))
-                        funding_rate = funding_info.get('fundingRate', 0)
+                        funding_info = self.exchange_api.get_binance_futures_funding_rate(symbol.replace('USDT', ''))
+                        funding_rate = float(funding_info.get('fundingRate', 0))
                         funding_interval = funding_info.get('fundingIntervalHoursText', '无')
                         next_funding_time = funding_info.get('fundingTime', 0)
                         next_funding_time_str = datetime.fromtimestamp(next_funding_time/1000).strftime('%Y-%m-%d %H:%M:%S') if next_funding_time else '无'
                     except Exception as e:
                         logger.error(f"获取资金费率信息失败: {symbol}, 错误: {str(e)}")
-                        funding_rate = 0
+                        funding_rate = 0.0
                         funding_interval = '无'
                         next_funding_time_str = '无'
 
                     # 检查资金费率是否为负
                     if funding_rate < 0:
-                        token = symbol.replace('/USDT', '')
+                        token = symbol.replace('USDT', '')
                         self.run_funding_script(token)
 
                     # 格式化输出一行
                     position_line = (
-                        f"{symbol.replace('/USDT', ''):<12} "
+                        f"{symbol.replace('USDT', ''):<12} "
                         f"{'多' if side == 'long' else '空':<4} "
-                        f"{contracts:<14.2f} "
+                        f"{abs(contracts):<14.2f} "
                         f"{leverage:<6} "
                         f"{funding_rate:<12.4f}"
                         f"{entry_price:<13.6f} "
@@ -160,6 +160,7 @@ class BinancePositionFetcher:
 
                 except Exception as e:
                     logger.error(f"处理持仓数据时出错: {str(e)}")
+                    logger.error(f"问题持仓数据: {position}")
                     continue
 
             print("-" * 160)
