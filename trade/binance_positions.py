@@ -85,65 +85,82 @@ class BinancePositionFetcher:
             # 处理持仓数据
             processed_positions = []
             for position in positions:
-                if float(position.get('contracts', 0)) == 0:
+                try:
+                    # 跳过空仓位
+                    if float(position.get('contracts', 0)) == 0:
+                        continue
+
+                    # 安全获取symbol
+                    symbol = position.get('info', {}).get('symbol')
+                    if not symbol:
+                        logger.warning(f"跳过无效的持仓数据: {position}")
+                        continue
+
+                    # 安全获取其他字段
+                    side = position.get('side', 'unknown')
+                    contracts = float(position.get('contracts', 0))
+                    leverage = position.get('leverage', 0)
+                    entry_price = float(position.get('entryPrice', 0))
+                    mark_price = float(position.get('markPrice', 0))
+                    liquidation_price = float(position.get('liquidationPrice', 0))
+                    unrealized_pnl = float(position.get('unrealizedPnl', 0))
+
+                    # 获取资金费率信息
+                    try:
+                        funding_info = self.exchange_api.get_binance_futures_funding_rate(symbol.replace('/USDT', 'USDT'))
+                        funding_rate = funding_info.get('fundingRate', 0)
+                        funding_interval = funding_info.get('fundingIntervalHoursText', '无')
+                        next_funding_time = funding_info.get('fundingTime', 0)
+                        next_funding_time_str = datetime.fromtimestamp(next_funding_time/1000).strftime('%Y-%m-%d %H:%M:%S') if next_funding_time else '无'
+                    except Exception as e:
+                        logger.error(f"获取资金费率信息失败: {symbol}, 错误: {str(e)}")
+                        funding_rate = 0
+                        funding_interval = '无'
+                        next_funding_time_str = '无'
+
+                    # 检查资金费率是否为负
+                    if funding_rate < 0:
+                        token = symbol.replace('/USDT', '')
+                        self.run_funding_script(token)
+
+                    # 格式化输出一行
+                    position_line = (
+                        f"{symbol.replace('/USDT', ''):<12} "
+                        f"{'多' if side == 'long' else '空':<4} "
+                        f"{contracts:<14.2f} "
+                        f"{leverage:<6} "
+                        f"{funding_rate:<12.4f}"
+                        f"{entry_price:<13.6f} "
+                        f"{mark_price:<14.6f} "
+                        f"{liquidation_price:<14.6f} "
+                        f"{unrealized_pnl:<16.2f} "
+                        f"{funding_interval:<6} "
+                        f"{next_funding_time_str:<19}"
+                    )
+                    print(position_line)
+
+                    # 累加统计数据
+                    total_unrealized_pnl += Decimal(str(unrealized_pnl))
+
+                    # 构建处理后的持仓数据
+                    processed_position = {
+                        'symbol': symbol,
+                        'side': side,
+                        'contracts': contracts,
+                        'leverage': leverage,
+                        'entryPrice': entry_price,
+                        'markPrice': mark_price,
+                        'liquidationPrice': liquidation_price,
+                        'unrealizedPnl': unrealized_pnl,
+                        'fundingRate': funding_rate,
+                        'fundingInterval': funding_interval,
+                        'nextFundingTime': next_funding_time
+                    }
+                    processed_positions.append(processed_position)
+
+                except Exception as e:
+                    logger.error(f"处理持仓数据时出错: {str(e)}")
                     continue
-
-                # 处理symbol格式
-                symbol = position['info']['symbol']
-                side = position['side']
-                contracts = float(position.get('contracts', 0))
-                leverage = position.get('leverage', 0)
-                entry_price = float(position.get('entryPrice', 0))
-                mark_price = float(position.get('markPrice', 0))
-                liquidation_price = float(position.get('liquidationPrice', 0))
-                unrealized_pnl = float(position.get('unrealizedPnl', 0))
-
-                # 获取资金费率信息
-                funding_info = self.exchange_api.get_binance_futures_funding_rate(symbol.replace('/USDT', 'USDT'))
-                funding_rate = funding_info.get('fundingRate', 0)
-                funding_interval = funding_info.get('fundingIntervalHoursText', '无')
-                next_funding_time = funding_info.get('fundingTime', 0)
-                next_funding_time_str = datetime.fromtimestamp(next_funding_time/1000).strftime('%Y-%m-%d %H:%M:%S') if next_funding_time else '无'
-
-                # 检查资金费率是否为负
-                if funding_rate < 0:
-                    token = symbol.replace('/USDT', '')
-                    self.run_funding_script(token)
-
-                # 格式化输出一行
-                position_line = (
-                    f"{symbol.replace('/USDT', ''):<12} "
-                    f"{'多' if side == 'long' else '空':<4} "
-                    f"{contracts:<14.2f} "
-                    f"{leverage:<6} "
-                    f"{funding_rate:<12.4f}"
-                    f"{entry_price:<13.6f} "
-                    f"{mark_price:<14.6f} "
-                    f"{liquidation_price:<14.6f} "
-                    f"{unrealized_pnl:<16.2f} "
-                    f"{funding_interval:<6} "
-                    f"{next_funding_time_str:<19}"
-                )
-                print(position_line)
-
-                # 累加统计数据
-                total_unrealized_pnl += Decimal(str(unrealized_pnl))
-
-                # 构建处理后的持仓数据
-                processed_position = {
-                    'symbol': symbol,
-                    'side': side,
-                    'contracts': contracts,
-                    'leverage': leverage,
-                    'entryPrice': entry_price,
-                    'markPrice': mark_price,
-                    'liquidationPrice': liquidation_price,
-                    'unrealizedPnl': unrealized_pnl,
-                    'fundingRate': funding_rate,
-                    'fundingInterval': funding_interval,
-                    'nextFundingTime': next_funding_time
-                }
-                processed_positions.append(processed_position)
 
             print("-" * 160)
 
