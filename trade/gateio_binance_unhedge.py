@@ -301,7 +301,7 @@ class UnhedgeTrader:
                     symbol=self.contract_symbol,
                     amount=contract_amount,
                     params={
-                        "reduceOnly": True,  # 确保是平仓操作
+                        # "reduceOnly": True,  # 确保是平仓操作
                         "positionSide": "SHORT"  # 指定是平空单
                     }
                 )
