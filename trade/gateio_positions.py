@@ -28,7 +28,7 @@ def print_earn_info():
 
     # 打印每个持仓的详细信息
     print("\n【持仓详情】")
-    print(f"{'币种':<6} {'持仓数量':<10} {'持仓价值(USDT)':<13} {'当前价格':<8} {'当前年化率':<7} {'24h收益':<8} {'24h年化率':<10} {'冻结数量':<10} {'可用数量':<12} {'额外奖励':<16} {'自动投资':<10}")
+    print(f"{'币种':<6} {'持仓数量':<10} {'持仓价值(USDT)':<13} {'当前价格':<8} {'当前年化率':<7} {'24h收益':<8} {'24h年化率':<10} {'冻结数量':<10} {'可用数量':<12}")
     print("-"*150)
 
     for p in positions:
@@ -58,14 +58,6 @@ def print_earn_info():
             # 累加24小时年化率（用于计算加权平均）
             total_24h_apy += interest_24h_apy * curr_amount_usdt
 
-            # 准备额外奖励信息
-            award_info = ""
-            if p['is_open_award_pool'] == 1 and p['award_asset'] and float(p['ext_award_rate_year']) > 0:
-                award_info = f"{p['award_asset']} {float(p['ext_award_rate_year']):.2f}% (上限:{p['ext_award_limit']})"
-
-            # 准备自动投资状态
-            auto_invest = "已开启" if p['auto_invest_status'] == 1 else "已关闭"
-
             # 格式化数值，价格保留6位小数，其他保留2位小数
             curr_amount = float(p['curr_amount'])
             price = float(p['price'])
@@ -74,7 +66,7 @@ def print_earn_info():
             margin_available = float(p['margin_available_amount'])
 
             # 打印详细信息
-            print(f"{p['asset']:<8} {curr_amount:<15.2f} {curr_amount_usdt:<15.2f} {price:<13.6f} {apy:<12.2f} {interest_24h:<12.2f} {interest_24h_apy:<12.2f} {frozen_amount:<14.2f} {margin_available:<12.2f} {award_info:<24} {auto_invest:<10}")
+            print(f"{p['asset']:<8} {curr_amount:<15.2f} {curr_amount_usdt:<15.2f} {price:<13.6f} {apy:<12.2f} {interest_24h:<12.2f} {interest_24h_apy:<12.2f} {frozen_amount:<14.2f} {margin_available:<12.2f}")
 
     # 打印汇总信息
     print("\n【汇总信息】")
