@@ -426,7 +426,7 @@ class HedgeTrader:
 
             if positions:
                 for position in positions:
-                    if position['symbol'] == self.contract_symbol:
+                    if position['info']['symbol'] == self.contract_symbol:
                         contract_position = abs(float(position.get('contracts', 0)))
                         position_side = position.get('side', 'unknown')
                         position_leverage = position.get('leverage', self.leverage)
