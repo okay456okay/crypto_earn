@@ -5,6 +5,12 @@ cd $(dirname $0)
 
 source ../venv/bin/activate
 
-python ../trade/gateio_positions.py
-python ../trade/bitget_positions.py
-python ../trade/bybit_positions.py
+suffix=$(date +%Y%m%d%H%M)
+
+python ../trade/gateio_positions.py >reports/gateio_positions_$suffix.log
+python ../trade/bitget_positions.py >reports/bitget_positions_$suffix.log
+python ../trade/bybit_positions.py >reports/bybit_positions_$suffix.log
+
+cd reports
+cat gateio_positions_$suffix.log bitget_positions_$suffix.log bybit_positions_$suffix.log >positions
+cat positions
