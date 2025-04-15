@@ -17,6 +17,7 @@ import asyncio
 import ccxt.pro as ccxtpro
 from decimal import Decimal
 from datetime import datetime
+import subprocess
 
 # 添加项目根目录到系统路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -43,6 +44,17 @@ class BitgetPositionFetcher:
             'ws_socks_proxy':  proxies.get('https', None),
         })
         self.exchange_api = ExchangeAPI()
+
+    def run_funding_script(self, token):
+        """运行资金费率脚本"""
+        try:
+            script_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'scripts', 'funding_bitget.sh')
+            subprocess.run([script_path, token], check=True)
+            logger.info(f"已执行资金费率脚本: {token}")
+        except subprocess.CalledProcessError as e:
+            logger.error(f"执行资金费率脚本失败: {token}, 错误: {str(e)}")
+        except Exception as e:
+            logger.error(f"执行资金费率脚本时发生错误: {token}, 错误: {str(e)}")
 
     async def fetch_positions(self):
         """获取所有合约持仓信息"""
@@ -95,6 +107,11 @@ class BitgetPositionFetcher:
                     funding_interval = funding_info.get('fundingIntervalHours', 0)
                     next_funding_time = funding_info.get('fundingTime', 0)
                     next_funding_datetime = datetime.fromtimestamp(next_funding_time/1000).strftime('%Y-%m-%d %H:%M') if next_funding_time else 'N/A'
+                    
+                    # 检查资金费率是否为负
+                    if funding_rate_value < 0:
+                        token = symbol.replace('/USDT:USDT', '')
+                        self.run_funding_script(token)
                 except Exception as e:
                     logger.warning(f"获取{symbol}资金费率失败: {str(e)}")
                     funding_rate_value = 0.0
