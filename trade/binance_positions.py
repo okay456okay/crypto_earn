@@ -115,7 +115,7 @@ class BinancePositionFetcher:
                     f"{symbol.replace('/USDT', ''):<12} "
                     f"{'多' if side == 'long' else '空':<4} "
                     f"{contracts:<14.2f} "
-                    f"{int(leverage):<6} "
+                    f"{leverage:<6} "
                     f"{funding_rate:<12.4f}"
                     f"{entry_price:<13.6f} "
                     f"{mark_price:<14.6f} "
