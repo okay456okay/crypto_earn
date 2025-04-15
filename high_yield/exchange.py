@@ -670,7 +670,7 @@ class ExchangeAPI:
             url = f"https://fapi.binance.com/fapi/v1/premiumIndex?symbol={token}"
             response = requests.get(url, proxies=proxies)
             if response.status_code != 200 and response.text.find('Invalid symbol') == -1:
-                logger.debug(f"binance get future failed, url: {url}, status: {response.status_code}, response: {response.text}")
+                logger.debug(f"binance get {token} future failed, url: {url}, status: {response.status_code}, response: {response.text}")
             data = response.json()
             if not self.binance_funding_info:
                 self.get_binance_funding_info()
@@ -756,7 +756,7 @@ class ExchangeAPI:
             history = [{'symbol': token, 'fundingTime': int(i['fundingTime']), 'fundingRate': float(i['fundingRate'])}
                        for i in history if startTime <= int(i['fundingTime']) <= endTime]
         except Exception as e:
-            logger.error(f"get get_bitget_future_funding_rate_history failed, code: {str(e)}")
+            logger.error(f"{token} get_bitget_future_funding_rate_history failed, code: {str(e)}")
         return history
 
     def get_bitget_futures_funding_price(self, token):
@@ -797,7 +797,7 @@ class ExchangeAPI:
             response = self.session.get(url, params=params)
             if response.status_code != 200:
                 logger.error(
-                    f"bitget get future funding time failed, url: {url}, status: {response.status_code}, response: {response.text}")
+                    f"bitget get {token} future funding time failed, url: {url}, status: {response.status_code}, response: {response.text}")
             data = response.json()
             if data["code"] == "00000" and "data" in data:
                 return data["data"][0]["nextFundingTime"], int(data["data"][0]['ratePeriod'])
@@ -824,7 +824,7 @@ class ExchangeAPI:
             response = self.session.get(url, params=params)
             if response.status_code != 200:
                 if response.text.find('does not exis') == -1:
-                    logger.error(f"bitget get future, url: {url}, status: {response.status_code}, response: {response.text}")
+                    logger.error(f"bitget get {token} future, url: {url}, status: {response.status_code}, response: {response.text}")
             data = response.json()
 
             if data["code"] == "00000" and "data" in data:
