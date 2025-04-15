@@ -28,14 +28,21 @@ from trade.gateio_api import subscrible_earn as gateio_subscrible_earn, redeem_e
 
 
 class HedgeTrader:
-    def __init__(self, symbol, spot_amount=None, min_spread=0.001, leverage=10, test_mode=False):
+    def __init__(self, symbol, spot_amount=None, min_spread=0.001, leverage=None, test_mode=False):
         """
         初始化基本属性
+        
+        Args:
+            symbol (str): 交易对符号，例如 'ETH/USDT'
+            spot_amount (float, optional): 现货交易数量
+            min_spread (float, optional): 最小价差要求，默认0.001 (0.1%)
+            leverage (int, optional): 合约杠杆倍数，如果不指定则使用该交易对支持的最大杠杆倍数
+            test_mode (bool, optional): 是否为测试模式，默认False
         """
         self.symbol = symbol
         self.spot_amount = spot_amount
         self.min_spread = min_spread
-        self.leverage = leverage
+        self.leverage = leverage  # 初始化为None，将在initialize中设置
         self.test_mode = test_mode
         
         # 设置合约交易对
@@ -121,8 +128,7 @@ class HedgeTrader:
         try:
             # 如果杠杆倍数未指定，获取最大杠杆倍数
             if self.leverage is None:
-                max_leverage = await self.get_max_leverage()
-                self.leverage = max_leverage
+                self.leverage = await self.get_max_leverage()
                 logger.info(f"使用Binance支持的最大杠杆倍数: {self.leverage}倍")
             else:
                 # 检查指定的杠杆倍数是否超过最大限制
@@ -130,6 +136,8 @@ class HedgeTrader:
                 if self.leverage > max_leverage:
                     logger.warning(f"指定的杠杆倍数 {self.leverage} 超过最大限制 {max_leverage}，将使用最大杠杆倍数")
                     self.leverage = max_leverage
+                else:
+                    logger.info(f"使用指定的杠杆倍数: {self.leverage}倍")
 
             # 设置Binance合约参数
             await self.binance.fapiPrivatePostLeverage({
