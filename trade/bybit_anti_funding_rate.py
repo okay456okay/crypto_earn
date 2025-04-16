@@ -7,7 +7,7 @@ Bybit资金费率扫描器
 此脚本实现以下功能：
 1. 获取Bybit所有合约交易对
 2. 筛选资金费率大于1.0%或小于-1.0%的交易对
-3. 筛选24小时交易量大于100万的交易对
+3. 筛选24小时交易量大于200万的交易对
 4. 输出符合条件的交易对信息
 """
 
@@ -85,7 +85,7 @@ class BybitScanner:
                     continue
 
                 # 检查是否满足条件
-                if (abs(funding_rate) >= 1.0 and volume >= 1000000):
+                if (abs(funding_rate) >= 1.0 and volume >= 2000000):
                     results.append({
                         'symbol': symbol,
                         'funding_rate': funding_rate,
