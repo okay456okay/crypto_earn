@@ -107,14 +107,19 @@ class BybitScanner:
     async def get_max_leverage(self, symbol):
         """获取交易对支持的最大杠杆倍数"""
         try:
+            # 处理交易对格式
+            base, quote = symbol.split('/')
+            contract_symbol = f"{base}{quote}"  # 例如: AERGOUSDT
+            
             response = await self.exchange.publicGetV5MarketInstrumentsInfo({
                 'category': 'linear',
-                'symbol': symbol.replace('/', '')
+                'symbol': contract_symbol
             })
             
             if response and 'result' in response and 'list' in response['result']:
                 for instrument in response['result']['list']:
-                    if instrument['symbol'] == symbol.replace('/', ''):
+                    if instrument['symbol'] == contract_symbol:
+                        # 先将字符串转换为float，再转换为int
                         max_leverage = int(float(instrument['leverageFilter']['maxLeverage']))
                         logger.info(f"获取到{symbol}最大杠杆倍数: {max_leverage}倍")
                         return max_leverage
@@ -129,9 +134,13 @@ class BybitScanner:
     async def set_leverage(self, symbol, leverage):
         """设置杠杆倍数"""
         try:
+            # 处理交易对格式
+            base, quote = symbol.split('/')
+            contract_symbol = f"{base}{quote}"  # 例如: AERGOUSDT
+            
             params = {
                 'category': 'linear',
-                'symbol': symbol.replace('/', ''),
+                'symbol': contract_symbol,
                 'buyLeverage': str(leverage),
                 'sellLeverage': str(leverage)
             }

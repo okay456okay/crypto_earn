@@ -8,4 +8,5 @@ PyMySQL==1.1.1
 xmltodict==0.14.2
 Flask==3.1.0
 numpy==2.2.4
+ntplib==0.4.0
 ccxtpro==1.0.1
