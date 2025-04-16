@@ -295,15 +295,17 @@ class BybitScanner:
             wait_seconds = (next_funding_time - now).total_seconds()
             
             if wait_seconds > 180:  # 如果还有超过3分钟
-                logger.info(f"距离结算时间还有 {wait_seconds:.1f} 秒，等待中...")
+                logger.info(f"距离结算时间还有 {wait_seconds:.3f} 秒 ({wait_seconds*1000:.1f}毫秒)，等待中...")
                 await asyncio.sleep(wait_seconds - 180)  # 提前3分钟同步时间
                 await self.sync_time()  # 同步时间
                 await asyncio.sleep(180)  # 等待最后3分钟
             elif wait_seconds > 0:
-                logger.info(f"距离结算时间还有 {wait_seconds:.1f} 秒，等待中...")
-                await asyncio.sleep(wait_seconds)
+                logger.info(f"距离结算时间还有 {wait_seconds:.3f} 秒 ({wait_seconds*1000:.1f}毫秒)，等待中...")
+                # 使用更精确的等待时间
+                wait_ms = int(wait_seconds * 1000)  # 转换为毫秒
+                await asyncio.sleep(wait_ms / 1000)  # 使用毫秒级等待
             else:
-                logger.warning(f"已经过了结算时间 {abs(wait_seconds):.1f} 秒，跳过本次交易")
+                logger.warning(f"已经过了结算时间 {abs(wait_seconds):.3f} 秒 ({abs(wait_seconds)*1000:.1f}毫秒)，跳过本次交易")
                 return None, None
             
             # 开空单
