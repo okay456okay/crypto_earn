@@ -310,14 +310,18 @@ class BybitScanner:
             
             # 开空单
             logger.info(f"在结算时间开空单: {position_size} {symbol}")
+            open_time = time.time()  # 记录开仓时间
             sell_order = await self.create_market_sell_order(
                 symbol=contract_symbol,  # 使用合约交易对格式
                 amount=position_size
             )
             logger.debug(f"执行交易 - 开空单结果: {sell_order}")
             
-            # 等待3秒
-            await asyncio.sleep(3)
+            # 计算需要等待的时间，确保在开仓后3秒准时平仓
+            elapsed_time = time.time() - open_time
+            wait_time = max(0, 3 - elapsed_time)  # 确保至少等待到3秒
+            logger.info(f"开仓耗时 {elapsed_time:.3f} 秒，等待 {wait_time:.3f} 秒后平仓")
+            await asyncio.sleep(wait_time)
             
             # 平空单
             logger.info(f"平空单: {position_size} {symbol}")
