@@ -192,8 +192,10 @@ class BybitScanner:
     async def execute_trade(self, opportunity):
         """执行交易"""
         try:
-            symbol = opportunity['symbol']
-            contract_symbol = symbol.replace('/', '')  # 转换为合约格式
+            symbol = opportunity['symbol']  # 例如: AERGO/USDT:USDT
+            # 处理交易对格式
+            base, quote = symbol.split('/')
+            contract_symbol = f"{base}{quote}"  # 例如: AERGOUSDT
             
             # 计算交易金额
             volume_per_second = opportunity['volume_24h'] / (24 * 60 * 60)
@@ -233,14 +235,20 @@ class BybitScanner:
             
             # 开空单
             logger.info(f"在结算时间开空单: {position_size} {symbol}")
-            sell_order = await self.create_market_sell_order(symbol, position_size)
+            sell_order = await self.create_market_sell_order(
+                symbol=contract_symbol,  # 使用合约交易对格式
+                amount=position_size
+            )
             
             # 等待3秒
             await asyncio.sleep(3)
             
             # 平空单
             logger.info(f"平空单: {position_size} {symbol}")
-            buy_order = await self.create_market_buy_order(symbol, position_size)
+            buy_order = await self.create_market_buy_order(
+                symbol=contract_symbol,  # 使用合约交易对格式
+                amount=position_size
+            )
             
             return sell_order, buy_order
             
