@@ -214,6 +214,7 @@ class BybitScanner:
             symbol = opportunity['symbol']  # 例如: AERGO/USDT:USDT
             # 处理交易对格式
             base, quote = symbol.split('/')
+            quote = quote.split(':')[0]  # 去掉:USDT后缀
             contract_symbol = f"{base}{quote}"  # 例如: AERGOUSDT
             
             logger.debug(f"执行交易 - 原始交易对: {symbol}")
