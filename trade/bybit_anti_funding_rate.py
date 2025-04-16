@@ -9,6 +9,7 @@ Bybit资金费率扫描器
 2. 筛选资金费率小于-1.0%的交易对
 3. 筛选24小时交易量大于200万的交易对
 4. 输出符合条件的交易对信息，包括下次结算时间
+5. 找出结算时间最近且资金费率最小的交易对
 """
 
 import sys
@@ -92,6 +93,22 @@ class BybitScanner:
             logger.error(f"扫描市场时出错: {str(e)}")
             return []
 
+    def find_best_opportunity(self, results):
+        """找出结算时间最近且资金费率最小的交易对"""
+        if not results:
+            return None
+
+        # 将时间字符串转换为datetime对象
+        for result in results:
+            result['next_funding_datetime'] = datetime.fromisoformat(
+                result['next_funding_time'].replace('Z', '+00:00')
+            )
+
+        # 按资金费率升序排序，然后按结算时间升序排序
+        sorted_results = sorted(results, key=lambda x: (x['funding_rate'], x['next_funding_datetime']))
+        
+        return sorted_results[0] if sorted_results else None
+
     async def close(self):
         """关闭交易所连接"""
         await self.exchange.close()
@@ -118,12 +135,29 @@ def print_results(results):
         ))
 
 
+def print_best_opportunity(best_opportunity):
+    """打印最佳交易机会"""
+    if not best_opportunity:
+        return
+
+    logger.info("\n=== 最佳交易机会 ===")
+    logger.info("交易对: {}".format(best_opportunity['symbol']))
+    logger.info("资金费率: {:.4f}%".format(best_opportunity['funding_rate']))
+    logger.info("下次结算时间: {}".format(best_opportunity['next_funding_time']))
+    logger.info("24小时交易量: {:.2f} USDT".format(best_opportunity['volume_24h']))
+
+
 async def main():
     """主函数"""
     scanner = BybitScanner()
     try:
         results = await scanner.scan_markets()
         print_results(results)
+        
+        # 找出最佳交易机会
+        best_opportunity = scanner.find_best_opportunity(results)
+        print_best_opportunity(best_opportunity)
+        
     except Exception as e:
         logger.error(f"程序执行出错: {str(e)}")
     finally:
