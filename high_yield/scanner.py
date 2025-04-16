@@ -172,7 +172,7 @@ class CryptoYieldMonitor:
         :param leverage_ratio:
         :return:
         """
-        return 1 * leverage_ratio / (leverage_ratio + 1) * (apy + fundingRate * (24 / fundingIntervalHours) * 365)
+        return 1 * leverage_ratio / (leverage_ratio + 1) * (apy + fundingRate * (24 / fundingIntervalHours) / fundingIntervalHours * 365)
 
     def product_filter(self, all_products):
         # 筛选年化利率高于阈值的产品
