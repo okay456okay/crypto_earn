@@ -10,15 +10,19 @@ Bybit资金费率扫描器
 3. 筛选24小时交易量大于200万的交易对
 4. 输出符合条件的交易对信息，包括下次结算时间
 5. 找出结算时间最近且资金费率最小的交易对
+6. 在结算时间准点开空单，3秒后平仓
 """
 
 import sys
 import os
 import asyncio
 import ccxt.async_support as ccxt
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 import logging
+import time
+import ntplib
+from pytz import timezone, utc
 
 # 添加项目根目录到系统路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -38,6 +42,42 @@ class BybitScanner:
             },
             'proxies': proxies,
         })
+        self.time_offset = 0  # 本地时间与服务器时间的偏移量（秒）
+
+    async def sync_time(self):
+        """同步服务器时间"""
+        try:
+            # 获取Bybit服务器时间
+            server_time = await self.exchange.fetch_time()
+            local_time = int(time.time() * 1000)  # 本地时间（毫秒）
+            self.time_offset = (server_time - local_time) / 1000  # 转换为秒
+            
+            logger.info(f"时间同步完成 - 服务器时间: {datetime.fromtimestamp(server_time/1000, tz=utc)}, "
+                       f"本地时间: {datetime.fromtimestamp(local_time/1000, tz=utc)}, "
+                       f"时间偏移: {self.time_offset:.3f}秒")
+            
+            # 如果时间偏移超过1秒，使用NTP进行二次同步
+            if abs(self.time_offset) > 1:
+                try:
+                    ntp_client = ntplib.NTPClient()
+                    response = ntp_client.request('pool.ntp.org')
+                    ntp_time = response.tx_time
+                    local_time = time.time()
+                    self.time_offset = ntp_time - local_time
+                    
+                    logger.info(f"NTP时间同步完成 - NTP时间: {datetime.fromtimestamp(ntp_time, tz=utc)}, "
+                               f"本地时间: {datetime.fromtimestamp(local_time, tz=utc)}, "
+                               f"时间偏移: {self.time_offset:.3f}秒")
+                except Exception as e:
+                    logger.warning(f"NTP时间同步失败: {str(e)}")
+            
+        except Exception as e:
+            logger.error(f"时间同步失败: {str(e)}")
+            raise
+
+    def get_current_time(self):
+        """获取当前时间（考虑时间偏移）"""
+        return time.time() + self.time_offset
 
     async def get_all_symbols(self):
         """获取所有合约交易对"""
@@ -63,6 +103,141 @@ class BybitScanner:
         except Exception as e:
             logger.error(f"获取{symbol}资金费率失败: {str(e)}")
             return None
+
+    async def get_max_leverage(self, symbol):
+        """获取交易对支持的最大杠杆倍数"""
+        try:
+            response = await self.exchange.publicGetV5MarketInstrumentsInfo({
+                'category': 'linear',
+                'symbol': symbol.replace('/', '')
+            })
+            
+            if response and 'result' in response and 'list' in response['result']:
+                for instrument in response['result']['list']:
+                    if instrument['symbol'] == symbol.replace('/', ''):
+                        max_leverage = int(float(instrument['leverageFilter']['maxLeverage']))
+                        logger.info(f"获取到{symbol}最大杠杆倍数: {max_leverage}倍")
+                        return max_leverage
+            
+            logger.warning(f"未能获取到{symbol}的最大杠杆倍数，使用默认值10倍")
+            return 10  # 如果获取失败，返回默认值10倍
+            
+        except Exception as e:
+            logger.error(f"获取最大杠杆倍数时出错: {str(e)}")
+            return 10  # 如果出错，返回默认值10倍
+
+    async def set_leverage(self, symbol, leverage):
+        """设置杠杆倍数"""
+        try:
+            params = {
+                'category': 'linear',
+                'symbol': symbol.replace('/', ''),
+                'buyLeverage': str(leverage),
+                'sellLeverage': str(leverage)
+            }
+            await self.exchange.privatePostV5PositionSetLeverage(params)
+            logger.info(f"设置{symbol}杠杆倍数为: {leverage}倍")
+        except Exception as e:
+            if "leverage not modified" in str(e).lower():
+                logger.info(f"杠杆倍数已经是 {leverage}倍，无需修改")
+            else:
+                logger.error(f"设置杠杆倍数失败: {str(e)}")
+                raise
+
+    async def create_market_sell_order(self, symbol, amount):
+        """创建市价空单"""
+        try:
+            order = await self.exchange.create_market_sell_order(
+                symbol=symbol,
+                amount=amount,
+                params={
+                    "category": "linear",
+                    "positionIdx": 0,  # 单向持仓
+                    "reduceOnly": False
+                }
+            )
+            logger.info(f"创建空单成功: {order}")
+            return order
+        except Exception as e:
+            logger.error(f"创建空单失败: {str(e)}")
+            raise
+
+    async def create_market_buy_order(self, symbol, amount):
+        """创建市价平仓单"""
+        try:
+            order = await self.exchange.create_market_buy_order(
+                symbol=symbol,
+                amount=amount,
+                params={
+                    "category": "linear",
+                    "positionIdx": 0,  # 单向持仓
+                    "reduceOnly": True  # 确保是平仓操作
+                }
+            )
+            logger.info(f"创建平仓单成功: {order}")
+            return order
+        except Exception as e:
+            logger.error(f"创建平仓单失败: {str(e)}")
+            raise
+
+    async def execute_trade(self, opportunity):
+        """执行交易"""
+        try:
+            symbol = opportunity['symbol']
+            contract_symbol = symbol.replace('/', '')  # 转换为合约格式
+            
+            # 计算交易金额
+            volume_per_second = opportunity['volume_24h'] / (24 * 60 * 60)
+            trade_amount = volume_per_second * 2  # 每秒交易额的2倍
+            
+            # 获取最大杠杆倍数
+            max_leverage = await self.get_max_leverage(symbol)
+            
+            # 设置杠杆
+            await self.set_leverage(symbol, max_leverage)
+            
+            # 计算开仓数量
+            ticker = await self.exchange.fetch_ticker(symbol)
+            current_price = ticker['last']
+            position_size = trade_amount / current_price
+            
+            # 等待到结算时间
+            next_funding_time = datetime.fromisoformat(
+                opportunity['next_funding_time'].replace('Z', '+00:00')
+            )
+            
+            # 计算等待时间（考虑时间偏移）
+            now = datetime.fromtimestamp(self.get_current_time(), tz=utc)
+            wait_seconds = (next_funding_time - now).total_seconds()
+            
+            if wait_seconds > 180:  # 如果还有超过3分钟
+                logger.info(f"距离结算时间还有 {wait_seconds:.1f} 秒，等待中...")
+                await asyncio.sleep(wait_seconds - 180)  # 提前3分钟同步时间
+                await self.sync_time()  # 同步时间
+                await asyncio.sleep(180)  # 等待最后3分钟
+            elif wait_seconds > 0:
+                logger.info(f"距离结算时间还有 {wait_seconds:.1f} 秒，等待中...")
+                await asyncio.sleep(wait_seconds)
+            else:
+                logger.warning(f"已经过了结算时间 {abs(wait_seconds):.1f} 秒，跳过本次交易")
+                return None, None
+            
+            # 开空单
+            logger.info(f"在结算时间开空单: {position_size} {symbol}")
+            sell_order = await self.create_market_sell_order(symbol, position_size)
+            
+            # 等待3秒
+            await asyncio.sleep(3)
+            
+            # 平空单
+            logger.info(f"平空单: {position_size} {symbol}")
+            buy_order = await self.create_market_buy_order(symbol, position_size)
+            
+            return sell_order, buy_order
+            
+        except Exception as e:
+            logger.error(f"执行交易时出错: {str(e)}")
+            raise
 
     async def scan_markets(self):
         """扫描所有市场"""
@@ -151,12 +326,20 @@ async def main():
     """主函数"""
     scanner = BybitScanner()
     try:
+        # 扫描市场
         results = await scanner.scan_markets()
         print_results(results)
         
         # 找出最佳交易机会
         best_opportunity = scanner.find_best_opportunity(results)
         print_best_opportunity(best_opportunity)
+        
+        if best_opportunity:
+            # 执行交易
+            sell_order, buy_order = await scanner.execute_trade(best_opportunity)
+            logger.info("交易执行完成!")
+            logger.info(f"开仓订单: {sell_order}")
+            logger.info(f"平仓订单: {buy_order}")
         
     except Exception as e:
         logger.error(f"程序执行出错: {str(e)}")
