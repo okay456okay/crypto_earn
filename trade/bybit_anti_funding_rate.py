@@ -111,13 +111,23 @@ class BybitScanner:
             base, quote = symbol.split('/')
             contract_symbol = f"{base}{quote}"  # 例如: AERGOUSDT
             
-            response = await self.exchange.publicGetV5MarketInstrumentsInfo({
+            logger.debug(f"获取最大杠杆倍数 - 原始交易对: {symbol}")
+            logger.debug(f"获取最大杠杆倍数 - 基础币: {base}")
+            logger.debug(f"获取最大杠杆倍数 - 计价币: {quote}")
+            logger.debug(f"获取最大杠杆倍数 - 合约交易对: {contract_symbol}")
+            
+            params = {
                 'category': 'linear',
                 'symbol': contract_symbol
-            })
+            }
+            logger.debug(f"获取最大杠杆倍数 - API参数: {params}")
+            
+            response = await self.exchange.publicGetV5MarketInstrumentsInfo(params)
+            logger.debug(f"获取最大杠杆倍数 - API响应: {response}")
             
             if response and 'result' in response and 'list' in response['result']:
                 for instrument in response['result']['list']:
+                    logger.debug(f"获取最大杠杆倍数 - 检查交易对: {instrument['symbol']}")
                     if instrument['symbol'] == contract_symbol:
                         # 先将字符串转换为float，再转换为int
                         max_leverage = int(float(instrument['leverageFilter']['maxLeverage']))
@@ -138,13 +148,22 @@ class BybitScanner:
             base, quote = symbol.split('/')
             contract_symbol = f"{base}{quote}"  # 例如: AERGOUSDT
             
+            logger.debug(f"设置杠杆倍数 - 原始交易对: {symbol}")
+            logger.debug(f"设置杠杆倍数 - 基础币: {base}")
+            logger.debug(f"设置杠杆倍数 - 计价币: {quote}")
+            logger.debug(f"设置杠杆倍数 - 合约交易对: {contract_symbol}")
+            
             params = {
                 'category': 'linear',
                 'symbol': contract_symbol,
                 'buyLeverage': str(leverage),
                 'sellLeverage': str(leverage)
             }
-            await self.exchange.privatePostV5PositionSetLeverage(params)
+            logger.debug(f"设置杠杆倍数 - API参数: {params}")
+            
+            response = await self.exchange.privatePostV5PositionSetLeverage(params)
+            logger.debug(f"设置杠杆倍数 - API响应: {response}")
+            
             logger.info(f"设置{symbol}杠杆倍数为: {leverage}倍")
         except Exception as e:
             if "leverage not modified" in str(e).lower():
@@ -197,20 +216,31 @@ class BybitScanner:
             base, quote = symbol.split('/')
             contract_symbol = f"{base}{quote}"  # 例如: AERGOUSDT
             
+            logger.debug(f"执行交易 - 原始交易对: {symbol}")
+            logger.debug(f"执行交易 - 基础币: {base}")
+            logger.debug(f"执行交易 - 计价币: {quote}")
+            logger.debug(f"执行交易 - 合约交易对: {contract_symbol}")
+            
             # 计算交易金额
             volume_per_second = opportunity['volume_24h'] / (24 * 60 * 60)
             trade_amount = volume_per_second * 2  # 每秒交易额的2倍
+            logger.debug(f"执行交易 - 每秒交易量: {volume_per_second:.2f} USDT")
+            logger.debug(f"执行交易 - 计划交易量: {trade_amount:.2f} USDT")
             
             # 获取最大杠杆倍数
             max_leverage = await self.get_max_leverage(symbol)
+            logger.debug(f"执行交易 - 最大杠杆倍数: {max_leverage}倍")
             
             # 设置杠杆
             await self.set_leverage(symbol, max_leverage)
             
             # 计算开仓数量
             ticker = await self.exchange.fetch_ticker(symbol)
+            logger.debug(f"执行交易 - 获取行情: {ticker}")
             current_price = ticker['last']
             position_size = trade_amount / current_price
+            logger.debug(f"执行交易 - 当前价格: {current_price} USDT")
+            logger.debug(f"执行交易 - 开仓数量: {position_size} {base}")
             
             # 等待到结算时间
             next_funding_time = datetime.fromisoformat(
@@ -239,6 +269,7 @@ class BybitScanner:
                 symbol=contract_symbol,  # 使用合约交易对格式
                 amount=position_size
             )
+            logger.debug(f"执行交易 - 开空单结果: {sell_order}")
             
             # 等待3秒
             await asyncio.sleep(3)
@@ -249,6 +280,7 @@ class BybitScanner:
                 symbol=contract_symbol,  # 使用合约交易对格式
                 amount=position_size
             )
+            logger.debug(f"执行交易 - 平空单结果: {buy_order}")
             
             return sell_order, buy_order
             
