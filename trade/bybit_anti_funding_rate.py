@@ -109,6 +109,7 @@ class BybitScanner:
         try:
             # 处理交易对格式
             base, quote = symbol.split('/')
+            quote = quote.split(':')[0]  # 去掉:USDT后缀
             contract_symbol = f"{base}{quote}"  # 例如: AERGOUSDT
             
             logger.debug(f"获取最大杠杆倍数 - 原始交易对: {symbol}")
@@ -146,6 +147,7 @@ class BybitScanner:
         try:
             # 处理交易对格式
             base, quote = symbol.split('/')
+            quote = quote.split(':')[0]  # 去掉:USDT后缀
             contract_symbol = f"{base}{quote}"  # 例如: AERGOUSDT
             
             logger.debug(f"设置杠杆倍数 - 原始交易对: {symbol}")
