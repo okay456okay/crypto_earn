@@ -45,14 +45,14 @@ class BybitScanner:
         self.time_offset = 0  # 本地时间与服务器时间的偏移量（秒）
 
     async def sync_time(self):
-        """同步服务器时间"""
+        """同步服务器时间，确保毫秒级精度"""
         try:
-            # 获取Bybit服务器时间
+            # 第一次同步
             server_time = await self.exchange.fetch_time()
             local_time = int(time.time() * 1000)  # 本地时间（毫秒）
             self.time_offset = (server_time - local_time) / 1000  # 转换为秒
             
-            logger.info(f"时间同步完成 - 服务器时间: {datetime.fromtimestamp(server_time/1000, tz=utc)}, "
+            logger.info(f"第一次时间同步 - 服务器时间: {datetime.fromtimestamp(server_time/1000, tz=utc)}, "
                        f"本地时间: {datetime.fromtimestamp(local_time/1000, tz=utc)}, "
                        f"时间偏移: {self.time_offset:.3f}秒")
             
@@ -65,11 +65,51 @@ class BybitScanner:
                     local_time = time.time()
                     self.time_offset = ntp_time - local_time
                     
-                    logger.info(f"NTP时间同步完成 - NTP时间: {datetime.fromtimestamp(ntp_time, tz=utc)}, "
+                    logger.info(f"NTP时间同步 - NTP时间: {datetime.fromtimestamp(ntp_time, tz=utc)}, "
                                f"本地时间: {datetime.fromtimestamp(local_time, tz=utc)}, "
                                f"时间偏移: {self.time_offset:.3f}秒")
                 except Exception as e:
                     logger.warning(f"NTP时间同步失败: {str(e)}")
+            
+            # 进行多次微调
+            max_attempts = 5
+            min_offset = float('inf')
+            best_offset = self.time_offset
+            
+            for attempt in range(max_attempts):
+                # 等待一小段时间，让网络延迟稳定
+                await asyncio.sleep(0.1)
+                
+                # 再次获取服务器时间
+                server_time = await self.exchange.fetch_time()
+                local_time = int(time.time() * 1000)
+                current_offset = (server_time - local_time) / 1000
+                
+                logger.debug(f"时间同步微调 {attempt+1}/{max_attempts} - "
+                           f"服务器时间: {datetime.fromtimestamp(server_time/1000, tz=utc)}, "
+                           f"本地时间: {datetime.fromtimestamp(local_time/1000, tz=utc)}, "
+                           f"时间偏移: {current_offset:.3f}秒")
+                
+                # 记录最小偏移量
+                if abs(current_offset) < abs(min_offset):
+                    min_offset = current_offset
+                    best_offset = current_offset
+            
+            # 使用最佳偏移量
+            self.time_offset = best_offset
+            logger.info(f"最终时间同步结果 - 时间偏移: {self.time_offset:.3f}秒 "
+                       f"({self.time_offset*1000:.1f}毫秒)")
+            
+            # 验证最终时间同步结果
+            server_time = await self.exchange.fetch_time()
+            local_time = int(time.time() * 1000)
+            final_offset = (server_time - local_time) / 1000 - self.time_offset
+            
+            logger.info(f"时间同步验证 - 最终误差: {final_offset:.3f}秒 "
+                       f"({final_offset*1000:.1f}毫秒)")
+            
+            if abs(final_offset) > 0.1:  # 如果误差超过100毫秒
+                logger.warning(f"时间同步误差较大: {final_offset*1000:.1f}毫秒")
             
         except Exception as e:
             logger.error(f"时间同步失败: {str(e)}")
