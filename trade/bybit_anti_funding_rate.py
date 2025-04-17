@@ -299,17 +299,17 @@ class BybitScanner:
                 await asyncio.sleep(wait_seconds - 180)  # 提前3分钟同步时间
                 await self.sync_time()  # 同步时间
                 await asyncio.sleep(180)  # 等待最后3分钟
-            elif wait_seconds > 0:
+            elif wait_seconds > 0.15:  # 如果还有超过150ms
                 logger.info(f"距离结算时间还有 {wait_seconds:.3f} 秒 ({wait_seconds*1000:.1f}毫秒)，等待中...")
-                # 使用更精确的等待时间
-                wait_ms = int(wait_seconds * 1000)  # 转换为毫秒
+                # 使用更精确的等待时间，提前150ms发起开仓
+                wait_ms = int((wait_seconds - 0.15) * 1000)  # 转换为毫秒，减去150ms
                 await asyncio.sleep(wait_ms / 1000)  # 使用毫秒级等待
             else:
                 logger.warning(f"已经过了结算时间 {abs(wait_seconds):.3f} 秒 ({abs(wait_seconds)*1000:.1f}毫秒)，跳过本次交易")
                 return None, None
             
             # 开空单
-            logger.info(f"在结算时间开空单: {position_size} {symbol}")
+            logger.info(f"在结算时间前150ms开空单: {position_size} {symbol}")
             open_time = time.time()  # 记录开仓时间
             sell_order = await self.create_market_sell_order(
                 symbol=contract_symbol,  # 使用合约交易对格式
@@ -317,19 +317,37 @@ class BybitScanner:
             )
             logger.debug(f"执行交易 - 开空单结果: {sell_order}")
             
-            # 计算需要等待的时间，确保在开仓后2秒准时平仓
-            elapsed_time = time.time() - open_time
-            wait_time = max(0, 2 - elapsed_time)  # 确保至少等待到2秒
-            logger.info(f"开仓耗时 {elapsed_time:.3f} 秒，等待 {wait_time:.3f} 秒后平仓")
-            await asyncio.sleep(wait_time)
+            # 计算需要等待的时间，确保在结算时间后2秒准时平仓
+            now = time.time()
+            settlement_time = datetime.fromisoformat(opportunity['next_funding_time'].replace('Z', '+00:00')).timestamp()
+            wait_until_close = max(0, settlement_time + 2 - now)  # 确保在结算时间后2秒平仓
+            logger.info(f"开仓耗时 {now - open_time:.3f} 秒，等待 {wait_until_close:.3f} 秒后平仓")
+            await asyncio.sleep(wait_until_close)
             
             # 平空单
-            logger.info(f"平空单: {position_size} {symbol}")
+            logger.info(f"在结算时间后2秒平空单: {position_size} {symbol}")
             buy_order = await self.create_market_buy_order(
                 symbol=contract_symbol,  # 使用合约交易对格式
                 amount=position_size
             )
             logger.debug(f"执行交易 - 平空单结果: {buy_order}")
+            
+            # 获取开仓和平仓价格
+            open_price = float(sell_order['average'])
+            close_price = float(buy_order['average'])
+            
+            # 计算交易结果
+            price_diff = close_price - open_price
+            profit = position_size * price_diff
+            profit_percent = (price_diff / open_price) * 100
+            
+            logger.info(f"\n=== 交易结果统计 ===")
+            logger.info(f"交易对: {symbol}")
+            logger.info(f"开仓价格: {open_price:.8f} USDT")
+            logger.info(f"平仓价格: {close_price:.8f} USDT")
+            logger.info(f"持仓数量: {position_size:.8f} {base}")
+            logger.info(f"价差: {price_diff:.8f} USDT ({profit_percent:.4f}%)")
+            logger.info(f"盈亏: {profit:.8f} USDT")
             
             return sell_order, buy_order
             
