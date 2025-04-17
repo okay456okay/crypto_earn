@@ -332,20 +332,34 @@ class BybitScanner:
             )
             logger.debug(f"执行交易 - 平空单结果: {buy_order}")
             
+            # 等待一段时间确保订单完成
+            await asyncio.sleep(3)
+            
+            # 获取开仓订单详情
+            sell_order_details = await self.exchange.fetch_order(sell_order['id'], contract_symbol)
+            logger.info(f"开仓订单详情: {sell_order_details}")
+            
+            # 获取平仓订单详情
+            buy_order_details = await self.exchange.fetch_order(buy_order['id'], contract_symbol)
+            logger.info(f"平仓订单详情: {buy_order_details}")
+            
             # 获取开仓和平仓价格
-            open_price = float(sell_order['average'])
-            close_price = float(buy_order['average'])
+            open_price = float(sell_order_details['average'])
+            close_price = float(buy_order_details['average'])
+            
+            # 获取实际成交数量
+            filled_amount = float(sell_order_details['filled'])
             
             # 计算交易结果
             price_diff = close_price - open_price
-            profit = position_size * price_diff
+            profit = filled_amount * price_diff
             profit_percent = (price_diff / open_price) * 100
             
             logger.info(f"\n=== 交易结果统计 ===")
             logger.info(f"交易对: {symbol}")
             logger.info(f"开仓价格: {open_price:.8f} USDT")
             logger.info(f"平仓价格: {close_price:.8f} USDT")
-            logger.info(f"持仓数量: {position_size:.8f} {base}")
+            logger.info(f"持仓数量: {filled_amount:.8f} {base}")
             logger.info(f"价差: {price_diff:.8f} USDT ({profit_percent:.4f}%)")
             logger.info(f"盈亏: {profit:.8f} USDT")
             
