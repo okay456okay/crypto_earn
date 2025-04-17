@@ -175,7 +175,7 @@ class FundingArbitrageTrader:
                 amount=self.position_amount,
                 params={
                     "positionSide": "SHORT",  # 指定是平空单
-                    "reduceOnly": True  # 确保是平仓操作
+                    # "reduceOnly": True  # 确保是平仓操作
                 }
             )
 
