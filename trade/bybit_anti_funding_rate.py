@@ -296,9 +296,20 @@ class BybitScanner:
             
             if wait_seconds > 180:  # 如果还有超过3分钟
                 logger.info(f"距离结算时间还有 {wait_seconds:.3f} 秒 ({wait_seconds*1000:.1f}毫秒)，等待中...")
-                await asyncio.sleep(wait_seconds - 180)  # 提前3分钟同步时间
-                await self.sync_time()  # 同步时间
-                await asyncio.sleep(180)  # 等待最后3分钟
+                # 先等待到距离结算时间180秒
+                await asyncio.sleep(wait_seconds - 180)
+                
+                # 同步时间
+                await self.sync_time()
+                
+                # 重新计算等待时间
+                now = datetime.fromtimestamp(self.get_current_time(), tz=utc)
+                wait_seconds = (next_funding_time - now).total_seconds()
+                logger.info(f"同步后距离结算时间还有 {wait_seconds:.3f} 秒 ({wait_seconds*1000:.1f}毫秒)")
+                
+                # 等待到距离结算时间150ms
+                if wait_seconds > 0.15:
+                    await asyncio.sleep(wait_seconds - 0.15)
             elif wait_seconds > 0.15:  # 如果还有超过150ms
                 logger.info(f"距离结算时间还有 {wait_seconds:.3f} 秒 ({wait_seconds*1000:.1f}毫秒)，等待中...")
                 # 使用更精确的等待时间，提前150ms发起开仓
@@ -336,19 +347,32 @@ class BybitScanner:
             await asyncio.sleep(3)
             
             # 获取开仓订单详情
-            sell_order_details = await self.exchange.fetch_order(sell_order['id'], contract_symbol)
-            logger.info(f"开仓订单详情: {sell_order_details}")
+            try:
+                sell_order_details = await self.exchange.fetchClosedOrder(sell_order['id'], contract_symbol)
+                logger.info(f"开仓订单详情: {sell_order_details}")
+            except Exception as e:
+                logger.warning(f"获取开仓订单详情失败: {str(e)}")
+                sell_order_details = sell_order  # 使用原始订单信息作为备选
             
             # 获取平仓订单详情
-            buy_order_details = await self.exchange.fetch_order(buy_order['id'], contract_symbol)
-            logger.info(f"平仓订单详情: {buy_order_details}")
+            try:
+                buy_order_details = await self.exchange.fetchClosedOrder(buy_order['id'], contract_symbol)
+                logger.info(f"平仓订单详情: {buy_order_details}")
+            except Exception as e:
+                logger.warning(f"获取平仓订单详情失败: {str(e)}")
+                buy_order_details = buy_order  # 使用原始订单信息作为备选
             
             # 获取开仓和平仓价格
-            open_price = float(sell_order_details['average'])
-            close_price = float(buy_order_details['average'])
-            
-            # 获取实际成交数量
-            filled_amount = float(sell_order_details['filled'])
+            try:
+                open_price = float(sell_order_details['average'])
+                close_price = float(buy_order_details['average'])
+                filled_amount = float(sell_order_details['filled'])
+            except (KeyError, TypeError) as e:
+                logger.warning(f"获取订单价格信息失败: {str(e)}")
+                # 如果无法获取详细信息，使用订单创建时的信息
+                open_price = float(sell_order['price']) if sell_order['price'] else float(sell_order['average'])
+                close_price = float(buy_order['price']) if buy_order['price'] else float(buy_order['average'])
+                filled_amount = float(sell_order['amount'])
             
             # 计算交易结果
             price_diff = close_price - open_price
