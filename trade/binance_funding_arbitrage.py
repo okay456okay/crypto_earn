@@ -108,8 +108,8 @@ class FundingArbitrageTrader:
                     self.entry_price = float(position.get('entryPrice', 0))
                     
                     # 从info中获取杠杆倍数
-                    self.leverage = float(position.get('leverage', 20))
-                    
+                    self.leverage = position.get('leverage', 20) if position.get('leverage') else 10
+
                     # 记录更多持仓信息
                     unrealized_pnl = float(position.get('unrealizedPnl', 0))
                     mark_price = float(position.get('markPrice', 0))
