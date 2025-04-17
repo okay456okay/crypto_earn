@@ -144,7 +144,10 @@ class FundingArbitrageTrader:
             funding_data = await self.exchange.fetch_funding_rate(self.contract_symbol)
             
             # 从返回的数据结构中提取资金费率和下次结算时间
-            funding_rate = float(funding_data['info']['fundingRate'])
+            """
+            {'info': {'symbol': 'ORCAUSDT', 'markPrice': '2.83400000', 'indexPrice': '2.83966721', 'estimatedSettlePrice': '2.84723425', 'lastFundingRate': '-0.00142390', 'interestRate': '0.00005000', 'nextFundingTime': '1744862400000', 'time': '1744860944000'}, 'symbol': 'ORCA/USDT:USDT', 'markPrice': 2.834, 'indexPrice': 2.83966721, 'interestRate': 5e-05, 'estimatedSettlePrice': 2.84723425, 'timestamp': 1744860944000, 'datetime': '2025-04-17T03:35:44.000Z', 'fundingRate': -0.0014239, 'fundingTimestamp': 1744862400000, 'fundingDatetime': '2025-04-17T04:00:00.000Z', 'nextFundingRate': None, 'nextFundingTimestamp': None, 'nextFundingDatetime': None, 'previousFundingRate': None, 'previousFundingTimestamp': None, 'previousFundingDatetime': None, 'interval': None}
+            """
+            funding_rate = float(funding_data['info']['lastFundingRate'])
             next_funding_time = int(funding_data['info']['nextFundingTime'])
             
             logger.info(f"[{self.symbol}] 当前资金费率: {funding_rate*100:.4f}%, "
