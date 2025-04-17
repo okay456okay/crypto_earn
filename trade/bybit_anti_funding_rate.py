@@ -10,7 +10,7 @@ Bybit资金费率扫描器
 3. 筛选24小时交易量大于200万的交易对
 4. 输出符合条件的交易对信息，包括下次结算时间
 5. 找出结算时间最近且资金费率最小的交易对
-6. 在结算时间准点开空单，3秒后平仓
+6. 在结算时间准点开空单，2秒后平仓
 """
 
 import sys
@@ -317,9 +317,9 @@ class BybitScanner:
             )
             logger.debug(f"执行交易 - 开空单结果: {sell_order}")
             
-            # 计算需要等待的时间，确保在开仓后3秒准时平仓
+            # 计算需要等待的时间，确保在开仓后2秒准时平仓
             elapsed_time = time.time() - open_time
-            wait_time = max(0, 3 - elapsed_time)  # 确保至少等待到3秒
+            wait_time = max(0, 2 - elapsed_time)  # 确保至少等待到2秒
             logger.info(f"开仓耗时 {elapsed_time:.3f} 秒，等待 {wait_time:.3f} 秒后平仓")
             await asyncio.sleep(wait_time)
             
