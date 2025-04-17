@@ -1,3 +1,12 @@
+#!/bin/bash
+
+# 脚本名称: positions.sh
+# 用途: 查看各交易所的持仓情况
+# 常见用法:
+#   ./positions.sh        # 查看所有交易所的持仓
+#   ./positions.sh -d     # 启用调试模式
+# 注意: 该脚本会显示Gate.io、Binance、Bitget和Bybit的持仓信息
+
 #!/usr/bin/env bash
 
 

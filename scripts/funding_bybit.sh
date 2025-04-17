@@ -1,5 +1,12 @@
 #!/bin/bash
 
+# 脚本名称: funding_bybit.sh
+# 用途: 启动Bybit资金费率套利程序
+# 常见用法:
+#   ./funding_bybit.sh -t BTC        # 启动BTC的资金费率套利
+#   ./funding_bybit.sh -t BTC -d     # 启用调试模式
+# 注意: 该脚本会检查是否已有相同token的套利程序在运行，避免重复启动
+
 if [ $# -ne 1 ]; then
     echo "Usage: $(basename $0) token"
     exit 1
