@@ -43,6 +43,7 @@ class BybitScanner:
             'proxies': proxies,
         })
         self.time_offset = 0  # 本地时间与服务器时间的偏移量（秒）
+        self.advance_time = 0.30  # 提前下单时间（秒）
 
     async def sync_time(self):
         """同步服务器时间，确保毫秒级精度"""
@@ -307,20 +308,20 @@ class BybitScanner:
                 wait_seconds = (next_funding_time - now).total_seconds()
                 logger.info(f"同步后距离结算时间还有 {wait_seconds:.3f} 秒 ({wait_seconds*1000:.1f}毫秒)")
                 
-                # 等待到距离结算时间150ms
-                if wait_seconds > 0.15:
-                    await asyncio.sleep(wait_seconds - 0.15)
-            elif wait_seconds > 0.15:  # 如果还有超过150ms
+                # 等待到距离结算时间300ms
+                if wait_seconds > self.advance_time:
+                    await asyncio.sleep(wait_seconds - self.advance_time)
+            elif wait_seconds > self.advance_time:  # 如果还有超过300ms
                 logger.info(f"距离结算时间还有 {wait_seconds:.3f} 秒 ({wait_seconds*1000:.1f}毫秒)，等待中...")
-                # 使用更精确的等待时间，提前150ms发起开仓
-                wait_ms = int((wait_seconds - 0.15) * 1000)  # 转换为毫秒，减去150ms
+                # 使用更精确的等待时间，提前300ms发起开仓
+                wait_ms = int((wait_seconds - self.advance_time) * 1000)  # 转换为毫秒，减去300ms
                 await asyncio.sleep(wait_ms / 1000)  # 使用毫秒级等待
             else:
                 logger.warning(f"已经过了结算时间 {abs(wait_seconds):.3f} 秒 ({abs(wait_seconds)*1000:.1f}毫秒)，跳过本次交易")
                 return None, None
             
             # 开空单
-            logger.info(f"在结算时间前150ms开空单: {position_size} {symbol}")
+            logger.info(f"在结算时间前{self.advance_time*1000:.0f}ms开空单: {position_size} {symbol}")
             open_time = time.time()  # 记录开仓时间
             sell_order = await self.create_market_sell_order(
                 symbol=contract_symbol,  # 使用合约交易对格式
@@ -367,16 +368,23 @@ class BybitScanner:
                 open_price = float(sell_order_details['average'])
                 close_price = float(buy_order_details['average'])
                 filled_amount = float(sell_order_details['filled'])
+                # 获取开仓和平仓手续费
+                open_fee = float(sell_order_details['fee']['cost'])
+                close_fee = float(buy_order_details['fee']['cost'])
             except (KeyError, TypeError) as e:
                 logger.warning(f"获取订单价格信息失败: {str(e)}")
                 # 如果无法获取详细信息，使用订单创建时的信息
                 open_price = float(sell_order['price']) if sell_order['price'] else float(sell_order['average'])
                 close_price = float(buy_order['price']) if buy_order['price'] else float(buy_order['average'])
                 filled_amount = float(sell_order['amount'])
+                open_fee = 0.0
+                close_fee = 0.0
             
             # 计算交易结果
             price_diff = close_price - open_price
-            profit = filled_amount * price_diff
+            gross_profit = filled_amount * price_diff
+            total_fee = open_fee + close_fee
+            net_profit = gross_profit - total_fee
             profit_percent = (price_diff / open_price) * 100
             
             logger.info(f"\n=== 交易结果统计 ===")
@@ -385,7 +393,11 @@ class BybitScanner:
             logger.info(f"平仓价格: {close_price:.8f} USDT")
             logger.info(f"持仓数量: {filled_amount:.8f} {base}")
             logger.info(f"价差: {price_diff:.8f} USDT ({profit_percent:.4f}%)")
-            logger.info(f"盈亏: {profit:.8f} USDT")
+            logger.info(f"开仓手续费: {open_fee:.8f} USDT")
+            logger.info(f"平仓手续费: {close_fee:.8f} USDT")
+            logger.info(f"总手续费: {total_fee:.8f} USDT")
+            logger.info(f"毛利润: {gross_profit:.8f} USDT")
+            logger.info(f"净利润: {net_profit:.8f} USDT")
             
             return sell_order, buy_order
             
@@ -489,11 +501,11 @@ async def main():
         print_best_opportunity(best_opportunity)
         
         if best_opportunity:
-            # 执行交易
+            # 执行交易debug
             sell_order, buy_order = await scanner.execute_trade(best_opportunity)
             logger.info("交易执行完成!")
-            logger.info(f"开仓订单: {sell_order}")
-            logger.info(f"平仓订单: {buy_order}")
+            # logger.info(f"开仓订单: {sell_order}")
+            # logger.info(f"平仓订单: {buy_order}")
         
     except Exception as e:
         logger.error(f"程序执行出错: {str(e)}")
