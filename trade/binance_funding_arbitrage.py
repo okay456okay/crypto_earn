@@ -101,7 +101,7 @@ class FundingArbitrageTrader:
             
             for position in positions:
                 # 检查是否有持仓
-                if position['symbol'] == self.contract_symbol and float(position.get('contracts', 0)) > 0:
+                if position['info']['symbol'] == self.contract_symbol and float(position.get('contracts', 0)) > 0:
                     self.position = position
                     self.position_side = position['side']  # 已经是'short'或'long'
                     self.position_amount = abs(float(position['contracts']))
@@ -216,7 +216,7 @@ class FundingArbitrageTrader:
             # 创建开仓订单
             order_params = {
                 "positionSide": "SHORT",  # 指定是开空单
-                "reduceOnly": False
+                # "reduceOnly": False
             }
             
             if order_type == 'limit':
