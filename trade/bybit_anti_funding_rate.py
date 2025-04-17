@@ -266,7 +266,7 @@ class BybitScanner:
             
             # 计算交易金额
             volume_per_second = opportunity['volume_24h'] / (24 * 60 * 60)
-            trade_amount = min(volume_per_second * 2, 300)  # 取每秒交易额的2倍和300USDT中的较小值
+            trade_amount = min(volume_per_second * 2, 200)  # 取每秒交易额的2倍和200USDT中的较小值
             logger.debug(f"执行交易 - 每秒交易量: {volume_per_second:.2f} USDT")
             logger.debug(f"执行交易 - 计划交易量: {trade_amount:.2f} USDT")
             
