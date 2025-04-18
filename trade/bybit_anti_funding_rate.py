@@ -290,20 +290,12 @@ class BybitScanner:
             
             # 获取最大杠杆倍数
             max_leverage = await self.get_max_leverage(symbol)
-            logger.info(f"执行交易 - 最大杠杆倍数: {max_leverage}倍")
+            logger.debug(f"执行交易 - 最大杠杆倍数: {max_leverage}倍")
             
             # 设置杠杆
             await self.set_leverage(symbol, max_leverage)
             
-            # 计算开仓数量
-            ticker = await self.exchange.fetch_ticker(symbol)
-            logger.info(f"执行交易 - 获取行情: {ticker}")
-            current_price = ticker['last']
-            position_size = trade_amount / current_price
-            logger.info(f"执行交易 - 当前价格: {current_price} USDT")
-            logger.info(f"执行交易 - 开仓数量: {position_size} {base}")
-            
-            # 等待到结算时间
+            # 等待到距离结算时间2分钟
             next_funding_time = datetime.fromisoformat(
                 opportunity['next_funding_time'].replace('Z', '+00:00')
             )
@@ -312,10 +304,18 @@ class BybitScanner:
             now = datetime.fromtimestamp(self.get_current_time(), tz=utc)
             wait_seconds = (next_funding_time - now).total_seconds()
             
-            if wait_seconds > 180:  # 如果还有超过3分钟
-                logger.info(f"距离结算时间还有 {wait_seconds:.3f} 秒 ({wait_seconds*1000:.1f}毫秒)，等待中...")
-                # 先等待到距离结算时间180秒
-                await asyncio.sleep(wait_seconds - 180)
+            if wait_seconds > 120:  # 如果还有超过2分钟
+                logger.info(f"距离结算时间还有 {wait_seconds:.3f} 秒，等待中...")
+                await asyncio.sleep(wait_seconds - 120)  # 等待到距离结算时间2分钟
+                
+                # 重新获取当前价格
+                ticker = await self.exchange.fetch_ticker(symbol)
+                current_price = ticker['last']
+                logger.info(f"重新获取价格: {current_price} USDT")
+                
+                # 重新计算开仓数量
+                position_size = trade_amount / current_price
+                logger.info(f"重新计算开仓数量: {position_size} {base}")
                 
                 # 同步时间
                 await self.sync_time()
@@ -323,14 +323,14 @@ class BybitScanner:
                 # 重新计算等待时间
                 now = datetime.fromtimestamp(self.get_current_time(), tz=utc)
                 wait_seconds = (next_funding_time - now).total_seconds()
-                logger.info(f"同步后距离结算时间还有 {wait_seconds:.3f} 秒 ({wait_seconds*1000:.1f}毫秒)")
+                logger.info(f"同步后距离结算时间还有 {wait_seconds:.3f} 秒")
                 
                 # 等待到距离结算时间300ms
                 if wait_seconds > self.advance_time:
                     await asyncio.sleep(wait_seconds - self.advance_time)
             elif wait_seconds > self.advance_time:  # 如果还有超过300ms
                 logger.info(f"距离结算时间还有 {wait_seconds:.3f} 秒 ({wait_seconds*1000:.1f}毫秒)，等待中...")
-                # 使用更精确的等待时间，提前300ms发起开仓
+                # 使用更精确的等待时间，提前330ms发起开仓
                 wait_ms = int((wait_seconds - self.advance_time) * 1000)  # 转换为毫秒，减去300ms
                 await asyncio.sleep(wait_ms / 1000)  # 使用毫秒级等待
             else:
