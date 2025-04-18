@@ -188,20 +188,31 @@ class GateioScanner:
             # 处理交易对格式
             base, quote = symbol.split('/')
             quote = quote.split(':')[0]  # 去掉:USDT后缀
-            contract_symbol = f"{base}_{quote}"  # Gate.io的合约格式
             
-            logger.info(f"获取最大杠杆倍数 - 原始交易对: {symbol}")
-            logger.info(f"获取最大杠杆倍数 - 基础币: {base}")
-            logger.info(f"获取最大杠杆倍数 - 计价币: {quote}")
-            logger.info(f"获取最大杠杆倍数 - 合约交易对: {contract_symbol}")
+            # 定义可能的合约格式
+            possible_contract_formats = [
+                f"{base}/{quote}",           # 标准格式 (DOGE/USDT)
+                f"{base}/{quote}:USDT",      # 带后缀格式 (DOGE/USDT:USDT)
+                f"{base}{quote}",            # 无分隔符格式 (DOGEUSDT)
+                f"{base}_{quote}",           # 下划线分隔符格式 (DOGE_USDT)
+            ]
             
-            # Gate.io的API调用方式
-            response = await self.exchange.fetch_market_leverage_tiers(contract_symbol)
-            
-            if response and len(response) > 0:
-                max_leverage = int(response[0]['maxLeverage'])
-                logger.info(f"获取到{symbol}最大杠杆倍数: {max_leverage}倍")
-                return max_leverage
+            # 尝试不同的合约格式
+            for format_contract in possible_contract_formats:
+                try:
+                    # 尝试获取市场信息
+                    market = self.exchange.market(format_contract)
+                    logger.info(f"成功找到合约: {format_contract}, 类型: {market['type']}")
+                    
+                    # 获取杠杆信息
+                    response = await self.exchange.fetch_market_leverage_tiers(format_contract)
+                    if response and len(response) > 0:
+                        max_leverage = int(response[0]['maxLeverage'])
+                        logger.info(f"获取到{symbol}最大杠杆倍数: {max_leverage}倍")
+                        return max_leverage
+                except Exception as e:
+                    logger.warning(f"合约格式 {format_contract} 不可用: {str(e)}")
+                    continue
             
             logger.warning(f"未能获取到{symbol}的最大杠杆倍数，使用默认值10倍")
             return 10  # 如果获取失败，返回默认值10倍
@@ -216,23 +227,35 @@ class GateioScanner:
             # 处理交易对格式
             base, quote = symbol.split('/')
             quote = quote.split(':')[0]  # 去掉:USDT后缀
-            contract_symbol = f"{base}_{quote}"  # Gate.io的合约格式
             
-            logger.info(f"设置杠杆倍数 - 原始交易对: {symbol}")
-            logger.info(f"设置杠杆倍数 - 基础币: {base}")
-            logger.info(f"设置杠杆倍数 - 计价币: {quote}")
-            logger.info(f"设置杠杆倍数 - 合约交易对: {contract_symbol}")
+            # 定义可能的合约格式
+            possible_contract_formats = [
+                f"{base}/{quote}",           # 标准格式 (DOGE/USDT)
+                f"{base}/{quote}:USDT",      # 带后缀格式 (DOGE/USDT:USDT)
+                f"{base}{quote}",            # 无分隔符格式 (DOGEUSDT)
+                f"{base}_{quote}",           # 下划线分隔符格式 (DOGE_USDT)
+            ]
             
-            # Gate.io的API调用方式
-            await self.exchange.set_leverage(leverage, contract_symbol)
-            logger.info(f"设置{symbol}杠杆倍数为: {leverage}倍")
+            # 尝试不同的合约格式
+            for format_contract in possible_contract_formats:
+                try:
+                    # 尝试设置杠杆
+                    await self.exchange.set_leverage(leverage, format_contract)
+                    logger.info(f"设置{symbol}杠杆倍数为: {leverage}倍")
+                    return
+                except Exception as e:
+                    if "leverage not modified" in str(e).lower():
+                        logger.info(f"杠杆倍数已经是 {leverage}倍，无需修改")
+                        return
+                    logger.warning(f"合约格式 {format_contract} 设置杠杆失败: {str(e)}")
+                    continue
+            
+            logger.error(f"所有合约格式设置杠杆均失败")
+            raise Exception("设置杠杆失败")
             
         except Exception as e:
-            if "leverage not modified" in str(e).lower():
-                logger.info(f"杠杆倍数已经是 {leverage}倍，无需修改")
-            else:
-                logger.error(f"设置杠杆倍数失败: {str(e)}")
-                raise
+            logger.error(f"设置杠杆倍数失败: {str(e)}")
+            raise
 
     async def create_market_sell_order(self, symbol, amount):
         """创建市价空单"""
@@ -240,18 +263,36 @@ class GateioScanner:
             # 处理交易对格式
             base, quote = symbol.split('/')
             quote = quote.split(':')[0]  # 去掉:USDT后缀
-            contract_symbol = f"{base}_{quote}"  # Gate.io的合约格式
             
-            order = await self.exchange.create_market_sell_order(
-                symbol=contract_symbol,
-                amount=amount,
-                params={
-                    "type": "swap",
-                    "reduceOnly": False
-                }
-            )
-            logger.info(f"创建空单成功: {order}")
-            return order
+            # 定义可能的合约格式
+            possible_contract_formats = [
+                f"{base}/{quote}",           # 标准格式 (DOGE/USDT)
+                f"{base}/{quote}:USDT",      # 带后缀格式 (DOGE/USDT:USDT)
+                f"{base}{quote}",            # 无分隔符格式 (DOGEUSDT)
+                f"{base}_{quote}",           # 下划线分隔符格式 (DOGE_USDT)
+            ]
+            
+            # 尝试不同的合约格式
+            for format_contract in possible_contract_formats:
+                try:
+                    # 尝试创建订单
+                    order = await self.exchange.create_market_sell_order(
+                        symbol=format_contract,
+                        amount=amount,
+                        params={
+                            "type": "swap",
+                            "reduceOnly": False
+                        }
+                    )
+                    logger.info(f"创建空单成功: {order}")
+                    return order
+                except Exception as e:
+                    logger.warning(f"合约格式 {format_contract} 创建空单失败: {str(e)}")
+                    continue
+            
+            logger.error(f"所有合约格式创建空单均失败")
+            raise Exception("创建空单失败")
+            
         except Exception as e:
             logger.error(f"创建空单失败: {str(e)}")
             raise
@@ -262,18 +303,36 @@ class GateioScanner:
             # 处理交易对格式
             base, quote = symbol.split('/')
             quote = quote.split(':')[0]  # 去掉:USDT后缀
-            contract_symbol = f"{base}_{quote}"  # Gate.io的合约格式
             
-            order = await self.exchange.create_market_buy_order(
-                symbol=contract_symbol,
-                amount=amount,
-                params={
-                    "type": "swap",
-                    "reduceOnly": True  # 确保是平仓操作
-                }
-            )
-            logger.info(f"创建平仓单成功: {order}")
-            return order
+            # 定义可能的合约格式
+            possible_contract_formats = [
+                f"{base}/{quote}",           # 标准格式 (DOGE/USDT)
+                f"{base}/{quote}:USDT",      # 带后缀格式 (DOGE/USDT:USDT)
+                f"{base}{quote}",            # 无分隔符格式 (DOGEUSDT)
+                f"{base}_{quote}",           # 下划线分隔符格式 (DOGE_USDT)
+            ]
+            
+            # 尝试不同的合约格式
+            for format_contract in possible_contract_formats:
+                try:
+                    # 尝试创建订单
+                    order = await self.exchange.create_market_buy_order(
+                        symbol=format_contract,
+                        amount=amount,
+                        params={
+                            "type": "swap",
+                            "reduceOnly": True  # 确保是平仓操作
+                        }
+                    )
+                    logger.info(f"创建平仓单成功: {order}")
+                    return order
+                except Exception as e:
+                    logger.warning(f"合约格式 {format_contract} 创建平仓单失败: {str(e)}")
+                    continue
+            
+            logger.error(f"所有合约格式创建平仓单均失败")
+            raise Exception("创建平仓单失败")
+            
         except Exception as e:
             logger.error(f"创建平仓单失败: {str(e)}")
             raise
