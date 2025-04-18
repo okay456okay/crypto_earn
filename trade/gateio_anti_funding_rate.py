@@ -146,12 +146,34 @@ class GateioScanner:
     async def get_funding_rate(self, symbol):
         """获取指定交易对的资金费率"""
         try:
-            # Gate.io的API调用方式与Bybit不同
+            # 处理交易对格式
+            base, quote = symbol.split('/')
+            quote = quote.split(':')[0]  # 去掉:USDT后缀
+            contract_symbol = f"{base}_{quote}"  # Gate.io的合约格式
+            
+            # 获取资金费率
             funding_rate = await self.exchange.fetch_funding_rate(symbol)
+            
+            # 获取24小时交易量
+            url = "https://api.gateio.ws/api/v4/futures/usdt/tickers"
+            response = await self.exchange.fetch(url, {
+                'method': 'GET',
+                'headers': {
+                    'Accept': 'application/json',
+                }
+            })
+            
+            volume_24h = 0.0
+            if response and isinstance(response, list):
+                for item in response:
+                    if item.get('contract') == contract_symbol:
+                        volume_24h = float(item.get('volume_24h_settle', 0))
+                        break
+            
             return {
                 'rate': funding_rate['fundingRate'] * 100,  # 转换为百分比
                 'next_time': funding_rate['fundingDatetime'],  # 下次结算时间
-                'volume_24h': float(funding_rate['info'].get('volume_24h', 0))  # 24小时交易量
+                'volume_24h': volume_24h  # 24小时交易量
             }
         except Exception as e:
             logger.error(f"获取{symbol}资金费率失败: {str(e)}")
