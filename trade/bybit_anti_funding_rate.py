@@ -23,6 +23,7 @@ import logging
 import time
 import ntplib
 from pytz import timezone, utc
+import argparse  # 添加argparse模块
 
 # 添加项目根目录到系统路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -31,8 +32,14 @@ from config import bybit_api_key, bybit_api_secret, proxies
 
 
 class BybitScanner:
-    def __init__(self):
-        """初始化Bybit扫描器"""
+    def __init__(self, advance_time=0.33, close_delay=3.0, funding_rate_threshold=-1.0):
+        """初始化Bybit扫描器
+        
+        Args:
+            advance_time (float): 提前下单时间（秒）
+            close_delay (float): 平仓延时（秒）
+            funding_rate_threshold (float): 资金费率筛选阈值（百分比）
+        """
         self.exchange = ccxt.bybit({
             'apiKey': bybit_api_key,
             'secret': bybit_api_secret,
@@ -49,8 +56,9 @@ class BybitScanner:
         [2025-04-17 20:00:00,191] INFO bybit_anti_funding_rate.py:335) 开仓耗时 0.337 秒，等待 1.809 秒后平仓
         [2025-04-18 00:00:00,069] INFO bybit_anti_funding_rate.py:336) 开仓耗时 0.365 秒，等待 1.931 秒后平仓
         """
-        self.advance_time = 0.33  # 提前下单时间（秒）
-        self.close_delay = 3.0  # 平仓延时（秒）
+        self.advance_time = advance_time  # 提前下单时间（秒）
+        self.close_delay = close_delay  # 平仓延时（秒）
+        self.funding_rate_threshold = funding_rate_threshold  # 资金费率筛选阈值（百分比）
 
     async def sync_time(self):
         """同步服务器时间，确保毫秒级精度"""
@@ -427,7 +435,7 @@ class BybitScanner:
                     continue
 
                 # 检查是否满足条件：资金费率小于-1.0%且24小时交易量大于200万
-                if (funding_info['rate'] <= -1.0 and funding_info['volume_24h'] >= 2000000):
+                if (funding_info['rate'] <= self.funding_rate_threshold and funding_info['volume_24h'] >= 2000000):
                     results.append({
                         'symbol': symbol,
                         'funding_rate': funding_info['rate'],
@@ -497,7 +505,25 @@ def print_best_opportunity(best_opportunity):
 
 async def main():
     """主函数"""
-    scanner = BybitScanner()
+    # 创建命令行参数解析器
+    parser = argparse.ArgumentParser(description='Bybit资金费率套利工具')
+    parser.add_argument('--advance-time', type=float, default=0.33,
+                      help='提前下单时间（秒），默认0.33秒')
+    parser.add_argument('--close-delay', type=float, default=3.0,
+                      help='平仓延时（秒），默认3.0秒')
+    parser.add_argument('--funding-rate-threshold', type=float, default=-1.0,
+                      help='资金费率筛选阈值（百分比），默认-1.0%%')
+    
+    # 解析命令行参数
+    args = parser.parse_args()
+    
+    # 创建扫描器实例，传入参数
+    scanner = BybitScanner(
+        advance_time=args.advance_time,
+        close_delay=args.close_delay,
+        funding_rate_threshold=args.funding_rate_threshold
+    )
+    
     try:
         # 扫描市场
         results = await scanner.scan_markets()
@@ -508,11 +534,9 @@ async def main():
         print_best_opportunity(best_opportunity)
         
         if best_opportunity:
-            # 执行交易debug
+            # 执行交易
             sell_order, buy_order = await scanner.execute_trade(best_opportunity)
             logger.info("交易执行完成!")
-            # logger.info(f"开仓订单: {sell_order}")
-            # logger.info(f"平仓订单: {buy_order}")
         
     except Exception as e:
         logger.error(f"程序执行出错: {str(e)}")
