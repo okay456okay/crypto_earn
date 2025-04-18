@@ -203,6 +203,19 @@ class FundingArbitrageTrader:
                 logger.error(f"[{self.symbol}] 没有可用的持仓数量信息")
                 return None
 
+            # 检查当前持仓状态
+            await self.check_position()
+            
+            # 计算需要开仓的数量
+            open_amount = self.last_position_amount
+            if self.position_amount:
+                # 如果已经有持仓，需要调整开仓数量
+                open_amount = self.last_position_amount - self.position_amount
+                if open_amount <= 0:
+                    logger.warning(f"[{self.symbol}] 当前持仓 {self.position_amount} 已超过目标持仓 {self.last_position_amount}，无需开仓")
+                    return None
+                logger.info(f"[{self.symbol}] 当前已有持仓 {self.position_amount}，将开仓数量调整为 {open_amount}")
+
             # 获取当前市场价格作为参考
             ticker = await self.exchange.fetch_ticker(self.contract_symbol)
             current_price = ticker['last']
@@ -219,22 +232,27 @@ class FundingArbitrageTrader:
             if order_type == 'limit':
                 order = await self.exchange.create_limit_sell_order(
                     symbol=self.contract_symbol,
-                    amount=self.last_position_amount,
+                    amount=open_amount,
                     price=order_price,
                     params=order_params
                 )
             else:
                 order = await self.exchange.create_market_sell_order(
                     symbol=self.contract_symbol,
-                    amount=self.last_position_amount,
+                    amount=open_amount,
                     params=order_params
                 )
 
-            logger.info(f"[{self.symbol}] 开仓订单执行结果: 数量={self.last_position_amount}, "
+            logger.info(f"[{self.symbol}] 开仓订单执行结果: 数量={open_amount}, "
                        f"价格={'市价' if not price else price}, 订单ID={order.get('id')}")
 
             # 更新持仓状态
             await self.check_position()
+            
+            # 验证最终持仓是否与目标一致
+            if self.position_amount != self.last_position_amount:
+                logger.warning(f"[{self.symbol}] 最终持仓 {self.position_amount} 与目标持仓 {self.last_position_amount} 不一致")
+            
             return order
 
         except Exception as e:
