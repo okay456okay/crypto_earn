@@ -32,7 +32,7 @@ from config import bybit_api_key, bybit_api_secret, proxies
 
 
 class BybitScanner:
-    def __init__(self, advance_time=0.32, close_delay=3.0, funding_rate_threshold=-1.0, trade_amount_limit=500.0):
+    def __init__(self, advance_time=0.32, close_delay=3.0, funding_rate_threshold=-1.5, trade_amount_limit=1000.0):
         """初始化Bybit扫描器
         
         Args:
@@ -513,10 +513,10 @@ async def main():
                       help='提前下单时间（秒），默认0.32秒')
     parser.add_argument('-d', '--close-delay', type=float, default=3.0,
                       help='平仓延时（秒），默认3.0秒')
-    parser.add_argument('-t', '--threshold', type=float, default=-1.0,
-                      help='资金费率筛选阈值（百分比），默认-1.0%%')
-    parser.add_argument('-l', '--trade-limit', type=float, default=500.0,
-                      help='单笔交易限额（USDT），默认500.0 USDT')
+    parser.add_argument('-t', '--threshold', type=float, default=-1.5,
+                      help='资金费率筛选阈值（百分比），默认-1.5%%')
+    parser.add_argument('-l', '--trade-limit', type=float, default=1000.0,
+                      help='单笔交易限额（USDT），默认1000.0 USDT')
     
     # 解析命令行参数
     args = parser.parse_args()
