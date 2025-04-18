@@ -32,13 +32,14 @@ from config import bybit_api_key, bybit_api_secret, proxies
 
 
 class BybitScanner:
-    def __init__(self, advance_time=0.33, close_delay=3.0, funding_rate_threshold=-1.0):
+    def __init__(self, advance_time=0.33, close_delay=3.0, funding_rate_threshold=-1.0, trade_amount_limit=500.0):
         """初始化Bybit扫描器
         
         Args:
             advance_time (float): 提前下单时间（秒）
             close_delay (float): 平仓延时（秒）
             funding_rate_threshold (float): 资金费率筛选阈值（百分比）
+            trade_amount_limit (float): 单笔交易限额（USDT）
         """
         self.exchange = ccxt.bybit({
             'apiKey': bybit_api_key,
@@ -59,6 +60,7 @@ class BybitScanner:
         self.advance_time = advance_time  # 提前下单时间（秒）
         self.close_delay = close_delay  # 平仓延时（秒）
         self.funding_rate_threshold = funding_rate_threshold  # 资金费率筛选阈值（百分比）
+        self.trade_amount_limit = trade_amount_limit  # 单笔交易限额（USDT）
 
     async def sync_time(self):
         """同步服务器时间，确保毫秒级精度"""
@@ -282,9 +284,9 @@ class BybitScanner:
             
             # 计算交易金额
             volume_per_second = opportunity['volume_24h'] / (24 * 60 * 60)
-            trade_amount = min(volume_per_second * 2, 500)  # 取每秒交易额的2倍和500USDT中的较小值
-            logger.info(f"执行交易 - 每秒交易量: {volume_per_second:.2f} USDT")
-            logger.info(f"执行交易 - 计划交易量: {trade_amount:.2f} USDT")
+            trade_amount = min(volume_per_second * 2, self.trade_amount_limit)  # 取每秒交易额的2倍和交易限额中的较小值
+            logger.debug(f"执行交易 - 每秒交易量: {volume_per_second:.2f} USDT")
+            logger.debug(f"执行交易 - 计划交易量: {trade_amount:.2f} USDT")
             
             # 获取最大杠杆倍数
             max_leverage = await self.get_max_leverage(symbol)
@@ -507,12 +509,14 @@ async def main():
     """主函数"""
     # 创建命令行参数解析器
     parser = argparse.ArgumentParser(description='Bybit资金费率套利工具')
-    parser.add_argument('--advance-time', type=float, default=0.33,
+    parser.add_argument('-a', '--advance-time', type=float, default=0.33,
                       help='提前下单时间（秒），默认0.33秒')
-    parser.add_argument('--close-delay', type=float, default=3.0,
+    parser.add_argument('-d', '--close-delay', type=float, default=3.0,
                       help='平仓延时（秒），默认3.0秒')
-    parser.add_argument('--funding-rate-threshold', type=float, default=-1.0,
+    parser.add_argument('-t', '--threshold', type=float, default=-1.0,
                       help='资金费率筛选阈值（百分比），默认-1.0%%')
+    parser.add_argument('-l', '--trade-limit', type=float, default=500.0,
+                      help='单笔交易限额（USDT），默认500.0 USDT')
     
     # 解析命令行参数
     args = parser.parse_args()
@@ -521,7 +525,8 @@ async def main():
     scanner = BybitScanner(
         advance_time=args.advance_time,
         close_delay=args.close_delay,
-        funding_rate_threshold=args.funding_rate_threshold
+        funding_rate_threshold=args.threshold,
+        trade_amount_limit=args.trade_limit
     )
     
     try:
