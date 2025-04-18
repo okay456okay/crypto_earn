@@ -24,6 +24,7 @@ import time
 import ntplib
 from pytz import timezone, utc
 import argparse
+import requests
 
 # 添加项目根目录到系统路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -55,6 +56,7 @@ class GateioScanner:
         self.close_delay = close_delay  # 平仓延时（秒）
         self.funding_rate_threshold = funding_rate_threshold  # 资金费率筛选阈值（百分比）
         self.trade_amount_limit = trade_amount_limit  # 单笔交易限额（USDT）
+        self.gateio_futures_volumes = {}  # 缓存合约交易量数据
 
     async def sync_time(self):
         """同步服务器时间，确保毫秒级精度"""
@@ -143,32 +145,33 @@ class GateioScanner:
             logger.error(f"获取交易对列表失败: {str(e)}")
             return []
 
+    async def get_gateio_futures_volumes(self):
+        """获取GateIO合约24小时交易量"""
+        try:
+            url = "https://api.gateio.ws/api/v4/futures/usdt/tickers"
+            response = requests.get(url, proxies=proxies)
+            if response.status_code == 200:
+                data = response.json()
+                for item in data:
+                    contract = item['contract']
+                    if contract.endswith('_USDT'):
+                        symbol = contract.replace('_USDT', 'USDT')
+                        self.gateio_futures_volumes[symbol] = float(item['volume_24h_settle'])
+        except Exception as e:
+            logger.error(f"获取GateIO合约交易量数据失败: {str(e)}")
+
     async def get_funding_rate(self, symbol):
         """获取指定交易对的资金费率"""
         try:
-            # 处理交易对格式
-            base, quote = symbol.split('/')
-            quote = quote.split(':')[0]  # 去掉:USDT后缀
-            contract_symbol = f"{base}_{quote}"  # Gate.io的合约格式
-            
             # 获取资金费率
             funding_rate = await self.exchange.fetch_funding_rate(symbol)
             
-            # 获取24小时交易量
-            url = "https://api.gateio.ws/api/v4/futures/usdt/tickers"
-            response = await self.exchange.fetch(url, {
-                'method': 'GET',
-                'headers': {
-                    'Accept': 'application/json',
-                }
-            })
-            
-            volume_24h = 0.0
-            if response and isinstance(response, list):
-                for item in response:
-                    if item.get('contract') == contract_symbol:
-                        volume_24h = float(item.get('volume_24h_settle', 0))
-                        break
+            # 从缓存中获取24小时交易量
+            # 将标准格式转换为Gate.io格式，例如：BTC/USDT:USDT -> BTCUSDT
+            base, quote = symbol.split('/')
+            quote = quote.split(':')[0]
+            gateio_symbol = f"{base}{quote}"
+            volume_24h = self.gateio_futures_volumes.get(gateio_symbol, 0.0)
             
             return {
                 'rate': funding_rate['fundingRate'] * 100,  # 转换为百分比
@@ -432,6 +435,9 @@ class GateioScanner:
     async def scan_markets(self):
         """扫描所有市场"""
         try:
+            # 首先获取所有合约的交易量数据
+            await self.get_gateio_futures_volumes()
+            
             symbols = await self.get_all_symbols()
             logger.info(f"开始扫描 {len(symbols)} 个交易对...")
 
