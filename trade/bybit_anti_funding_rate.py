@@ -290,7 +290,7 @@ class BybitScanner:
             
             # 获取最大杠杆倍数
             max_leverage = await self.get_max_leverage(symbol)
-            logger.debug(f"执行交易 - 最大杠杆倍数: {max_leverage}倍")
+            logger.info(f"执行交易 - 最大杠杆倍数: {max_leverage}倍")
             
             # 设置杠杆
             await self.set_leverage(symbol, max_leverage)
@@ -330,8 +330,8 @@ class BybitScanner:
                     await asyncio.sleep(wait_seconds - self.advance_time)
             elif wait_seconds > self.advance_time:  # 如果还有超过300ms
                 logger.info(f"距离结算时间还有 {wait_seconds:.3f} 秒 ({wait_seconds*1000:.1f}毫秒)，等待中...")
-                # 使用更精确的等待时间，提前330ms发起开仓
-                wait_ms = int((wait_seconds - self.advance_time) * 1000)  # 转换为毫秒，减去300ms
+                # 使用更精确的等待时间
+                wait_ms = int((wait_seconds - self.advance_time) * 1000)
                 await asyncio.sleep(wait_ms / 1000)  # 使用毫秒级等待
             else:
                 logger.warning(f"已经过了结算时间 {abs(wait_seconds):.3f} 秒 ({abs(wait_seconds)*1000:.1f}毫秒)，跳过本次交易")
