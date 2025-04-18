@@ -462,10 +462,21 @@ class BybitScanner:
                 result['next_funding_time'].replace('Z', '+00:00')
             )
 
-        # 按资金费率升序排序，然后按结算时间升序排序
-        sorted_results = sorted(results, key=lambda x: (x['funding_rate'], x['next_funding_datetime']))
+        # 先按结算时间升序排序
+        sorted_by_time = sorted(results, key=lambda x: x['next_funding_datetime'])
         
-        return sorted_results[0] if sorted_results else None
+        # 获取最近的结算时间
+        nearest_time = sorted_by_time[0]['next_funding_datetime']
+        
+        # 筛选出所有结算时间等于最近时间的交易对
+        nearest_opportunities = [result for result in sorted_by_time 
+                               if result['next_funding_datetime'] == nearest_time]
+        
+        # 在最近时间的交易对中，按资金费率升序排序
+        nearest_opportunities.sort(key=lambda x: x['funding_rate'])
+        
+        # 返回资金费率最小的交易对
+        return nearest_opportunities[0] if nearest_opportunities else None
 
     async def close(self):
         """关闭交易所连接"""
