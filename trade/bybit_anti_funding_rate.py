@@ -43,7 +43,14 @@ class BybitScanner:
             'proxies': proxies,
         })
         self.time_offset = 0  # 本地时间与服务器时间的偏移量（秒）
-        self.advance_time = 0.30  # 提前下单时间（秒）
+        """
+        [2025-04-17 12:00:00,340] INFO bybit_anti_funding_rate.py:323) 开仓耗时 0.337 秒，等待 1.663 秒后平仓
+        [2025-04-17 16:00:01,607] INFO bybit_anti_funding_rate.py:324) 开仓耗时 0.333 秒，等待 0.393 秒后平仓
+        [2025-04-17 20:00:00,191] INFO bybit_anti_funding_rate.py:335) 开仓耗时 0.337 秒，等待 1.809 秒后平仓
+        [2025-04-18 00:00:00,069] INFO bybit_anti_funding_rate.py:336) 开仓耗时 0.365 秒，等待 1.931 秒后平仓
+        """
+        self.advance_time = 0.33  # 提前下单时间（秒）
+        self.close_delay = 3.0  # 平仓延时（秒）
 
     async def sync_time(self):
         """同步服务器时间，确保毫秒级精度"""
@@ -86,7 +93,7 @@ class BybitScanner:
                 local_time = int(time.time() * 1000)
                 current_offset = (server_time - local_time) / 1000
                 
-                logger.debug(f"时间同步微调 {attempt+1}/{max_attempts} - "
+                logger.info(f"时间同步微调 {attempt+1}/{max_attempts} - "
                            f"服务器时间: {datetime.fromtimestamp(server_time/1000, tz=utc)}, "
                            f"本地时间: {datetime.fromtimestamp(local_time/1000, tz=utc)}, "
                            f"时间偏移: {current_offset:.3f}秒")
@@ -153,23 +160,23 @@ class BybitScanner:
             quote = quote.split(':')[0]  # 去掉:USDT后缀
             contract_symbol = f"{base}{quote}"  # 例如: AERGOUSDT
             
-            logger.debug(f"获取最大杠杆倍数 - 原始交易对: {symbol}")
-            logger.debug(f"获取最大杠杆倍数 - 基础币: {base}")
-            logger.debug(f"获取最大杠杆倍数 - 计价币: {quote}")
-            logger.debug(f"获取最大杠杆倍数 - 合约交易对: {contract_symbol}")
+            logger.info(f"获取最大杠杆倍数 - 原始交易对: {symbol}")
+            logger.info(f"获取最大杠杆倍数 - 基础币: {base}")
+            logger.info(f"获取最大杠杆倍数 - 计价币: {quote}")
+            logger.info(f"获取最大杠杆倍数 - 合约交易对: {contract_symbol}")
             
             params = {
                 'category': 'linear',
                 'symbol': contract_symbol
             }
-            logger.debug(f"获取最大杠杆倍数 - API参数: {params}")
+            logger.info(f"获取最大杠杆倍数 - API参数: {params}")
             
             response = await self.exchange.publicGetV5MarketInstrumentsInfo(params)
-            logger.debug(f"获取最大杠杆倍数 - API响应: {response}")
+            logger.info(f"获取最大杠杆倍数 - API响应: {response}")
             
             if response and 'result' in response and 'list' in response['result']:
                 for instrument in response['result']['list']:
-                    logger.debug(f"获取最大杠杆倍数 - 检查交易对: {instrument['symbol']}")
+                    logger.info(f"获取最大杠杆倍数 - 检查交易对: {instrument['symbol']}")
                     if instrument['symbol'] == contract_symbol:
                         # 先将字符串转换为float，再转换为int
                         max_leverage = int(float(instrument['leverageFilter']['maxLeverage']))
@@ -191,10 +198,10 @@ class BybitScanner:
             quote = quote.split(':')[0]  # 去掉:USDT后缀
             contract_symbol = f"{base}{quote}"  # 例如: AERGOUSDT
             
-            logger.debug(f"设置杠杆倍数 - 原始交易对: {symbol}")
-            logger.debug(f"设置杠杆倍数 - 基础币: {base}")
-            logger.debug(f"设置杠杆倍数 - 计价币: {quote}")
-            logger.debug(f"设置杠杆倍数 - 合约交易对: {contract_symbol}")
+            logger.info(f"设置杠杆倍数 - 原始交易对: {symbol}")
+            logger.info(f"设置杠杆倍数 - 基础币: {base}")
+            logger.info(f"设置杠杆倍数 - 计价币: {quote}")
+            logger.info(f"设置杠杆倍数 - 合约交易对: {contract_symbol}")
             
             params = {
                 'category': 'linear',
@@ -202,10 +209,10 @@ class BybitScanner:
                 'buyLeverage': str(leverage),
                 'sellLeverage': str(leverage)
             }
-            logger.debug(f"设置杠杆倍数 - API参数: {params}")
+            logger.info(f"设置杠杆倍数 - API参数: {params}")
             
             response = await self.exchange.privatePostV5PositionSetLeverage(params)
-            logger.debug(f"设置杠杆倍数 - API响应: {response}")
+            logger.info(f"设置杠杆倍数 - API响应: {response}")
             
             logger.info(f"设置{symbol}杠杆倍数为: {leverage}倍")
         except Exception as e:
@@ -260,31 +267,31 @@ class BybitScanner:
             quote = quote.split(':')[0]  # 去掉:USDT后缀
             contract_symbol = f"{base}{quote}"  # 例如: AERGOUSDT
             
-            logger.debug(f"执行交易 - 原始交易对: {symbol}")
-            logger.debug(f"执行交易 - 基础币: {base}")
-            logger.debug(f"执行交易 - 计价币: {quote}")
-            logger.debug(f"执行交易 - 合约交易对: {contract_symbol}")
+            logger.info(f"执行交易 - 原始交易对: {symbol}")
+            logger.info(f"执行交易 - 基础币: {base}")
+            logger.info(f"执行交易 - 计价币: {quote}")
+            logger.info(f"执行交易 - 合约交易对: {contract_symbol}")
             
             # 计算交易金额
             volume_per_second = opportunity['volume_24h'] / (24 * 60 * 60)
-            trade_amount = min(volume_per_second * 2, 200)  # 取每秒交易额的2倍和200USDT中的较小值
-            logger.debug(f"执行交易 - 每秒交易量: {volume_per_second:.2f} USDT")
-            logger.debug(f"执行交易 - 计划交易量: {trade_amount:.2f} USDT")
+            trade_amount = min(volume_per_second * 2, 500)  # 取每秒交易额的2倍和500USDT中的较小值
+            logger.info(f"执行交易 - 每秒交易量: {volume_per_second:.2f} USDT")
+            logger.info(f"执行交易 - 计划交易量: {trade_amount:.2f} USDT")
             
             # 获取最大杠杆倍数
             max_leverage = await self.get_max_leverage(symbol)
-            logger.debug(f"执行交易 - 最大杠杆倍数: {max_leverage}倍")
+            logger.info(f"执行交易 - 最大杠杆倍数: {max_leverage}倍")
             
             # 设置杠杆
             await self.set_leverage(symbol, max_leverage)
             
             # 计算开仓数量
             ticker = await self.exchange.fetch_ticker(symbol)
-            logger.debug(f"执行交易 - 获取行情: {ticker}")
+            logger.info(f"执行交易 - 获取行情: {ticker}")
             current_price = ticker['last']
             position_size = trade_amount / current_price
-            logger.debug(f"执行交易 - 当前价格: {current_price} USDT")
-            logger.debug(f"执行交易 - 开仓数量: {position_size} {base}")
+            logger.info(f"执行交易 - 当前价格: {current_price} USDT")
+            logger.info(f"执行交易 - 开仓数量: {position_size} {base}")
             
             # 等待到结算时间
             next_funding_time = datetime.fromisoformat(
@@ -327,12 +334,12 @@ class BybitScanner:
                 symbol=contract_symbol,  # 使用合约交易对格式
                 amount=position_size
             )
-            logger.debug(f"执行交易 - 开空单结果: {sell_order}")
+            logger.info(f"执行交易 - 开空单结果: {sell_order}")
             
             # 计算需要等待的时间，确保在结算时间后2秒准时平仓
             now = time.time()
             settlement_time = datetime.fromisoformat(opportunity['next_funding_time'].replace('Z', '+00:00')).timestamp()
-            wait_until_close = max(0, settlement_time + 2 - now)  # 确保在结算时间后2秒平仓
+            wait_until_close = max(0, settlement_time + self.close_delay - now)  # 确保在结算时间后3秒平仓
             logger.info(f"开仓耗时 {now - open_time:.3f} 秒，等待 {wait_until_close:.3f} 秒后平仓")
             await asyncio.sleep(wait_until_close)
             
@@ -342,7 +349,7 @@ class BybitScanner:
                 symbol=contract_symbol,  # 使用合约交易对格式
                 amount=position_size
             )
-            logger.debug(f"执行交易 - 平空单结果: {buy_order}")
+            logger.info(f"执行交易 - 平空单结果: {buy_order}")
             
             # 等待一段时间确保订单完成
             await asyncio.sleep(3)
@@ -381,7 +388,7 @@ class BybitScanner:
                 close_fee = 0.0
             
             # 计算交易结果
-            price_diff = close_price - open_price
+            price_diff = open_price - close_price  # 空单盈亏 = (开仓价格 - 平仓价格) * 数量
             gross_profit = filled_amount * price_diff
             total_fee = open_fee + close_fee
             net_profit = gross_profit - total_fee
