@@ -33,7 +33,7 @@ from config import gateio_api_key, gateio_api_secret, proxies
 
 
 class GateioScanner:
-    def __init__(self, advance_time=0.115, close_delay=3.0, funding_rate_threshold=-1.5, trade_amount_limit=2000.0):
+    def __init__(self, advance_time=0.120, close_delay=3.0, funding_rate_threshold=-1.5, trade_amount_limit=2000.0):
         """初始化Gate.io扫描器
 
         Args:
@@ -535,7 +535,7 @@ async def main():
     """主函数"""
     # 创建命令行参数解析器
     parser = argparse.ArgumentParser(description='Gate.io资金费率套利工具')
-    parser.add_argument('-a', '--advance-time', type=float, default=0.115,
+    parser.add_argument('-a', '--advance-time', type=float, default=0.120,
                         help='提前下单时间（秒），默认0.32秒')
     parser.add_argument('-d', '--close-delay', type=float, default=3.0,
                         help='平仓延时（秒），默认3.0秒')
