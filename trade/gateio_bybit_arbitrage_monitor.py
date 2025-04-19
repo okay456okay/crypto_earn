@@ -112,9 +112,9 @@ class ArbitrageChecker:
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
             # 打印表头
-            print(f"\n{'='*80}")
-            print(f"{'交易对':<10} {'Gate.io卖一价':<15} {'Bybit买一价':<15} {'价差(%)':<10} {'时间':<20}")
-            print(f"{'-'*80}")
+            print(f"\n{'='*100}")
+            print(f"{'交易对':<10} {'Gate.io卖一价':<15} {'Bybit买一价':<15} {'价差(%)':<10} {'Gate.io卖一量':<15} {'Bybit买一量':<15} {'时间':<20}")
+            print(f"{'-'*100}")
 
             # 处理每个交易对的结果
             for i in range(0, len(results), 2):
@@ -127,37 +127,31 @@ class ArbitrageChecker:
                     continue
 
                 try:
-                    # 获取买卖价格
+                    # 获取买卖价格和数量
                     gateio_ask = Decimal(str(gateio_ob['asks'][0][0]))  # Gate.io卖一价
+                    gateio_ask_vol = Decimal(str(gateio_ob['asks'][0][1]))  # Gate.io卖一量
                     bybit_bid = Decimal(str(bybit_ob['bids'][0][0]))  # Bybit买一价
+                    bybit_bid_vol = Decimal(str(bybit_ob['bids'][0][1]))  # Bybit买一量
 
                     # 计算实际价差（考虑手续费）
                     actual_spread = (bybit_bid * (1 - Decimal(str(CONTRACT_FEE)))) / (gateio_ask * (1 + Decimal(str(SPOT_FEE)))) - 1
                     spread_percent = float(actual_spread * 100)
 
-                    # 根据价差设置颜色
-                    color_code = "\033[92m" if spread_percent > MIN_SPREAD * 100 else "\033[0m"
-                    
-                    # 打印结果
-                    print(f"{color_code}{symbol:<10} {float(gateio_ask):<15.4f} {float(bybit_bid):<15.4f} {spread_percent:<10.4f} {datetime.now().strftime('%H:%M:%S'):<20}\033[0m")
-
-                    # 如果价差大于最小要求，记录详细日志
+                    # 只打印满足价差要求的交易对
                     if actual_spread > Decimal(str(MIN_SPREAD)):
+                        print(f"{symbol:<10} {float(gateio_ask):<15.4f} {float(bybit_bid):<15.4f} {spread_percent:<10.4f} {float(gateio_ask_vol):<15.4f} {float(bybit_bid_vol):<15.4f} {datetime.now().strftime('%H:%M:%S'):<20}")
+                        
+                        # 记录详细日志
                         logger.info(
-                            f"\n{'='*50}\n"
-                            f"发现套利机会!\n"
-                            f"交易对: {symbol}\n"
-                            f"Gate.io卖一价: {gateio_ask}\n"
-                            f"Bybit买一价: {bybit_bid}\n"
-                            f"实际价差: {spread_percent:.4f}%\n"
-                            f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                            f"{'='*50}"
+                            f"发现套利机会! 交易对: {symbol}, Gate.io卖一价: {gateio_ask}, Bybit买一价: {bybit_bid}, "
+                            f"实际价差: {spread_percent:.4f}%, Gate.io卖一量: {gateio_ask_vol}, Bybit买一量: {bybit_bid_vol}, "
+                            f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
                         )
 
                 except Exception as e:
                     logger.error(f"处理 {symbol} 价差时出错: {str(e)}")
 
-            print(f"{'='*80}\n")
+            print(f"{'='*100}\n")
 
         except Exception as e:
             logger.error(f"检查价差时出错: {str(e)}")
