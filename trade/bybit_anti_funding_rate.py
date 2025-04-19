@@ -406,6 +406,12 @@ class BybitScanner:
             
             logger.info(f"\n=== 交易结果统计 ===")
             logger.info(f"交易对: {symbol}")
+            logger.info(f"开仓时间: {sell_order_details['datetime']}")
+            # 判断开仓时间是否早于结算时间
+            open_time = datetime.fromisoformat(sell_order_details['datetime'].replace('Z', '+00:00'))
+            settlement_time = datetime.fromisoformat(opportunity['next_funding_time'].replace('Z', '+00:00'))
+            if open_time < settlement_time:
+                logger.warning(f"警告：开仓时间早于结算时间 {open_time} > {settlement_time}")
             logger.info(f"开仓价格: {open_price:.8f} USDT")
             logger.info(f"平仓价格: {close_price:.8f} USDT")
             logger.info(f"持仓数量: {filled_amount:.8f} {base}")
