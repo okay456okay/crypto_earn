@@ -33,16 +33,10 @@ SPOT_FEE = 0.001  # Gate.io现货手续费 0.1%
 TOTAL_FEE = CONTRACT_FEE + SPOT_FEE  # 总手续费
 
 class ArbitrageMonitor:
-    def __init__(self, symbols: List[str]):
+    def __init__(self):
         """
         初始化套利监控器
-        
-        Args:
-            symbols: 要监控的交易对列表，例如 ['ETH/USDT', 'BTC/USDT']
         """
-        self.symbols = symbols
-        self.contract_symbols = [s.replace('/', '') for s in symbols]  # 转换为合约格式
-        
         # 初始化交易所
         self.gateio = ccxtpro.gateio({
             'apiKey': gateio_api_key,
@@ -69,18 +63,58 @@ class ArbitrageMonitor:
             'ws_socks_proxy': proxies.get('https', None),
         })
 
+        # 初始化交易对列表
+        self.symbols = []
+        self.contract_symbols = []
+        
         # 存储订单簿数据
         self.orderbooks = {
-            'gateio': {symbol: None for symbol in symbols},
-            'bybit': {symbol: None for symbol in contract_symbols}
+            'gateio': {},
+            'bybit': {}
         }
 
         # 存储价差数据
-        self.spreads = {symbol: None for symbol in symbols}
+        self.spreads = {}
         
         # 控制WebSocket订阅
         self.ws_running = False
-        self.last_update_time = {symbol: 0 for symbol in symbols}
+        self.last_update_time = {}
+
+    async def load_markets(self):
+        """加载两个交易所的市场数据并找出共同支持的交易对"""
+        try:
+            # 加载市场数据
+            await self.gateio.load_markets()
+            await self.bybit.load_markets()
+
+            # 获取Gate.io的现货交易对
+            gateio_symbols = set(self.gateio.markets.keys())
+            
+            # 获取Bybit的合约交易对
+            bybit_symbols = set(self.bybit.markets.keys())
+            
+            # 找出共同支持的交易对
+            common_symbols = gateio_symbols.intersection(bybit_symbols)
+            
+            # 过滤出USDT交易对
+            usdt_symbols = [s for s in common_symbols if s.endswith('/USDT')]
+            
+            # 设置交易对列表
+            self.symbols = sorted(usdt_symbols)
+            self.contract_symbols = [s.replace('/', '') for s in self.symbols]
+            
+            # 初始化数据结构
+            self.orderbooks['gateio'] = {symbol: None for symbol in self.symbols}
+            self.orderbooks['bybit'] = {symbol: None for symbol in self.contract_symbols}
+            self.spreads = {symbol: None for symbol in self.symbols}
+            self.last_update_time = {symbol: 0 for symbol in self.symbols}
+            
+            logger.info(f"成功加载 {len(self.symbols)} 个共同支持的交易对")
+            logger.info(f"交易对列表: {self.symbols}")
+            
+        except Exception as e:
+            logger.error(f"加载市场数据时出错: {str(e)}")
+            raise
 
     async def subscribe_orderbooks(self):
         """订阅所有交易对的订单簿数据"""
@@ -244,15 +278,14 @@ async def main():
     # 设置日志级别
     logger.setLevel(logging.INFO)
     
-    # 要监控的交易对列表
-    symbols = [
-        'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT',
-        'ADA/USDT', 'DOGE/USDT', 'DOT/USDT', 'MATIC/USDT', 'LINK/USDT'
-    ]
-    
     try:
-        # 创建并启动监控器
-        monitor = ArbitrageMonitor(symbols)
+        # 创建监控器
+        monitor = ArbitrageMonitor()
+        
+        # 加载市场数据
+        await monitor.load_markets()
+        
+        # 启动监控
         await monitor.start_monitoring()
         
     except Exception as e:
