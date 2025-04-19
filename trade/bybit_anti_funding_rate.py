@@ -32,7 +32,7 @@ from config import bybit_api_key, bybit_api_secret, proxies
 
 
 class BybitScanner:
-    def __init__(self, advance_time=0.32, close_delay=3.0, funding_rate_threshold=-1.5, trade_amount_limit=2000.0):
+    def __init__(self, advance_time=0.325, close_delay=3.0, funding_rate_threshold=-1.0, trade_amount_limit=2000.0):
         """初始化Bybit扫描器
         
         Args:
@@ -520,12 +520,12 @@ async def main():
     """主函数"""
     # 创建命令行参数解析器
     parser = argparse.ArgumentParser(description='Bybit资金费率套利工具')
-    parser.add_argument('-a', '--advance-time', type=float, default=0.32,
-                      help='提前下单时间（秒），默认0.32秒')
+    parser.add_argument('-a', '--advance-time', type=float, default=0.325,
+                      help='提前下单时间（秒），默认0.325秒')
     parser.add_argument('-d', '--close-delay', type=float, default=3.0,
                       help='平仓延时（秒），默认3.0秒')
-    parser.add_argument('-t', '--threshold', type=float, default=-1.5,
-                      help='资金费率筛选阈值（百分比），默认-1.5%%')
+    parser.add_argument('-t', '--threshold', type=float, default=-1.0,
+                      help='资金费率筛选阈值（百分比），默认-1.0%%')
     parser.add_argument('-l', '--trade-limit', type=float, default=2000.0,
                       help='单笔交易限额（USDT），默认2000.0 USDT')
     
