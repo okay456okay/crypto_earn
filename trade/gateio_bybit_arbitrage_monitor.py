@@ -84,7 +84,7 @@ class ArbitrageChecker:
             url = "https://api.bybit.com/v5/market/tickers"
             params = {
                 "category": "linear",
-                "symbol": f"{token}"
+                "symbol": f"{token}USDT"
             }
             response = requests.get(url, params=params)
             if response.status_code != 200:
