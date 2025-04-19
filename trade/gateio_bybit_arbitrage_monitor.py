@@ -193,7 +193,7 @@ class ArbitrageChecker:
                         # 格式化下次结算时间
                         next_funding_time = datetime.fromtimestamp(funding_info.get('fundingTime', 0)/1000).strftime('%Y-%m-%d %H:%M:%S') if funding_info else 'N/A'
                         
-                        print(f"{symbol:<10} {float(gateio_ask):<15.4f} {float(bybit_bid):<15.4f} {spread_percent:<10.4f} {float(gateio_ask_vol):<15.4f} {float(bybit_bid_vol):<15.4f} {funding_info.get('fundingRate', 0):<15.4f} {next_funding_time:<20} {funding_info.get('fundingIntervalHoursText', 'N/A'):<10}")
+                        # print(f"{symbol:<10} {float(gateio_ask):<15.4f} {float(bybit_bid):<15.4f} {spread_percent:<10.4f} {float(gateio_ask_vol):<15.4f} {float(bybit_bid_vol):<15.4f} {funding_info.get('fundingRate', 0):<15.4f} {next_funding_time:<20} {funding_info.get('fundingIntervalHoursText', 'N/A'):<10}")
                         
                         # 记录详细日志
                         logger.info(
