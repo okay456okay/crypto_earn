@@ -32,7 +32,7 @@ from config import bybit_api_key, bybit_api_secret, proxies
 
 
 class BybitScanner:
-    def __init__(self, advance_time=0.325, close_delay=3.0, funding_rate_threshold=-1.0, trade_amount_limit=3000.0):
+    def __init__(self, advance_time=0.325, close_delay=3.0, funding_rate_threshold=-1.0, trade_amount_limit=100.0):
         """初始化Bybit扫描器
         
         Args:
@@ -284,7 +284,7 @@ class BybitScanner:
             
             # 计算交易金额
             volume_per_second = opportunity['volume_24h'] / (24 * 60 * 60)
-            trade_amount = min(volume_per_second * 4, self.trade_amount_limit)  # 取每秒交易额的2倍和交易限额中的较小值
+            trade_amount = min(volume_per_second * 1, self.trade_amount_limit)  # 取每秒交易额的1倍和交易限额中的较小值
             logger.info(f"执行交易 - 每秒交易量: {volume_per_second:.2f} USDT")
             logger.info(f"执行交易 - 计划交易量: {trade_amount:.2f} USDT")
             
@@ -532,8 +532,8 @@ async def main():
                       help='平仓延时（秒），默认3.0秒')
     parser.add_argument('-t', '--threshold', type=float, default=-1.0,
                       help='资金费率筛选阈值（百分比），默认-1.0%%')
-    parser.add_argument('-l', '--trade-limit', type=float, default=3000.0,
-                      help='单笔交易限额（USDT），默认3000.0 USDT')
+    parser.add_argument('-l', '--trade-limit', type=float, default=100.0,
+                      help='单笔交易限额（USDT），默认100.0 USDT')
     
     # 解析命令行参数
     args = parser.parse_args()
