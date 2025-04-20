@@ -10,6 +10,7 @@ Gate.io现货买入与Bybit合约空单对冲的套利脚本
 3. 确保现货和合约仓位保持一致
 4. 检查价差是否满足最小套利条件
 5. 监控和记录交易执行情况
+6. 支持重复执行多次交易操作
 """
 
 import sys
@@ -51,6 +52,7 @@ class HedgeTrader:
         # 设置合约交易对
         base, quote = symbol.split('/')
         self.contract_symbol = f"{base}{quote}"  # 例如: ETHUSDT
+        self.base_currency = base  # 例如: ETH
 
         # 使用 ccxt pro 初始化交易所
         self.gateio = ccxtpro.gateio({
@@ -91,6 +93,10 @@ class HedgeTrader:
         # 用于控制WebSocket订阅
         self.ws_running = False
         self.price_updates = asyncio.Queue()
+        
+        # 记录本次操作的实际持仓数量
+        self.last_trade_spot_amount = 0
+        self.last_trade_contract_amount = 0
 
     async def initialize(self):
         """
@@ -372,28 +378,49 @@ class HedgeTrader:
             )
 
             # 4. 交易后再进行其他操作
-            base_currency = self.symbol.split('/')[0]
-            logger.info(f"计划交易数量: {trade_amount} {base_currency}")
-            logger.info(f"在Gate.io市价买入 {trade_amount} {base_currency}, 预估成本: {cost:.2f} USDT")
-            logger.info(f"在Bybit市价开空单 {contract_amount} {base_currency}")
+            logger.info(f"计划交易数量: {trade_amount} {self.base_currency}")
+            logger.info(f"在Gate.io市价买入 {trade_amount} {self.base_currency}, 预估成本: {cost:.2f} USDT")
+            logger.info(f"在Bybit市价开空单 {contract_amount} {self.base_currency}")
+
+            # 5. 验证订单是否有效
+            if not spot_order or not contract_order:
+                raise Exception("订单执行失败：一个或两个订单未成功创建")
+                
+            # 6. 检查订单状态
+            if spot_order.get('status') not in ['closed', 'open', 'filled']:
+                raise Exception(f"Gate.io现货订单状态异常: {spot_order.get('status')}")
+                
+            if contract_order.get('status') not in ['closed', 'open', 'filled']:
+                raise Exception(f"Bybit合约订单状态异常: {contract_order.get('status')}")
 
             # 获取现货订单的实际成交结果
             filled_amount = float(spot_order['filled'])
             fees = spot_order.get('fees', [])
-            base_fee = sum(float(fee['cost']) for fee in fees if fee['currency'] == base_currency)
+            base_fee = sum(float(fee['cost']) for fee in fees if fee['currency'] == self.base_currency)
             actual_position = filled_amount - base_fee
+            
+            # 获取合约订单的实际成交结果
+            contract_filled = float(contract_order['filled'])
+            
+            # 记录本次交易的实际数量，用于后续持仓检查
+            self.last_trade_spot_amount = actual_position
+            self.last_trade_contract_amount = contract_filled
 
-            logger.info(f"Gate.io实际成交数量: {filled_amount} {base_currency}, "
-                        f"手续费: {base_fee} {base_currency}, "
-                        f"实际持仓: {actual_position} {base_currency}")
+            logger.info(f"Gate.io实际成交数量: {filled_amount} {self.base_currency}, "
+                        f"手续费: {base_fee} {self.base_currency}, "
+                        f"实际持仓: {actual_position} {self.base_currency}")
+            logger.info(f"Bybit合约实际成交数量: {contract_filled} {self.base_currency}")
 
-            # 检查持仓情况
-            await self.check_positions()
+            # 检查持仓是否平衡
+            if not await self.check_trade_balance():
+                logger.warning("本次交易现货和合约持仓不平衡，请检查")
+            else:
+                logger.info("本次交易现货和合约持仓平衡")
 
             # 申购余币宝
             try:
-                gateio_subscrible_earn(base_currency, actual_position)
-                logger.info(f"已将 {actual_position} {base_currency} 申购到余币宝")
+                gateio_subscrible_earn(self.base_currency, actual_position)
+                logger.info(f"已将 {actual_position} {self.base_currency} 申购到余币宝")
             except Exception as e:
                 logger.error(f"余币宝申购失败，但不影响主要交易流程: {str(e)}")
 
@@ -418,8 +445,7 @@ class HedgeTrader:
             )
 
             # 获取现货最新成交订单的信息
-            base_currency = self.symbol.split('/')[0]
-            gateio_position = gateio_balance.get(base_currency, {}).get('total', 0)
+            gateio_position = gateio_balance.get(self.base_currency, {}).get('total', 0)
 
             # 检查Bybit合约持仓
             contract_position = 0
@@ -437,8 +463,8 @@ class HedgeTrader:
             else:
                 logger.warning("未获取到Bybit合约持仓信息")
 
-            logger.info(f"持仓检查 - Gate.io现货: {gateio_position} {base_currency}, "
-                        f"Bybit合约: {contract_position} {base_currency}")
+            logger.info(f"持仓检查 - Gate.io现货: {gateio_position} {self.base_currency}, "
+                        f"Bybit合约: {contract_position} {self.base_currency}")
 
             # 检查是否平衡（允许0.5%的误差）
             position_diff = abs(float(gateio_position) - float(contract_position))
@@ -446,10 +472,10 @@ class HedgeTrader:
 
             if position_diff_percent > 0.5:  # 允许0.5%的误差
                 logger.warning(
-                    f"现货和合约持仓不平衡! 差异: {position_diff} {base_currency} ({position_diff_percent:.2f}%)")
+                    f"现货和合约持仓不平衡! 差异: {position_diff} {self.base_currency} ({position_diff_percent:.2f}%)")
             else:
                 logger.info(
-                    f"现货和合约持仓基本平衡，差异在允许范围内: {position_diff} {base_currency} ({position_diff_percent:.2f}%)")
+                    f"现货和合约持仓基本平衡，差异在允许范围内: {position_diff} {self.base_currency} ({position_diff_percent:.2f}%)")
 
         except Exception as e:
             logger.error(f"获取Bybit合约持仓信息失败: {str(e)}")
@@ -483,6 +509,39 @@ class HedgeTrader:
             logger.error(f"获取最大杠杆倍数时出错: {str(e)}")
             return 10  # 如果出错，返回默认值10倍
 
+    async def check_trade_balance(self):
+        """
+        检查本次交易的现货和合约持仓是否平衡
+        
+        Returns:
+            bool: 如果持仓平衡返回True，否则返回False
+        """
+        try:
+            # 检查是否有交易数据
+            if self.last_trade_spot_amount <= 0 or self.last_trade_contract_amount <= 0:
+                logger.warning("无有效的交易数据用于检查持仓平衡")
+                return False
+                
+            # 计算持仓差异
+            position_diff = abs(self.last_trade_spot_amount - self.last_trade_contract_amount)
+            position_diff_percent = position_diff / self.last_trade_spot_amount * 100
+            
+            logger.info(f"本次交易持仓对比 - 现货: {self.last_trade_spot_amount} {self.base_currency}, "
+                      f"合约: {self.last_trade_contract_amount} {self.base_currency}, "
+                      f"差异: {position_diff} {self.base_currency} ({position_diff_percent:.2f}%)")
+            
+            # 检查是否平衡（允许0.5%的误差）
+            if position_diff_percent > 0.5:  # 允许0.5%的误差
+                logger.warning(f"本次交易现货和合约持仓不平衡! 差异: {position_diff} {self.base_currency} ({position_diff_percent:.2f}%)")
+                return False
+            else:
+                logger.info(f"本次交易现货和合约持仓基本平衡，差异在允许范围内: {position_diff} {self.base_currency} ({position_diff_percent:.2f}%)")
+                return True
+                
+        except Exception as e:
+            logger.error(f"检查本次交易持仓平衡时出错: {str(e)}")
+            return False
+
 
 def parse_arguments():
     """
@@ -493,6 +552,7 @@ def parse_arguments():
     parser.add_argument('-a', '--amount', type=float, required=True, help='购买的现货数量')
     parser.add_argument('-p', '--min-spread', type=float, default=-0.0001, help='最小价差要求，默认0.001 (0.1%%)')
     parser.add_argument('-l', '--leverage', type=int, help='合约杠杆倍数，如果不指定则使用交易所支持的最大杠杆倍数')
+    parser.add_argument('-c', '--count', type=int, default=1, help='重复执行交易操作的次数，默认为1次')
     parser.add_argument('--test-earn', action='store_true', help='测试余币宝申购功能')
     parser.add_argument('-d', '--debug', action='store_true', help='启用调试日志')
     return parser.parse_args()
@@ -532,6 +592,10 @@ async def main():
         await test_earn_subscription()
         return 0
 
+    # 获取要执行的次数
+    total_count = max(1, args.count)  # 确保至少执行一次
+    executed_count = 0
+    
     try:
         # 创建并初始化交易器
         trader = HedgeTrader(
@@ -542,16 +606,65 @@ async def main():
         )
         await trader.initialize()
 
-        spot_order, contract_order = await trader.execute_hedge_trade()
-        if spot_order and contract_order:
-            logger.info("对冲交易成功完成!")
-        else:
-            logger.info("未执行对冲交易")
+        # 循环执行交易操作指定次数
+        for i in range(total_count):
+            current_iteration = i + 1
+            logger.info(f"开始执行第 {current_iteration}/{total_count} 次交易操作")
+            
+            try:
+                # 每次循环前重新检查余额是否足够
+                trader.gateio_usdt, trader.bybit_usdt = await trader.check_balances()
+                
+                # 计算所需的USDT
+                orderbook = await trader.gateio.fetch_order_book(trader.symbol)
+                current_price = float(orderbook['asks'][0][0])
+                
+                required_usdt = float(trader.spot_amount) * current_price * 1.02
+                required_margin = float(trader.spot_amount) * current_price / trader.leverage * 1.05
+                
+                # 检查余额是否足够
+                if required_usdt > trader.gateio_usdt or trader.gateio_usdt < 50:
+                    try:
+                        redeem_earn('USDT', max(required_usdt * 1.01, 50))
+                        # 重新获取并保存账户余额
+                        trader.gateio_usdt, trader.bybit_usdt = await trader.check_balances()
+                        if required_usdt > trader.gateio_usdt:
+                            logger.error(f"Gate.io USDT余额不足，需要约 {required_usdt:.2f} USDT，"
+                                        f"当前余额 {trader.gateio_usdt:.2f} USDT，无法继续执行")
+                            break
+                    except Exception as e:
+                        logger.error(f"赎回USDT失败: {str(e)}，无法继续执行")
+                        break
+                
+                if required_margin > trader.bybit_usdt:
+                    logger.error(f"Bybit USDT保证金不足，需要约 {required_margin:.2f} USDT，"
+                               f"当前余额 {trader.bybit_usdt:.2f} USDT，无法继续执行")
+                    break
+                
+                # 执行对冲交易
+                spot_order, contract_order = await trader.execute_hedge_trade()
+                
+                if spot_order and contract_order:
+                    logger.info(f"第 {current_iteration}/{total_count} 次对冲交易成功完成!")
+                    executed_count += 1
+                else:
+                    logger.warning(f"第 {current_iteration}/{total_count} 次交易未执行成功")
+                    break
+                
+                # 如果不是最后一次，等待一段时间后再执行下一次交易
+                if current_iteration < total_count:
+                    await asyncio.sleep(2)  # 等待2秒再开始下一次交易
+                
+            except Exception as e:
+                logger.error(f"第 {current_iteration}/{total_count} 次交易操作时出错: {str(e)}")
+                break
 
     except Exception as e:
         logger.error(f"程序执行过程中发生错误: {str(e)}")
-        return 1
     finally:
+        # 打印执行统计
+        logger.info(f"交易操作完成统计: 成功执行 {executed_count}/{total_count} 次")
+        
         # 确保关闭交易所连接
         if 'trader' in locals():
             await asyncio.gather(
@@ -559,7 +672,7 @@ async def main():
                 trader.bybit.close()
             )
 
-    return 0
+    return 0 if executed_count == total_count else 1
 
 
 if __name__ == "__main__":

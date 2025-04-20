@@ -374,8 +374,7 @@ class HedgeTrader:
             # 检查订单是否成功执行
             if spot_status not in ['closed', 'filled'] or contract_status not in ['closed', 'filled']:
                 logger.error(f"订单执行异常 - 现货订单状态: {spot_status}, 合约订单状态: {contract_status}")
-                logger.info(f"已完成 {successful_trades}/{args.count} 次交易，因订单执行异常退出程序")
-                return 0 if successful_trades > 0 else 1
+                return None, None
             
             # 检查本次操作的现货和合约数量是否匹配
             base_currency = self.symbol.split('/')[0]
@@ -405,12 +404,8 @@ class HedgeTrader:
                 # 如果持仓差异超过2%，视为异常
                 if position_diff_percent > 2:
                     logger.error(f"本次操作的现货和合约持仓差异过大: {position_diff} {base_currency} ({position_diff_percent:.2f}%)")
-                    logger.info(f"已完成 {successful_trades}/{args.count} 次交易，因持仓不平衡退出程序")
-                    return 0 if successful_trades > 0 else 1
+                    return None, None
             
-            logger.info(f"成功完成第 {i+1}/{args.count} 次对冲交易!")
-            successful_trades += 1
-
             # 检查持仓情况
             await self.check_positions()
 
@@ -559,8 +554,10 @@ async def main():
     
     # 记录成功完成的交易次数
     successful_trades = 0
-        
+    
     try:
+        logger.info(f"计划执行 {args.count} 次交易操作")
+        
         # 创建并初始化交易器
         trader = HedgeTrader(
             symbol=args.symbol,
@@ -616,47 +613,6 @@ async def main():
                     logger.info(f"测试模式完成第 {i+1}/{args.count} 次交易")
                     successful_trades += 1
                 elif spot_order and contract_order:
-                    # 验证订单执行状态
-                    spot_status = spot_order.get('status', '')
-                    contract_status = contract_order.get('status', '')
-                    
-                    # 检查订单是否成功执行
-                    if spot_status not in ['closed', 'filled'] or contract_status not in ['closed', 'filled']:
-                        logger.error(f"订单执行异常 - 现货订单状态: {spot_status}, 合约订单状态: {contract_status}")
-                        logger.info(f"已完成 {successful_trades}/{args.count} 次交易，因订单执行异常退出程序")
-                        return 0 if successful_trades > 0 else 1
-                    
-                    # 检查本次操作的现货和合约数量是否匹配
-                    base_currency = trader.symbol.split('/')[0]
-                    
-                    # 获取现货订单的实际成交结果
-                    spot_filled_amount = float(spot_order['filled'])
-                    spot_fees = spot_order.get('fees', [])
-                    spot_base_fee = sum(float(fee['cost']) for fee in spot_fees if fee['currency'] == base_currency)
-                    spot_actual_position = spot_filled_amount - spot_base_fee
-                    
-                    # 获取合约订单的实际成交结果
-                    contract_filled_amount = float(contract_order['filled'])
-                    contract_fees = contract_order.get('fees', [])
-                    contract_base_fee = sum(float(fee['cost']) for fee in contract_fees if fee['currency'] == base_currency)
-                    contract_actual_position = contract_filled_amount - contract_base_fee
-                    
-                    # 检查本次操作的现货和合约持仓差异
-                    position_diff = abs(spot_actual_position - contract_actual_position)
-                    if spot_actual_position > 0:
-                        position_diff_percent = position_diff / spot_actual_position * 100
-                        
-                        # 记录本次操作的持仓情况
-                        logger.info(f"本次操作 - 现货成交: {spot_actual_position} {base_currency}, "
-                                   f"合约成交: {contract_actual_position} {base_currency}, "
-                                   f"差异: {position_diff} {base_currency} ({position_diff_percent:.2f}%)")
-                        
-                        # 如果持仓差异超过2%，视为异常
-                        if position_diff_percent > 2:
-                            logger.error(f"本次操作的现货和合约持仓差异过大: {position_diff} {base_currency} ({position_diff_percent:.2f}%)")
-                            logger.info(f"已完成 {successful_trades}/{args.count} 次交易，因持仓不平衡退出程序")
-                            return 0 if successful_trades > 0 else 1
-                    
                     logger.info(f"成功完成第 {i+1}/{args.count} 次对冲交易!")
                     successful_trades += 1
                 else:
@@ -665,6 +621,8 @@ async def main():
                     return 0 if successful_trades > 0 else 1
             except Exception as e:
                 logger.error(f"第 {i+1}/{args.count} 次交易执行失败: {str(e)}")
+                logger.info(f"已完成 {successful_trades}/{args.count} 次交易，因交易执行失败退出程序")
+                return 0 if successful_trades > 0 else 1
         
         # 报告总体执行情况
         logger.info(f"总计执行 {successful_trades}/{args.count} 次交易")
