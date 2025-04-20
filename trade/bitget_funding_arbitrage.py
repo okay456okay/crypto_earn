@@ -33,13 +33,13 @@ class FundingArbitrageTrader:
     实现在资金费率结算前平仓、结算后重新开仓的套利策略
     """
 
-    def __init__(self, symbol, funding_threshold=-0.0008):
+    def __init__(self, symbol, funding_threshold=-0.0012):
         """
         初始化基本属性
         
         Args:
             symbol (str): 交易对，如 'ETH/USDT'
-            funding_threshold (float): 资金费率阈值，默认-0.08%
+            funding_threshold (float): 资金费率阈值，默认-0.12%
         """
         self.symbol = symbol
         self.funding_threshold = funding_threshold
@@ -338,8 +338,8 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description='Bitget合约资金费率套利')
     parser.add_argument('-s', '--symbol', type=str, required=True,
                       help='交易对符号，例如 ETH/USDT')
-    parser.add_argument('-t', '--threshold', type=float, default=-0.0008,
-                      help='资金费率阈值，默认-0.08%%')
+    parser.add_argument('-t', '--threshold', type=float, default=-0.0012,
+                      help='资金费率阈值，默认-0.12%%')
     return parser.parse_args()
 
 
