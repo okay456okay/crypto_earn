@@ -422,12 +422,25 @@ class HedgeTrader:
                     except Exception as e:
                         logger.warning(f"获取Gate.io订单详情失败: {str(e)}")
                 
+                # 对于Bybit，使用fetchClosedOrders或fetchOpenOrders，因为Bybit有500条历史记录限制
                 if contract_order_id:
                     try:
-                        updated_contract_order = await self.bybit.fetch_order(contract_order_id, self.contract_symbol)
-                        if updated_contract_order:
-                            contract_order = updated_contract_order
-                            logger.debug(f"获取到更新的Bybit订单信息: {contract_order}")
+                        # 首先查找已关闭的订单
+                        closed_orders = await self.bybit.fetch_closed_orders(self.contract_symbol, limit=10, params={"acknowledged": True})
+                        for order in closed_orders:
+                            if order.get('id') == contract_order_id:
+                                contract_order = order
+                                logger.debug(f"从已关闭订单中获取到Bybit订单信息: {contract_order}")
+                                break
+                        
+                        # 如果在关闭订单中没找到，查找未完成订单
+                        if contract_order.get('filled') is None:
+                            open_orders = await self.bybit.fetch_open_orders(self.contract_symbol, limit=10, params={"acknowledged": True})
+                            for order in open_orders:
+                                if order.get('id') == contract_order_id:
+                                    contract_order = order
+                                    logger.debug(f"从未完成订单中获取到Bybit订单信息: {contract_order}")
+                                    break
                     except Exception as e:
                         logger.warning(f"获取Bybit订单详情失败: {str(e)}")
             except Exception as e:
@@ -465,11 +478,18 @@ class HedgeTrader:
             actual_position = filled_amount - base_fee
             
             # 9. 获取合约订单的实际成交结果
-            contract_filled = float(contract_order.get('filled', 0))
+            contract_filled = 0.0  # 初始化为0
+            
+            # 首先尝试从订单信息中获取成交量
+            if contract_order.get('filled') is not None:
+                contract_filled = float(contract_order.get('filled', 0))
+                logger.debug(f"从订单信息中获取到Bybit合约成交量: {contract_filled}")
+            
+            # 如果订单信息中没有成交量，从持仓信息中获取
             if contract_filled <= 0:
-                logger.warning("Bybit订单似乎未成交，将从positions中获取实际成交量")
-                # 如果filled为0，尝试从持仓变化中确定
+                logger.warning("Bybit订单信息中无成交量数据，将从positions中获取")
                 try:
+                    # 从Bybit获取持仓信息
                     positions = await self.bybit.fetch_positions([self.contract_symbol], {'category': 'linear'})
                     for position in positions:
                         if position['info']['symbol'] == self.contract_symbol:
@@ -756,36 +776,54 @@ async def main():
                     break
                 
                 # 执行对冲交易
+                spot_order = None
+                contract_order = None
+                hedge_success = False
+                
                 try:
                     spot_order, contract_order = await trader.execute_hedge_trade()
                     executed_count += 1
                     
-                    if spot_order and contract_order:
+                    # 验证订单成功
+                    if (spot_order and contract_order and 
+                        spot_order.get('status') in ['closed', 'filled'] and
+                        trader.last_trade_spot_amount > 0 and 
+                        trader.last_trade_contract_amount > 0):
+                        
                         logger.info(f"第 {current_iteration}/{total_count} 次对冲交易成功完成!")
                         successful_count += 1
+                        hedge_success = True
                     else:
-                        logger.warning(f"第 {current_iteration}/{total_count} 次交易可能部分成功，订单状态不完整")
+                        logger.warning(f"第 {current_iteration}/{total_count} 次交易可能部分成功，但结果验证失败")
+                        # 当前交易出现问题，不继续后续交易
+                        break
+                        
                 except Exception as e:
                     logger.error(f"执行对冲交易时发生错误: {str(e)}")
-                    # 检查是否已经执行了一部分，如果是，我们仍然计算这次为执行次数
-                    executed_count += 1
+                    if "不足" in str(e) or "insufficient" in str(e).lower():
+                        logger.error("资金不足，停止后续交易")
+                    else:
+                        logger.debug(f"错误详情: {e}", exc_info=True)
                     
-                    # 在这种情况下，我们继续执行下一次，因为即使一个交易出错，也可能已经有订单成功了
+                    # 计入执行次数，但标记为失败
+                    executed_count += 1
+                    # 由于交易失败，不继续后续交易
+                    break
                 
-                # 如果不是最后一次，等待一段时间后再执行下一次交易
-                if current_iteration < total_count:
+                # 只有成功完成当前交易才继续下一次
+                if hedge_success and current_iteration < total_count:
                     wait_time = 3  # 等待3秒
                     logger.debug(f"等待 {wait_time} 秒后开始下一次交易...")
                     await asyncio.sleep(wait_time)
+                elif not hedge_success:
+                    logger.warning("当前交易未成功完成，停止后续交易")
+                    break
                 
             except Exception as e:
                 logger.error(f"第 {current_iteration}/{total_count} 次交易操作时出错: {str(e)}")
                 logger.debug(f"错误详情: {e}", exc_info=True)  # 打印完整堆栈跟踪
-                # 我们只在严重错误时中断循环
-                if "不足" in str(e) or "insufficient" in str(e).lower():
-                    logger.error("资金不足，停止后续交易")
-                    break
-                # 其他错误继续尝试下一次交易
+                # 出现异常，停止后续交易
+                break
 
     except Exception as e:
         logger.error(f"程序执行过程中发生错误: {str(e)}")

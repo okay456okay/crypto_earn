@@ -348,6 +348,7 @@ class HedgeTrader:
                 return None, None
             
             # 3. 立即执行交易
+            logger.debug(f"准备下单 - Gate.io现货买入量: {cost} USDT, Binance合约开空: {contract_amount} {self.contract_symbol}")
             spot_order, contract_order = await asyncio.gather(
                 self.gateio.create_market_buy_order(
                     symbol=self.symbol,
@@ -361,18 +362,59 @@ class HedgeTrader:
                 )
             )
             
+            # 记录原始订单响应
+            logger.debug(f"Gate.io订单原始响应: {spot_order}")
+            logger.debug(f"Binance订单原始响应: {contract_order}")
+            
             # 4. 交易后再进行其他操作
             base_currency = self.symbol.split('/')[0]
             logger.info(f"计划交易数量: {trade_amount} {base_currency}")
             logger.info(f"在Gate.io市价买入 {trade_amount} {base_currency}, 预估成本: {cost:.2f} USDT")
             logger.info(f"在Binance市价开空单 {contract_amount} {base_currency}")
             
+            # 等待1秒让订单状态更新
+            await asyncio.sleep(1)
+            
+            # 尝试获取最新的订单状态
+            try:
+                spot_order_id = spot_order.get('id')
+                contract_order_id = contract_order.get('id')
+                
+                if spot_order_id:
+                    updated_spot_order = await self.gateio.fetch_order(spot_order_id, self.symbol)
+                    logger.debug(f"获取到Gate.io更新后的订单状态: {updated_spot_order.get('status')}")
+                    spot_order = updated_spot_order
+                
+                if contract_order_id:
+                    # 尝试多种方法获取Binance订单状态
+                    try:
+                        updated_contract_order = await self.binance.fetch_order(contract_order_id, self.contract_symbol)
+                        logger.debug(f"获取到Binance更新后的订单状态: {updated_contract_order.get('status')}")
+                        contract_order = updated_contract_order
+                    except Exception as e:
+                        logger.warning(f"通过fetch_order获取Binance订单状态失败: {str(e)}")
+                        try:
+                            # 尝试获取最近的已完成订单
+                            closed_orders = await self.binance.fetch_closed_orders(self.contract_symbol, limit=10)
+                            for order in closed_orders:
+                                if order.get('id') == contract_order_id:
+                                    contract_order = order
+                                    logger.debug(f"从已完成订单列表获取到Binance订单状态: {order.get('status')}")
+                                    break
+                        except Exception as e2:
+                            logger.warning(f"通过fetch_closed_orders获取Binance订单状态失败: {str(e2)}")
+            except Exception as e:
+                logger.warning(f"获取更新后的订单状态时出错: {str(e)}")
+            
             # 验证订单执行状态
             spot_status = spot_order.get('status', '')
             contract_status = contract_order.get('status', '')
             
+            logger.info(f"最终订单状态 - Gate.io: {spot_status}, Binance: {contract_status}")
+            
             # 检查订单是否成功执行
-            if spot_status not in ['closed', 'filled'] or contract_status not in ['closed', 'filled']:
+            valid_statuses = ['closed', 'filled']
+            if spot_status not in valid_statuses or contract_status not in valid_statuses:
                 logger.error(f"订单执行异常 - 现货订单状态: {spot_status}, 合约订单状态: {contract_status}")
                 return None, None
             
@@ -380,15 +422,23 @@ class HedgeTrader:
             base_currency = self.symbol.split('/')[0]
             
             # 获取现货订单的实际成交结果
-            spot_filled_amount = float(spot_order['filled'])
+            spot_filled_amount = float(spot_order.get('filled', 0))
+            if spot_filled_amount <= 0:
+                logger.error(f"Gate.io订单成交量为0，交易可能未成功")
+                return None, None
+            
             spot_fees = spot_order.get('fees', [])
-            spot_base_fee = sum(float(fee['cost']) for fee in spot_fees if fee['currency'] == base_currency)
+            spot_base_fee = sum(float(fee.get('cost', 0)) for fee in spot_fees if fee.get('currency') == base_currency)
             spot_actual_position = spot_filled_amount - spot_base_fee
             
             # 获取合约订单的实际成交结果
-            contract_filled_amount = float(contract_order['filled'])
+            contract_filled_amount = float(contract_order.get('filled', 0))
+            if contract_filled_amount <= 0:
+                logger.error(f"Binance合约订单成交量为0，交易可能未成功")
+                return None, None
+            
             contract_fees = contract_order.get('fees', [])
-            contract_base_fee = sum(float(fee['cost']) for fee in contract_fees if fee['currency'] == base_currency)
+            contract_base_fee = sum(float(fee.get('cost', 0)) for fee in contract_fees if fee.get('currency') == base_currency)
             contract_actual_position = contract_filled_amount - contract_base_fee
             
             # 检查本次操作的现货和合约持仓差异
@@ -421,7 +471,10 @@ class HedgeTrader:
             
         except Exception as e:
             logger.error(f"执行对冲交易时出错: {str(e)}")
-            raise
+            # 记录详细的错误信息
+            import traceback
+            logger.debug(f"执行对冲交易的错误堆栈:\n{traceback.format_exc()}")
+            return None, None
 
     async def check_positions(self):
         """异步检查交易后的持仓情况"""
@@ -621,6 +674,9 @@ async def main():
                     return 0 if successful_trades > 0 else 1
             except Exception as e:
                 logger.error(f"第 {i+1}/{args.count} 次交易执行失败: {str(e)}")
+                # 记录详细的错误堆栈
+                import traceback
+                logger.debug(f"交易执行错误的堆栈:\n{traceback.format_exc()}")
                 logger.info(f"已完成 {successful_trades}/{args.count} 次交易，因交易执行失败退出程序")
                 return 0 if successful_trades > 0 else 1
         
@@ -635,15 +691,22 @@ async def main():
             
     except Exception as e:
         logger.error(f"程序执行过程中发生错误: {str(e)}")
+        # 记录详细的错误堆栈
+        import traceback
+        logger.debug(f"主程序错误的堆栈:\n{traceback.format_exc()}")
         logger.info(f"已完成 {successful_trades}/{args.count} 次交易，因发生错误退出程序")
         return 1
     finally:
         # 确保关闭交易所连接
         if 'trader' in locals():
-            await asyncio.gather(
-                trader.gateio.close(),
-                trader.binance.close()
-            )
+            try:
+                await asyncio.gather(
+                    trader.gateio.close(),
+                    trader.binance.close()
+                )
+                logger.debug("已关闭所有交易所连接")
+            except Exception as e:
+                logger.error(f"关闭交易所连接时出错: {str(e)}")
 
 
 if __name__ == "__main__":
