@@ -475,8 +475,10 @@ class BybitScanner:
         nearest_time = sorted_by_time[0]['next_funding_datetime']
         
         # 筛选出所有结算时间等于最近时间的交易对
+        # 过滤掉VOXEL
         nearest_opportunities = [result for result in sorted_by_time 
-                               if result['next_funding_datetime'] == nearest_time]
+                               if result['next_funding_datetime'] == nearest_time
+                                 and result['symbol'].find('VOXEL') == -1]
         
         # 在最近时间的交易对中，按资金费率升序排序
         nearest_opportunities.sort(key=lambda x: x['funding_rate'])
