@@ -328,7 +328,7 @@ class HedgeTrader:
             spread_percent, gateio_ask, bitget_bid, gateio_ask_volume, bitget_bid_volume = spread_data
 
             # 2. 立即准备下单参数, 补偿一点手续费，不然现货会比合约少一些
-            trade_amount = self.spot_amount * 1.001
+            trade_amount = self.spot_amount * 1.0019612816536183
             cost = float(trade_amount) * float(gateio_ask)
             contract_amount = self.bitget.amount_to_precision(self.contract_symbol, trade_amount)
 
@@ -708,6 +708,13 @@ class HedgeTrader:
                     logger.warning(f"Bitget合约持仓量显著低于预期: 预期约 {contract_amount} {base_currency}, 实际 {contract_position} {base_currency}")
                     logger.debug("可能是部分成交或API返回的数据不准确")
                     # 此处不返回失败，但记录警告
+                
+                # 计算差额和百分比
+                position_diff = abs(float(actual_position) - float(contract_amount))
+                position_diff_percent = (position_diff / float(actual_position) * 100) if float(actual_position) > 0 else 0
+                
+                logger.info(f"本次操作 - 现货成交: {actual_position} {base_currency}, 合约成交: {contract_amount} {base_currency}, "
+                           f"差异: {position_diff:.8f} {base_currency} ({position_diff_percent:.2f}%)")
                 
                 logger.info(f"交易执行检查通过 - 本次交易: 现货约 {actual_position} {base_currency} (可能已申购余币宝), 合约约 {contract_amount} {base_currency}")
                 return True
