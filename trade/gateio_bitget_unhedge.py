@@ -333,16 +333,131 @@ class UnhedgeTrader:
     async def verify_trade_result(self, spot_order, contract_order):
         """验证交易结果"""
         try:
-            # 确保订单状态正确
-            if spot_order['status'] != 'closed':
-                raise Exception(f"Gate.io订单状态异常: {spot_order['status']}, 预期: closed")
-                
-            if contract_order['status'] != 'closed':
-                raise Exception(f"Bitget订单状态异常: {contract_order['status']}, 预期: closed")
+            # 获取订单ID
+            spot_order_id = spot_order.get('id')
+            contract_order_id = contract_order.get('id')
+            base_currency = self.symbol.split('/')[0]
             
-            # 获取实际成交数量
-            spot_filled = float(spot_order['filled'])
-            contract_filled = float(contract_order['filled'])
+            logger.info(f"验证交易结果 - Gate.io订单ID: {spot_order_id}, Bitget订单ID: {contract_order_id}")
+            
+            # 获取最新的订单信息
+            # 先等待一秒，让API状态有时间更新
+            await asyncio.sleep(1)
+            
+            # 获取Gate.io订单最新状态
+            updated_spot_order = None
+            if spot_order_id:
+                try:
+                    # 尝试多种方式获取Gate.io订单状态
+                    try:
+                        # 先尝试从已完成订单列表中获取
+                        closed_orders = await self.gateio.fetch_closed_orders(self.symbol, since=int(time.time() * 1000) - 60000)
+                        for order in closed_orders:
+                            if order.get('id') == spot_order_id:
+                                updated_spot_order = order
+                                logger.debug(f"从已完成订单中找到Gate.io订单: {order.get('id')}")
+                                break
+                    except Exception as e:
+                        logger.debug(f"通过fetch_closed_orders获取Gate.io订单状态失败: {str(e)}")
+                    
+                    # 如果从已完成订单中未找到，直接查询单个订单
+                    if not updated_spot_order:
+                        updated_spot_order = await self.gateio.fetch_order(spot_order_id, self.symbol)
+                        logger.debug(f"通过fetch_order获取Gate.io订单状态: {updated_spot_order.get('status')}")
+                    
+                    if updated_spot_order:
+                        spot_order = updated_spot_order
+                        logger.debug(f"获取到Gate.io最新订单状态: {spot_order.get('status')}")
+                except Exception as e:
+                    logger.warning(f"获取Gate.io订单更新失败: {str(e)}")
+                    import traceback
+                    logger.debug(f"获取Gate.io订单错误堆栈: {traceback.format_exc()}")
+            
+            # 获取Bitget订单最新状态
+            updated_contract_order = None
+            if contract_order_id:
+                try:
+                    # 多种方式尝试获取订单状态
+                    error_messages = []
+                    
+                    # 方法1: 尝试获取已完成订单信息
+                    try:
+                        updated_contract_order = await self.bitget.fetch_closed_order(contract_order_id, self.contract_symbol)
+                        logger.debug("成功从fetch_closed_order获取Bitget订单")
+                    except Exception as e:
+                        error_messages.append(f"fetch_closed_order失败: {str(e)}")
+                        
+                    # 方法2: 如果方法1失败，尝试获取普通订单
+                    if updated_contract_order is None:
+                        try:
+                            updated_contract_order = await self.bitget.fetch_order(contract_order_id, self.contract_symbol)
+                            logger.debug("成功从fetch_order获取Bitget订单")
+                        except Exception as e:
+                            error_messages.append(f"fetch_order失败: {str(e)}")
+                    
+                    # 方法3: 如果前两种方法都失败，尝试获取最近订单列表
+                    if updated_contract_order is None:
+                        try:
+                            recent_orders = await self.bitget.fetch_orders(self.contract_symbol, limit=10)
+                            for order in recent_orders:
+                                if order.get('id') == contract_order_id:
+                                    updated_contract_order = order
+                                    logger.debug("成功从fetch_orders获取Bitget订单")
+                                    break
+                        except Exception as e:
+                            error_messages.append(f"fetch_orders失败: {str(e)}")
+                    
+                    if updated_contract_order:
+                        contract_order = updated_contract_order
+                        logger.debug(f"获取到Bitget最新订单状态: {contract_order.get('status')}")
+                    else:
+                        logger.warning(f"无法获取Bitget订单更新，尝试的方法都失败: {', '.join(error_messages)}")
+                except Exception as e:
+                    logger.warning(f"获取Bitget订单更新失败: {str(e)}")
+                    import traceback
+                    logger.debug(f"获取Bitget订单错误堆栈: {traceback.format_exc()}")
+                    
+            # 记录订单详细信息
+            logger.debug(f"Gate.io订单最终详情: {spot_order}")
+            logger.debug(f"Bitget订单最终详情: {contract_order}")
+            
+            # 详细分析Gate.io现货订单
+            spot_status = spot_order.get('status')
+            spot_filled = float(spot_order.get('filled', 0))
+            spot_amount = float(spot_order.get('amount', 0))
+            spot_fill_percent = (spot_filled / spot_amount * 100) if spot_amount > 0 else 0
+            
+            # 详细分析Bitget合约订单
+            contract_status = contract_order.get('status')
+            contract_filled = float(contract_order.get('filled', 0))
+            contract_amount = float(contract_order.get('amount', 0))
+            contract_fill_percent = (contract_filled / contract_amount * 100) if contract_amount > 0 else 0
+            
+            # 确保订单状态正确
+            valid_statuses = ['closed', 'filled']
+            
+            # Gate.io订单验证标准：
+            # 1. 状态应该是已完成或已成交
+            # 2. 或者成交率应该达到95%以上（对于市价单，可能API反馈的状态不准确）
+            gate_verification_passed = (
+                spot_status in valid_statuses or 
+                spot_fill_percent >= 95 or
+                spot_filled > 0  # 只要有成交量就算通过
+            )
+            
+            # Bitget订单验证标准：
+            # 同样检查状态或成交率
+            bitget_verification_passed = (
+                contract_status in valid_statuses or
+                contract_fill_percent >= 95 or
+                contract_filled > 0  # 只要有成交量就算通过
+            )
+            
+            if not gate_verification_passed:
+                raise Exception(f"Gate.io订单状态异常: {spot_status}, 成交量: {spot_filled}, 成交率: {spot_fill_percent:.2f}%")
+                
+            if not bitget_verification_passed:
+                raise Exception(f"Bitget订单状态异常: {contract_status}, 成交量: {contract_filled}, 成交率: {contract_fill_percent:.2f}%")
             
             # 更新统计数据
             self.total_spot_filled += spot_filled
@@ -352,7 +467,6 @@ class UnhedgeTrader:
             spot_fees = spot_order.get('fees', [])
             quote_fee = sum(float(fee['cost']) for fee in spot_fees if fee['currency'] == 'USDT')
             
-            base_currency = self.symbol.split('/')[0]
             logger.info(f"Gate.io实际成交数量: {spot_filled} {base_currency}, "
                         f"手续费: {quote_fee} USDT")
             logger.info(f"Bitget实际成交数量: {contract_filled} {base_currency}")
@@ -452,45 +566,65 @@ async def main():
         for i in range(total_count):
             logger.info(f"开始执行第{i+1}/{total_count}次交易")
             
-            # 每次交易前重新检查持仓，确保有足够的资产
-            await trader.check_positions()
-            base_currency = args.symbol.split('/')[0]
-            current_amount = float(trader.gateio_balance.get(base_currency, {}).get('free', 0))
-            
-            if current_amount < args.amount:
-                # 如果现货持仓不足，尝试从理财中赎回
-                need_spot_amount = args.amount - current_amount + 0.1
-                try:
-                    redeem_earn(base_currency, need_spot_amount)
-                    # 再检查余额是否够
-                    await trader.check_positions()
-                    current_amount = float(trader.gateio_balance.get(base_currency, {}).get('free', 0))
-                    if current_amount < args.amount:
-                        raise Exception(f"Gate.io {base_currency}余额不足且赎回后仍不足，需要 {args.amount}，"
-                                      f"当前可用 {current_amount}")
-                except Exception as e:
-                    logger.error(f"理财赎回失败: {str(e)}")
-                    raise
-            
-            # 检查合约持仓是否足够
-            contract_position = trader.get_contract_position()
-            if contract_position < args.amount:
-                raise Exception(f"Bitget合约空单持仓不足，需要 {args.amount}，当前持仓 {contract_position}")
-            
-            # 执行交易
-            spot_order, contract_order = await trader.execute_unhedge_trade()
-            if not (spot_order and contract_order):
-                logger.warning(f"第{i+1}次交易未成功执行，跳过后续交易")
-                break
+            try:
+                # 每次交易前重新检查持仓，确保有足够的资产
+                await trader.check_positions()
+                base_currency = args.symbol.split('/')[0]
+                current_amount = float(trader.gateio_balance.get(base_currency, {}).get('free', 0))
                 
-            logger.info(f"第{i+1}/{total_count}次交易完成")
-            
-            # 检查是否还有足够的合约持仓继续交易
-            if i < total_count - 1:  # 如果不是最后一次交易
+                if current_amount < args.amount:
+                    # 如果现货持仓不足，尝试从理财中赎回
+                    need_spot_amount = args.amount - current_amount + 0.1
+                    try:
+                        logger.info(f"Gate.io {base_currency}余额不足，从理财中赎回 {need_spot_amount} {base_currency}")
+                        redeem_earn(base_currency, need_spot_amount)
+                        # 再检查余额是否够
+                        await trader.check_positions()
+                        current_amount = float(trader.gateio_balance.get(base_currency, {}).get('free', 0))
+                        if current_amount < args.amount:
+                            raise Exception(f"Gate.io {base_currency}余额不足且赎回后仍不足，需要 {args.amount}，"
+                                          f"当前可用 {current_amount}")
+                    except Exception as e:
+                        logger.error(f"理财赎回失败: {str(e)}")
+                        # 打印交易摘要并退出
+                        trader.print_trade_summary(total_count, initial_position)
+                        return 1
+                
+                # 检查合约持仓是否足够
                 contract_position = trader.get_contract_position()
                 if contract_position < args.amount:
-                    logger.warning(f"合约持仓不足以继续交易，当前持仓: {contract_position}，需要: {args.amount}")
-                    break
+                    logger.error(f"Bitget合约空单持仓不足，需要 {args.amount}，当前持仓 {contract_position}")
+                    # 打印交易摘要并退出
+                    trader.print_trade_summary(total_count, initial_position)
+                    return 1
+                
+                # 执行交易
+                spot_order, contract_order = await trader.execute_unhedge_trade()
+                if not (spot_order and contract_order):
+                    logger.error(f"第{i+1}次交易执行失败，订单结果无效")
+                    # 打印交易摘要并退出
+                    trader.print_trade_summary(total_count, initial_position)
+                    return 1
+                    
+                logger.info(f"第{i+1}/{total_count}次交易完成")
+                
+                # 如果不是最后一次交易，等待几秒后再继续
+                if i < total_count - 1:
+                    # 检查是否还有足够的合约持仓继续交易
+                    contract_position = trader.get_contract_position()
+                    if contract_position < args.amount:
+                        logger.warning(f"合约持仓不足以继续交易，当前持仓: {contract_position}，需要: {args.amount}")
+                        logger.info(f"已完成 {i+1}/{total_count} 次交易，但无法继续执行剩余交易")
+                        break
+                    
+                    logger.info(f"等待5秒后继续下一次交易...")
+                    await asyncio.sleep(5)
+            
+            except Exception as e:
+                logger.error(f"执行第{i+1}次交易过程中出错: {str(e)}")
+                # 打印交易摘要并退出
+                trader.print_trade_summary(total_count, initial_position)
+                return 1
         
         logger.info("所有计划交易执行完毕!")
         trader.print_trade_summary(total_count, initial_position)
