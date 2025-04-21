@@ -491,7 +491,7 @@ class BinanceFutureScanner:
             logger.debug(f"筛选出的标的: {top_n_symbols}")
             
             # 定义格式化字符串供后续使用，确保所有表格对齐，修复百分号问题
-            header_format = "{:<15} {:<15} {:<15}"
+            header_format = "{:<11} {:<9} {:<15}"
             data_format = "{:<15} {:<15} {:<15.6f}"
             
             # 优化表格展示
@@ -506,7 +506,7 @@ class BinanceFutureScanner:
                 print(data_format.format(symbol, f"{rate*100:.6f}%", price))
             
             # 定义详细分析表格的格式，修复百分号问题
-            detail_header_format = "{:<15} {:<15} {:<15} {:<15} {:<15} {:<15} {:<15} {:<15} {:<15}"
+            detail_header_format = "{:<11} {:<11} {:<11} {:<11} {:<11} {:<11} {:<11} {:<11} {:<15}"
             detail_data_format = "{:<15} {:<15} {:<15} {:<15} {:<15} {:<15} {:<15} {:<15} {:<15}"
             
             # 5. 详细分析这N个合约标的
