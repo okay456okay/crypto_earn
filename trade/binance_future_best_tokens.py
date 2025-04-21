@@ -523,7 +523,7 @@ class BinanceFutureScanner:
             
             for symbol in top_n_symbols:
                 try:
-                    logger.info(f"分析 {symbol} 详细数据...")
+                    logger.debug(f"分析 {symbol} 详细数据...")
                     
                     # 分析资金费率趋势
                     is_decreasing, avg_rate = self.analyze_funding_rate_trend(symbol)
