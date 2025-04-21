@@ -375,7 +375,24 @@ class HedgeTrader:
                         last_log_time = current_time
                     
                     if spread_percent >= self.min_spread:
-                        logger.info(f"价差条件满足: {spread_percent * 100:.4f}% >= {self.min_spread * 100:.4f}%")
+                        # 价差满足条件时，记录完整的买卖一价格和数量
+                        gateio_ob = self.orderbooks['gateio']
+                        bitget_ob = self.orderbooks['bitget']
+                        
+                        gateio_ask = float(gateio_ob['asks'][0][0])
+                        gateio_ask_volume = float(gateio_ob['asks'][0][1])
+                        gateio_bid = float(gateio_ob['bids'][0][0]) if gateio_ob['bids'] else 0
+                        gateio_bid_volume = float(gateio_ob['bids'][0][1]) if gateio_ob['bids'] else 0
+                        
+                        bitget_bid = float(bitget_ob['bids'][0][0])
+                        bitget_bid_volume = float(bitget_ob['bids'][0][1])
+                        bitget_ask = float(bitget_ob['asks'][0][0]) if bitget_ob['asks'] else 0
+                        bitget_ask_volume = float(bitget_ob['asks'][0][1]) if bitget_ob['asks'] else 0
+                        
+                        logger.info(f"【价差条件满足】价差: {spread_percent * 100:.4f}% >= {self.min_spread * 100:.4f}%")
+                        logger.info(f"【市场行情】Gate.io - 买1: {gateio_bid:.8f}(量:{gateio_bid_volume:.8f}), 卖1: {gateio_ask:.8f}(量:{gateio_ask_volume:.8f})")
+                        logger.info(f"【市场行情】Bitget - 买1: {bitget_bid:.8f}(量:{bitget_bid_volume:.8f}), 卖1: {bitget_ask:.8f}(量:{bitget_ask_volume:.8f})")
+                        
                         return (spread_percent, spread_data['gateio_ask'], spread_data['bitget_bid'],
                                 spread_data['gateio_ask_volume'], spread_data['bitget_bid_volume'])
 
@@ -606,9 +623,24 @@ class HedgeTrader:
 
             # 获取合约订单的实际成交数量
             contract_filled = float(contract_order.get('filled', contract_amount))
+            
+            # 获取成交价格信息
+            spot_avg_price = float(spot_order.get('average', 0)) or float(spot_order.get('price', 0))
+            contract_avg_price = float(contract_order.get('average', 0)) or float(contract_order.get('price', 0))
+            
+            # 计算成交价差
+            exec_price_diff = contract_avg_price - spot_avg_price
+            exec_price_diff_percent = (exec_price_diff / spot_avg_price * 100) if spot_avg_price > 0 else 0
 
-            logger.info(f"Gate.io实际成交: {filled_amount} {base_currency}, 手续费: {base_fee} {base_currency}, 实际持仓: {actual_position} {base_currency}")
-            logger.info(f"Bitget合约实际成交: {contract_filled} {base_currency}")
+            # 记录详细的成交信息
+            logger.info("=" * 50)
+            logger.info(f"【成交详情】订单执行情况:")
+            logger.info(f"【成交详情】Gate.io卖1价格: {gateio_ask:.8f}, 实际成交价格: {spot_avg_price:.8f}, 价差: {(spot_avg_price - gateio_ask):.8f} ({(spot_avg_price - gateio_ask) / gateio_ask * 100:.4f}%)")
+            logger.info(f"【成交详情】Bitget买1价格: {bitget_bid:.8f}, 实际成交价格: {contract_avg_price:.8f}, 价差: {(contract_avg_price - bitget_bid):.8f} ({(contract_avg_price - bitget_bid) / bitget_bid * 100:.4f}%)")
+            logger.info(f"【成交详情】执行价差: {exec_price_diff:.8f} ({exec_price_diff_percent:.4f}%)")
+            logger.info(f"【成交详情】Gate.io实际成交: {filled_amount} {base_currency}, 手续费: {base_fee} {base_currency}, 实际持仓: {actual_position} {base_currency}")
+            logger.info(f"【成交详情】Bitget合约实际成交: {contract_filled} {base_currency}")
+            logger.info("=" * 50)
 
             # 检查持仓情况
             position_balance = await self.check_positions(actual_position, contract_filled)
@@ -632,6 +664,10 @@ class HedgeTrader:
                 'position_diff': position_diff,
                 'position_diff_usdt': position_diff * current_price,
                 'price': current_price,
+                'spot_price': spot_avg_price,
+                'contract_price': contract_avg_price,
+                'price_diff': exec_price_diff,
+                'price_diff_percent': exec_price_diff_percent,
                 'cumulative_diff': self.cumulative_position_diff,
                 'cumulative_diff_usdt': self.cumulative_position_diff_usdt
             }

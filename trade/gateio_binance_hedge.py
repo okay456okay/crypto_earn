@@ -255,9 +255,13 @@ class HedgeTrader:
             
             gateio_ask = Decimal(str(gateio_ob['asks'][0][0]))
             gateio_ask_volume = Decimal(str(gateio_ob['asks'][0][1]))
+            gateio_bid = Decimal(str(gateio_ob['bids'][0][0]))
+            gateio_bid_volume = Decimal(str(gateio_ob['bids'][0][1]))
             
             binance_bid = Decimal(str(binance_ob['bids'][0][0]))
             binance_bid_volume = Decimal(str(binance_ob['bids'][0][1]))
+            binance_ask = Decimal(str(binance_ob['asks'][0][0]))
+            binance_ask_volume = Decimal(str(binance_ob['asks'][0][1]))
             
             spread = binance_bid - gateio_ask
             spread_percent = spread / gateio_ask
@@ -266,9 +270,13 @@ class HedgeTrader:
             spread_data = {
                 'spread_percent': float(spread_percent),
                 'gateio_ask': float(gateio_ask),
-                'binance_bid': float(binance_bid),
                 'gateio_ask_volume': float(gateio_ask_volume),
-                'binance_bid_volume': float(binance_bid_volume)
+                'gateio_bid': float(gateio_bid),
+                'gateio_bid_volume': float(gateio_bid_volume),
+                'binance_bid': float(binance_bid),
+                'binance_bid_volume': float(binance_bid_volume),
+                'binance_ask': float(binance_ask),
+                'binance_ask_volume': float(binance_ask_volume)
             }
             await self.price_updates.put(spread_data)
             
@@ -294,13 +302,22 @@ class HedgeTrader:
                     
                     # 将价格检查的日志改为DEBUG级别
                     logger.debug(f"{self.symbol}价格检查 - Gate.io卖1: {spread_data['gateio_ask']} (量: {spread_data['gateio_ask_volume']}), "
+                               f"Gate.io买1: {spread_data['gateio_bid']} (量: {spread_data['gateio_bid_volume']}), "
                                f"Binance买1: {spread_data['binance_bid']} (量: {spread_data['binance_bid_volume']}), "
+                               f"Binance卖1: {spread_data['binance_ask']} (量: {spread_data['binance_ask_volume']}), "
                                f"价差: {spread_percent*100:.4f}%")
                     
                     if spread_percent >= self.min_spread:
                         logger.info(f"{self.symbol}价差条件满足: {spread_percent*100:.4f}% >= {self.min_spread*100:.4f}%")
-                        return (spread_percent, spread_data['gateio_ask'], spread_data['binance_bid'],
-                               spread_data['gateio_ask_volume'], spread_data['binance_bid_volume'])
+                        return (spread_percent, 
+                               spread_data['gateio_ask'], 
+                               spread_data['binance_bid'],
+                               spread_data['gateio_ask_volume'], 
+                               spread_data['binance_bid_volume'],
+                               spread_data['gateio_bid'],
+                               spread_data['gateio_bid_volume'],
+                               spread_data['binance_ask'],
+                               spread_data['binance_ask_volume'])
                     
                     logger.debug(f"{self.symbol}价差条件不满足: {spread_percent*100:.4f}% < {self.min_spread*100:.4f}%")
                     
@@ -333,10 +350,18 @@ class HedgeTrader:
         try:
             # 1. 等待价差满足条件
             spread_data = await self.wait_for_spread()
-            spread_percent, gateio_ask, binance_bid, gateio_ask_volume, binance_bid_volume = spread_data
+            spread_percent, gateio_ask, binance_bid, gateio_ask_volume, binance_bid_volume, gateio_bid, gateio_bid_volume, binance_ask, binance_ask_volume = spread_data
             
             # 获取基础货币
             base_currency = self.symbol.split('/')[0]
+            
+            # 详细记录市场深度信息
+            logger.info("=" * 50)
+            logger.info("当前市场深度:")
+            logger.info(f"Gate.io 买1: {gateio_bid} (量: {gateio_bid_volume}), 卖1: {gateio_ask} (量: {gateio_ask_volume})")
+            logger.info(f"Binance 买1: {binance_bid} (量: {binance_bid_volume}), 卖1: {binance_ask} (量: {binance_ask_volume})")
+            logger.info(f"价差: {spread_percent*100:.4f}% ({(binance_bid - gateio_ask):.8f} USDT)")
+            logger.info("-" * 50)
             
             # 检查是否需要平衡现货和合约
             need_to_rebalance = False
@@ -386,6 +411,18 @@ class HedgeTrader:
                             spot_base_fee = sum(float(fee.get('cost', 0)) for fee in spot_fees if fee.get('currency') == base_currency)
                             spot_actual_filled = spot_filled_amount - spot_base_fee
                             
+                            # 计算实际成交价格
+                            spot_cost = float(spot_balance_order.get('cost', 0))
+                            if spot_filled_amount > 0:
+                                spot_actual_price = spot_cost / spot_filled_amount
+                            else:
+                                spot_actual_price = 0
+                                
+                            # 记录实际成交价格与市场价格的差异
+                            price_diff_percent = ((spot_actual_price - float(gateio_ask)) / float(gateio_ask) * 100) if float(gateio_ask) > 0 else 0
+                            logger.info(f"现货平衡买入价格分析 - 市场卖1价: {gateio_ask}, 实际成交价: {spot_actual_price:.8f}, "
+                                      f"差异: {price_diff_percent:.4f}%, 滑点: {(spot_actual_price - float(gateio_ask)):.8f} USDT")
+                            
                             # 更新累计差额 (调整累计差额，减去新买入的现货)
                             self.cumulative_position_diff -= spot_actual_filled
                             self.cumulative_position_diff_usdt = self.cumulative_position_diff * float(gateio_ask)
@@ -400,6 +437,9 @@ class HedgeTrader:
                                 'position_diff': -spot_actual_filled,  # 负值表示现货增加
                                 'position_diff_usdt': -spot_actual_filled * current_price,
                                 'price': current_price,
+                                'market_price': float(gateio_ask),
+                                'execution_price': spot_actual_price,
+                                'price_diff_percent': price_diff_percent,
                                 'cumulative_diff': self.cumulative_position_diff,
                                 'cumulative_diff_usdt': self.cumulative_position_diff_usdt,
                                 'is_rebalance': True
@@ -437,6 +477,18 @@ class HedgeTrader:
                             contract_base_fee = sum(float(fee.get('cost', 0)) for fee in contract_fees if fee.get('currency') == base_currency)
                             contract_actual_filled = contract_filled_amount - contract_base_fee
                             
+                            # 计算实际成交价格
+                            contract_cost = float(contract_balance_order.get('cost', 0))
+                            if contract_filled_amount > 0:
+                                contract_actual_price = contract_cost / contract_filled_amount
+                            else:
+                                contract_actual_price = 0
+                                
+                            # 记录实际成交价格与市场价格的差异
+                            price_diff_percent = ((float(binance_bid) - contract_actual_price) / float(binance_bid) * 100) if float(binance_bid) > 0 else 0
+                            logger.info(f"合约平衡空单价格分析 - 市场买1价: {binance_bid}, 实际成交价: {contract_actual_price:.8f}, "
+                                      f"差异: {price_diff_percent:.4f}%, 滑点: {(float(binance_bid) - contract_actual_price):.8f} USDT")
+                            
                             # 更新累计差额 (调整累计差额，增加合约空单)
                             self.cumulative_position_diff += contract_actual_filled
                             self.cumulative_position_diff_usdt = self.cumulative_position_diff * float(gateio_ask)
@@ -451,6 +503,9 @@ class HedgeTrader:
                                 'position_diff': contract_actual_filled,  # 正值表示合约增加
                                 'position_diff_usdt': contract_actual_filled * current_price,
                                 'price': current_price,
+                                'market_price': float(binance_bid),
+                                'execution_price': contract_actual_price,
+                                'price_diff_percent': price_diff_percent,
                                 'cumulative_diff': self.cumulative_position_diff,
                                 'cumulative_diff_usdt': self.cumulative_position_diff_usdt,
                                 'is_rebalance': True
@@ -551,7 +606,6 @@ class HedgeTrader:
                 logger.error(f"订单执行异常 - 现货订单状态: {spot_status}, 合约订单状态: {contract_status}")
                 return None, None
             
-            # 检查本次操作的现货和合约数量是否匹配
             # 获取现货订单的实际成交结果
             spot_filled_amount = float(spot_order.get('filled', 0))
             if spot_filled_amount <= 0:
@@ -562,6 +616,12 @@ class HedgeTrader:
             spot_base_fee = sum(float(fee.get('cost', 0)) for fee in spot_fees if fee.get('currency') == base_currency)
             spot_actual_position = spot_filled_amount - spot_base_fee
             
+            # 计算现货实际成交价格
+            spot_cost = float(spot_order.get('cost', 0))
+            spot_actual_price = spot_cost / spot_filled_amount if spot_filled_amount > 0 else 0
+            spot_price_diff = spot_actual_price - float(gateio_ask)
+            spot_price_diff_percent = (spot_price_diff / float(gateio_ask) * 100) if float(gateio_ask) > 0 else 0
+            
             # 获取合约订单的实际成交结果
             contract_filled_amount = float(contract_order.get('filled', 0))
             if contract_filled_amount <= 0:
@@ -571,6 +631,22 @@ class HedgeTrader:
             contract_fees = contract_order.get('fees', [])
             contract_base_fee = sum(float(fee.get('cost', 0)) for fee in contract_fees if fee.get('currency') == base_currency)
             contract_actual_position = contract_filled_amount - contract_base_fee
+            
+            # 计算合约实际成交价格
+            contract_cost = float(contract_order.get('cost', 0))
+            contract_actual_price = contract_cost / contract_filled_amount if contract_filled_amount > 0 else 0
+            contract_price_diff = float(binance_bid) - contract_actual_price
+            contract_price_diff_percent = (contract_price_diff / float(binance_bid) * 100) if float(binance_bid) > 0 else 0
+            
+            # 记录价格执行信息
+            logger.info("=" * 50)
+            logger.info("价格执行分析:")
+            logger.info(f"现货 - 市场卖1价: {gateio_ask}, 实际成交价: {spot_actual_price:.8f}, "
+                      f"差异: {spot_price_diff:.8f} USDT ({spot_price_diff_percent:.4f}%)")
+            logger.info(f"合约 - 市场买1价: {binance_bid}, 实际成交价: {contract_actual_price:.8f}, "
+                      f"差异: {contract_price_diff:.8f} USDT ({contract_price_diff_percent:.4f}%)")
+            logger.info(f"总滑点成本: {(spot_price_diff + contract_price_diff) * float(spot_actual_position):.8f} USDT")
+            logger.info("=" * 50)
             
             # 检查本次操作的现货和合约持仓差异
             position_diff = contract_actual_position - spot_actual_position  # 正值表示合约多，负值表示现货多
@@ -593,6 +669,12 @@ class HedgeTrader:
                 'position_diff': position_diff,
                 'position_diff_usdt': position_diff * current_price,
                 'price': current_price,
+                'spot_market_price': float(gateio_ask),
+                'spot_execution_price': spot_actual_price,
+                'spot_price_diff_percent': spot_price_diff_percent,
+                'contract_market_price': float(binance_bid),
+                'contract_execution_price': contract_actual_price,
+                'contract_price_diff_percent': contract_price_diff_percent,
                 'cumulative_diff': self.cumulative_position_diff,
                 'cumulative_diff_usdt': self.cumulative_position_diff_usdt,
                 'is_rebalance': False
@@ -861,8 +943,25 @@ async def main():
                 logger.info("最近交易记录:")
                 for record in trader.trade_records[-min(3, len(trader.trade_records)):]:
                     trade_type = "【平衡操作】" if record.get('is_rebalance', False) else "【常规交易】"
-                    logger.info(f"{trade_type} 交易 #{record['trade_id']}: 现货 {record['spot_filled']:.8f} vs 合约 {record['contract_filled']:.8f}, "
-                              f"差额: {record['position_diff']:.8f} {base_currency} ({record['position_diff_usdt']:.2f} USDT)")
+                    
+                    if record.get('is_rebalance', False):
+                        if record.get('spot_filled', 0) > 0:  # 现货平衡
+                            logger.info(f"{trade_type} 交易 #{record['trade_id']}: 买入现货 {record['spot_filled']:.8f} {base_currency}, "
+                                      f"价格: {record.get('execution_price', 0):.8f} vs 市场: {record.get('market_price', 0):.8f} "
+                                      f"(滑点: {record.get('price_diff_percent', 0):.4f}%)")
+                        else:  # 合约平衡
+                            logger.info(f"{trade_type} 交易 #{record['trade_id']}: 开空合约 {record['contract_filled']:.8f} {base_currency}, "
+                                      f"价格: {record.get('execution_price', 0):.8f} vs 市场: {record.get('market_price', 0):.8f} "
+                                      f"(滑点: {record.get('price_diff_percent', 0):.4f}%)")
+                    else:  # 常规交易
+                        logger.info(f"{trade_type} 交易 #{record['trade_id']}: 现货 {record['spot_filled']:.8f} @ {record.get('spot_execution_price', 0):.8f} "
+                                  f"vs 合约 {record['contract_filled']:.8f} @ {record.get('contract_execution_price', 0):.8f}, "
+                                  f"数量差额: {record['position_diff']:.8f} {base_currency} ({record['position_diff_usdt']:.2f} USDT)")
+                        
+                        # 如果有价格分析数据，则显示
+                        if 'spot_price_diff_percent' in record and 'contract_price_diff_percent' in record:
+                            logger.info(f"     价格分析 - 现货滑点: {record['spot_price_diff_percent']:.4f}%, "
+                                      f"合约滑点: {record['contract_price_diff_percent']:.4f}%")
             
             # 显示是否需要平衡
             if abs(trader.cumulative_position_diff_usdt) >= 6:
@@ -871,6 +970,43 @@ async def main():
                 logger.info(f"建议: 需要{balance_side}来平衡仓位")
                 logger.info(f"平衡数量: {abs(trader.cumulative_position_diff):.8f} {base_currency}")
                 logger.info(f"预计成本: {abs(trader.cumulative_position_diff_usdt):.2f} USDT")
+            
+            # 显示价格执行统计
+            regular_trades = [r for r in trader.trade_records if not r.get('is_rebalance', False)]
+            if regular_trades:
+                logger.info("-" * 40)
+                logger.info("价格执行统计:")
+                
+                # 计算平均滑点
+                spot_slippage = [r.get('spot_price_diff_percent', 0) for r in regular_trades if 'spot_price_diff_percent' in r]
+                contract_slippage = [r.get('contract_price_diff_percent', 0) for r in regular_trades if 'contract_price_diff_percent' in r]
+                
+                if spot_slippage:
+                    avg_spot_slippage = sum(spot_slippage) / len(spot_slippage)
+                    max_spot_slippage = max(spot_slippage)
+                    min_spot_slippage = min(spot_slippage)
+                    logger.info(f"现货平均滑点: {avg_spot_slippage:.4f}% (最小: {min_spot_slippage:.4f}%, 最大: {max_spot_slippage:.4f}%)")
+                
+                if contract_slippage:
+                    avg_contract_slippage = sum(contract_slippage) / len(contract_slippage)
+                    max_contract_slippage = max(contract_slippage)
+                    min_contract_slippage = min(contract_slippage)
+                    logger.info(f"合约平均滑点: {avg_contract_slippage:.4f}% (最小: {min_contract_slippage:.4f}%, 最大: {max_contract_slippage:.4f}%)")
+                
+                if spot_slippage and contract_slippage:
+                    total_avg_slippage = (sum(spot_slippage) + sum(contract_slippage)) / (len(spot_slippage) + len(contract_slippage))
+                    logger.info(f"总体平均滑点: {total_avg_slippage:.4f}%")
+                    
+                    # 计算平均每笔交易的滑点成本
+                    total_volume = sum(r['spot_filled'] for r in regular_trades)
+                    total_cost = sum(((r.get('spot_execution_price', 0) - r.get('spot_market_price', 0)) + 
+                                      (r.get('contract_market_price', 0) - r.get('contract_execution_price', 0))) * 
+                                     r['spot_filled'] for r in regular_trades if 'spot_market_price' in r and 'contract_market_price' in r)
+                    
+                    if total_volume > 0:
+                        avg_cost_per_unit = total_cost / total_volume
+                        logger.info(f"平均每单位滑点成本: {avg_cost_per_unit:.8f} USDT/{base_currency}")
+                        logger.info(f"总滑点成本: {total_cost:.8f} USDT")
             
         logger.info("=" * 50)
             
