@@ -50,6 +50,42 @@ class BinancePositionFetcher:
         self.exchange_api = ExchangeAPI()
         self.binance_funding_info = {}
         self.binance_futures_volumes = {}
+        self.exchange_info_cache = None
+        self.max_leverage_cache = {}
+
+    async def get_exchange_info(self):
+        """获取交易所所有合约信息（缓存）"""
+        if self.exchange_info_cache is None:
+            try:
+                self.exchange_info_cache = await self.exchange.fapiPublicGetExchangeInfo()
+                logger.info("已获取并缓存Binance合约交易所信息")
+            except Exception as e:
+                logger.error(f"获取Binance交易所信息失败: {str(e)}")
+                return None
+        return self.exchange_info_cache
+
+    async def get_max_leverage(self, symbol):
+        """获取指定合约的最大杠杆倍数"""
+        if symbol in self.max_leverage_cache:
+            return self.max_leverage_cache[symbol]
+        
+        try:
+            # 获取杠杆倍数信息
+            leverage_info = await self.exchange.fapiPrivateGetLeverageBracket({
+                'symbol': symbol
+            })
+            
+            if leverage_info and leverage_info[0] and 'brackets' in leverage_info[0]:
+                max_leverage = int(leverage_info[0]['brackets'][0]['initialLeverage'])
+                logger.info(f"获取到{symbol}最大杠杆倍数: {max_leverage}倍")
+                self.max_leverage_cache[symbol] = max_leverage
+                return max_leverage
+            else:
+                logger.warning(f"获取{symbol}杠杆信息格式不正确: {leverage_info}")
+                return None
+        except Exception as e:
+            logger.error(f"获取{symbol}最大杠杆倍数失败: {str(e)}")
+            return None
 
     def get_binance_funding_info(self):
         """获取币安合约资金费率周期数据"""
@@ -105,6 +141,9 @@ class BinancePositionFetcher:
         """获取所有合约持仓信息"""
         positions = []
         try:
+            # 预先获取交易所信息（缓存）
+            await self.get_exchange_info()
+            
             # 获取所有持仓信息
             positions = await self.exchange.fetch_positions()
 
@@ -118,7 +157,7 @@ class BinancePositionFetcher:
             print("-" * 160)
 
             # 打印表头
-            header = f"{'交易对':<8} {'方向':<4} {'数量':<12} {'杠杆':<4} {'资金费率':<8} {'开仓价':<10} {'标记价':<10} {'强平价':<10} {'未实现盈亏':<12} {'结算周期':<8} {'下次结算':<19}"
+            header = f"{'交易对':<8} {'方向':<4} {'数量':<12} {'杠杆':<4} {'最大杠杆':<6} {'资金费率':<8} {'开仓价':<10} {'标记价':<10} {'强平价':<10} {'未实现盈亏':<12} {'结算周期':<8} {'下次结算':<19}"
             print(header)
             print("-" * 160)
 
@@ -141,7 +180,11 @@ class BinancePositionFetcher:
                     # 获取其他字段
                     side = position.get('side', 'unknown')
                     contracts = float(position.get('contracts', 0))
-                    leverage = position.get('leverage', 0) or position.get('info', {}).get('leverage', 0)
+                    # leverage = position.get('leverage', 0) or position.get('info', {}).get('leverage', 0)
+                    
+                    # 获取最大杠杆倍数
+                    leverage = await self.get_max_leverage(symbol) or '未知'
+                    
                     entry_price = float(position.get('entryPrice', 0))
                     mark_price = float(position.get('markPrice', 0))
                     liquidation_price = float(position.get('liquidationPrice', 0))
