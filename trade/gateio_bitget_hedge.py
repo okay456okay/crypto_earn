@@ -522,7 +522,7 @@ class HedgeTrader:
             logger.debug(f"交易量信息 - Gate.io卖一量: {gateio_ask_volume}, Bitget买一量: {bitget_bid_volume}")
 
             # 2. 立即准备下单参数, 补偿一点手续费，不然现货会比合约少一些
-            trade_amount = self.spot_amount * 1.001
+            trade_amount = self.spot_amount * 1.0019612816536183
             cost = float(trade_amount) * float(gateio_ask)
             contract_amount = self.bitget.amount_to_precision(self.contract_symbol, trade_amount)
 
