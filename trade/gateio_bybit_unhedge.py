@@ -91,6 +91,11 @@ class UnhedgeTrader:
         # 用于控制WebSocket订阅
         self.ws_running = False
         self.price_updates = asyncio.Queue()
+        
+        # 交易统计
+        self.trades_completed = 0
+        self.initial_contract_position = 0
+        self.current_contract_position = 0
 
     async def initialize(self):
         """
@@ -102,6 +107,15 @@ class UnhedgeTrader:
 
             # 检查当前持仓情况
             await self.check_positions()
+            
+            # 记录初始合约持仓
+            self.initial_contract_position = 0
+            for position in self.bybit_position:
+                if position['info']['symbol'] == self.contract_symbol and position['side'] == 'short':
+                    self.initial_contract_position = abs(float(position['contracts']))
+                    self.current_contract_position = self.initial_contract_position
+                    break
+            
             # 验证持仓是否满足交易条件
             if self.spot_amount is not None:
                 base_currency = self.symbol.split('/')[0]
@@ -118,13 +132,8 @@ class UnhedgeTrader:
                             raise Exception(f"Gate.io {base_currency}余额不足，需要 {self.spot_amount}，"
                                             f"当前可用 {self.gateio_balance[base_currency]['free']}")
 
-                contract_position = 0
-                for position in self.bybit_position:
-                    if position['info']['symbol'] == self.contract_symbol and position['side'] == 'short':
-                        contract_position = abs(float(position['contracts']))
-
-                if contract_position < self.spot_amount:
-                    raise Exception(f"Bybit合约空单持仓不足，需要 {self.spot_amount}，当前持仓 {contract_position}")
+                if self.current_contract_position < self.spot_amount:
+                    raise Exception(f"Bybit合约空单持仓不足，需要 {self.spot_amount}，当前持仓 {self.current_contract_position}")
 
                 logger.info("持仓检查通过，可以执行平仓操作")
 
@@ -146,14 +155,14 @@ class UnhedgeTrader:
             base_currency = self.symbol.split('/')[0]
             spot_position = self.gateio_balance.get(base_currency, {}).get('total', 0)
 
-            contract_position = 0
+            self.current_contract_position = 0
             for position in self.bybit_position:
                 if position['info']['symbol'] == self.contract_symbol and position['side'] == 'short':
-                    contract_position = abs(float(position['contracts']))
-                    logger.info(f"Bybit合约空单持仓: {contract_position} {base_currency}")
+                    self.current_contract_position = abs(float(position['contracts']))
+                    logger.info(f"Bybit合约空单持仓: {self.current_contract_position} {base_currency}")
 
             logger.info(f"当前持仓 - Gate.io现货: {spot_position} {base_currency}, "
-                        f"Bybit合约空单: {contract_position} {base_currency}")
+                        f"Bybit合约空单: {self.current_contract_position} {base_currency}")
 
         except Exception as e:
             logger.error(f"检查持仓时出错: {str(e)}")
@@ -307,21 +316,88 @@ class UnhedgeTrader:
             logger.info(f"在Bybit市价平空单 {contract_amount} {base_currency}")
 
             # 获取实际成交结果
-            filled_amount = float(spot_order['filled'])
-            fees = spot_order.get('fees', [])
-            quote_fee = sum(float(fee['cost']) for fee in fees if fee['currency'] == 'USDT')
+            spot_filled_amount = float(spot_order['filled'])
+            spot_fees = spot_order.get('fees', [])
+            spot_quote_fee = sum(float(fee['cost']) for fee in spot_fees if fee['currency'] == 'USDT')
 
-            logger.info(f"Gate.io实际成交数量: {filled_amount} {base_currency}, "
-                        f"手续费: {quote_fee} USDT")
+            contract_filled_amount = float(contract_order['filled'])
+            contract_fees = contract_order.get('fees', [])
+            contract_quote_fee = sum(float(fee['cost']) for fee in contract_fees if fee['currency'] == 'USDT')
 
+            logger.info(f"Gate.io实际成交数量: {spot_filled_amount} {base_currency}, "
+                        f"手续费: {spot_quote_fee} USDT")
+            logger.info(f"Bybit实际成交数量: {contract_filled_amount} {base_currency}, "
+                        f"手续费: {contract_quote_fee} USDT")
+
+            # 验证交易结果
+            await self.verify_trade_result(spot_order, contract_order)
+            
             # 检查平仓后的持仓情况
             await self.check_positions()
+            
+            # 更新交易统计
+            self.trades_completed += 1
 
             return spot_order, contract_order
 
         except Exception as e:
             logger.error(f"执行平仓交易时出错: {str(e)}")
             raise
+
+    async def verify_trade_result(self, spot_order, contract_order):
+        """
+        验证交易结果是否符合预期
+        
+        Args:
+            spot_order: Gate.io现货订单结果
+            contract_order: Bybit合约订单结果
+        
+        Raises:
+            Exception: 如果订单状态异常或交易数量不一致
+        """
+        try:
+            # 检查订单状态
+            if spot_order['status'] != 'closed':
+                raise Exception(f"Gate.io订单状态异常: {spot_order['status']}")
+            
+            if contract_order['status'] != 'closed':
+                raise Exception(f"Bybit订单状态异常: {contract_order['status']}")
+            
+            # 检查成交数量是否一致（允许5%的误差）
+            spot_filled = float(spot_order['filled'])
+            contract_filled = float(contract_order['filled'])
+            
+            difference_percent = abs(spot_filled - contract_filled) / max(spot_filled, contract_filled)
+            
+            if difference_percent > 0.05:  # 超过5%的误差
+                raise Exception(f"交易数量不一致: Gate.io成交量 {spot_filled}, Bybit成交量 {contract_filled}, "
+                               f"误差: {difference_percent * 100:.2f}%")
+            
+            logger.info(f"交易结果验证通过: Gate.io成交量 {spot_filled}, Bybit成交量 {contract_filled}, "
+                       f"误差: {difference_percent * 100:.2f}%")
+                
+        except Exception as e:
+            logger.error(f"交易结果验证失败: {str(e)}")
+            raise
+
+    def print_trading_summary(self, count=None):
+        """
+        打印交易汇总信息
+        
+        Args:
+            count: 计划执行的总次数
+        """
+        base_currency = self.symbol.split('/')[0]
+        logger.info("=" * 50)
+        logger.info("交易汇总:")
+        logger.info(f"- 已完成交易次数: {self.trades_completed}")
+        if count is not None:
+            logger.info(f"- 计划交易次数: {count}")
+            logger.info(f"- 剩余交易次数: {max(0, count - self.trades_completed)}")
+        logger.info(f"- 初始合约持仓: {self.initial_contract_position} {base_currency}")
+        logger.info(f"- 当前合约持仓: {self.current_contract_position} {base_currency}")
+        logger.info(f"- 减少合约持仓: {self.initial_contract_position - self.current_contract_position} {base_currency}")
+        logger.info("=" * 50)
 
 
 def parse_arguments():
@@ -331,6 +407,7 @@ def parse_arguments():
     parser.add_argument('-a', '--amount', type=float, required=True, help='卖出的现货数量')
     parser.add_argument('-p', '--min-spread', type=float, default=0.0005, help='最小价差要求，默认0.001 (0.1%%)')
     parser.add_argument('-d', '--debug', action='store_true', help='启用调试日志模式')
+    parser.add_argument('-c', '--count', type=int, help='重复执行交易的次数')
     return parser.parse_args()
 
 
@@ -345,25 +422,76 @@ async def main():
     else:
         logger.setLevel(logging.INFO)
 
+    trader = None
+    execution_count = 0
+    total_count = None
+    
     try:
         trader = UnhedgeTrader(
             symbol=args.symbol,
             spot_amount=args.amount,
             min_spread=args.min_spread
         )
+        
+        # 初始化并检查持仓
         await trader.initialize()
-
-        spot_order, contract_order = await trader.execute_unhedge_trade()
-        if spot_order and contract_order:
-            logger.info("平仓交易成功完成!")
+        
+        # 如果未指定count，则根据合约持仓计算
+        if args.count is None:
+            max_executions = int(trader.current_contract_position / args.amount) - 1
+            total_count = max(0, max_executions)
+            logger.info(f"未指定执行次数，根据当前持仓计算为: {total_count} 次")
         else:
-            logger.info("未执行平仓交易")
+            total_count = args.count
+            logger.info(f"计划执行交易次数: {total_count}")
+        
+        # 循环执行交易
+        while execution_count < total_count:
+            logger.info(f"开始第 {execution_count + 1}/{total_count} 次交易")
+            
+            # 每次交易前检查持仓是否充足
+            await trader.check_positions()
+            base_currency = args.symbol.split('/')[0]
+            
+            # 检查现货余额
+            current_amount = float(trader.gateio_balance.get(base_currency, {}).get('free', 0))
+            if current_amount < args.amount:
+                # 尝试从理财赎回
+                need_spot_amount = args.amount - current_amount + 0.1
+                logger.info(f"现货余额不足，尝试从理财赎回 {need_spot_amount} {base_currency}")
+                redeem_earn(base_currency, need_spot_amount)
+                
+                # 再次检查余额
+                await trader.check_positions()
+                current_amount = float(trader.gateio_balance.get(base_currency, {}).get('free', 0))
+                if current_amount < args.amount:
+                    raise Exception(f"从理财赎回后，{base_currency}余额仍不足，需要 {args.amount}，"
+                                    f"当前可用 {current_amount}")
+            
+            # 检查合约持仓
+            if trader.current_contract_position < args.amount:
+                raise Exception(f"Bybit合约空单持仓不足，需要 {args.amount}，当前持仓 {trader.current_contract_position}")
+            
+            # 执行交易
+            spot_order, contract_order = await trader.execute_unhedge_trade()
+            if not (spot_order and contract_order):
+                raise Exception("交易执行失败，未能成功下单")
+            
+            execution_count += 1
+            logger.info(f"完成第 {execution_count}/{total_count} 次交易")
+            
+            # 每次交易后简单汇报
+            trader.print_trading_summary(total_count)
+
+        logger.info("所有计划交易已成功完成!")
 
     except Exception as e:
         logger.error(f"程序执行过程中发生错误: {str(e)}")
         return 1
     finally:
-        if 'trader' in locals():
+        # 打印交易汇总
+        if trader:
+            trader.print_trading_summary(total_count)
             await asyncio.gather(
                 trader.gateio.close(),
                 trader.bybit.close()
