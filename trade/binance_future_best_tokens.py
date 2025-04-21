@@ -5,7 +5,7 @@
 Binance合约标的筛选脚本
 
 此脚本用于筛选Binance交易所的合约标的，根据以下条件：
-1. 资金费率最小的30个合约标的
+1. 资金费率最小的N个合约标的（默认5个）
 2. 资金费率趋势分析（48小时内是否一直在变小）
 3. 价格涨跌幅度分析（24小时和48小时内是否小于20%）
 4. 合约持仓量和市值的比例分析
@@ -20,6 +20,8 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import time
+import logging
+import argparse
 from concurrent.futures import ThreadPoolExecutor
 
 # 添加项目根目录到系统路径
@@ -27,9 +29,31 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import binance_api_key, binance_api_secret, proxies
 from high_yield.exchange import ExchangeAPI
 
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+logger = logging.getLogger("binance_future_scanner")
+
 class BinanceFutureScanner:
-    def __init__(self):
-        """初始化Binance合约分析器"""
+    def __init__(self, top_n=5, debug=False):
+        """
+        初始化Binance合约分析器
+        
+        Args:
+            top_n (int): 筛选资金费率最小的前N个合约，默认5个
+            debug (bool): 是否开启调试模式，默认False
+        """
+        logger.info(f"初始化BinanceFutureScanner: top_n={top_n}, debug={debug}")
+        
+        # 设置日志级别
+        if debug:
+            logger.setLevel(logging.DEBUG)
+            logger.debug("调试模式已开启，将显示详细日志")
+        
+        self.top_n = top_n
         self.exchange_api = ExchangeAPI()
         self.session = requests.Session()
         self.session.headers.update({
@@ -38,13 +62,15 @@ class BinanceFutureScanner:
         
         # 尝试使用代理，出错时不使用代理
         try:
+            logger.debug(f"尝试使用代理: {proxies}")
             self.session.proxies.update(proxies)
             # 测试代理连接
             test_resp = self.session.get("https://www.binance.com", timeout=5)
             if test_resp.status_code != 200:
                 raise Exception("代理连接测试失败")
+            logger.debug("代理连接测试成功")
         except Exception as e:
-            print(f"代理连接出错，将不使用代理直接连接: {e}")
+            logger.warning(f"代理连接出错，将不使用代理直接连接: {e}")
             self.session.proxies.clear()  # 清除代理设置
             
         # 缓存数据
@@ -58,29 +84,40 @@ class BinanceFutureScanner:
         
     def api_request(self, url, params=None, max_retries=3, retry_delay=1):
         """封装API请求，处理重试逻辑"""
+        logger.debug(f"API请求: URL={url}, 参数={params}")
+        
         for retry in range(max_retries):
             try:
+                start_time = time.time()
                 response = self.session.get(url, params=params, timeout=10)
+                elapsed = time.time() - start_time
+                
+                logger.debug(f"API响应: 状态码={response.status_code}, 耗时={elapsed:.2f}秒")
+                
                 if response.status_code == 200:
-                    return response.json()
+                    data = response.json()
+                    logger.debug(f"API数据: 获取到 {len(data) if isinstance(data, list) else '对象'} 条数据")
+                    return data
                 elif response.status_code == 429:  # 速率限制
                     retry_after = int(response.headers.get('Retry-After', retry_delay * 2))
-                    print(f"API速率限制，等待 {retry_after} 秒后重试...")
+                    logger.warning(f"API速率限制，等待 {retry_after} 秒后重试... (尝试 {retry+1}/{max_retries})")
                     time.sleep(retry_after)
                 else:
-                    print(f"API请求失败: URL={url}, 状态码={response.status_code}")
+                    logger.error(f"API请求失败: URL={url}, 状态码={response.status_code}, 响应={response.text}")
                     time.sleep(retry_delay)
             except requests.exceptions.RequestException as e:
-                print(f"网络错误 (尝试 {retry+1}/{max_retries}): {e}")
+                logger.error(f"网络错误 (尝试 {retry+1}/{max_retries}): {e}")
                 if retry < max_retries - 1:  # 如果不是最后一次重试
                     time.sleep(retry_delay)
                 else:
-                    print("达到最大重试次数，请求失败")
+                    logger.error("达到最大重试次数，请求失败")
                     return None
         return None
         
     def get_all_futures(self):
         """获取所有合约标的"""
+        logger.info("获取所有Binance合约标的...")
+        
         try:
             url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
             data = self.api_request(url)
@@ -90,17 +127,20 @@ class BinanceFutureScanner:
                 symbols = [s['symbol'] for s in data['symbols'] 
                           if s['status'] == 'TRADING' and s['quoteAsset'] == 'USDT']
                 self.all_futures = symbols
-                print(f"获取到 {len(self.all_futures)} 个合约标的")
+                logger.info(f"获取到 {len(self.all_futures)} 个合约标的")
+                logger.debug(f"合约标的列表: {symbols[:10]}... (显示前10个)")
                 return symbols
             else:
-                print(f"获取合约列表失败")
+                logger.error("获取合约列表失败")
                 return []
         except Exception as e:
-            print(f"获取合约列表时出错: {e}")
+            logger.exception(f"获取合约列表时出错: {e}")
             return []
 
     def get_current_funding_rates(self):
         """获取所有合约的当前资金费率"""
+        logger.info("获取所有合约的当前资金费率...")
+        
         try:
             url = "https://fapi.binance.com/fapi/v1/premiumIndex"
             data = self.api_request(url)
@@ -108,16 +148,25 @@ class BinanceFutureScanner:
             if data:
                 # 构建资金费率字典 {symbol: funding_rate}
                 funding_rates = {item['symbol']: float(item['lastFundingRate']) for item in data}
+                logger.info(f"获取到 {len(funding_rates)} 个合约的资金费率")
+                
+                # 调试日志：打印最小的几个资金费率
+                if logger.isEnabledFor(logging.DEBUG):
+                    sorted_rates = sorted(funding_rates.items(), key=lambda x: x[1])
+                    logger.debug(f"资金费率最小的几个合约: {sorted_rates[:5]}")
+                
                 return funding_rates
             else:
-                print(f"获取资金费率失败")
+                logger.error("获取资金费率失败")
                 return {}
         except Exception as e:
-            print(f"获取资金费率时出错: {e}")
+            logger.exception(f"获取资金费率时出错: {e}")
             return {}
 
     def get_funding_rate_history(self, symbol, start_time, end_time):
         """获取指定合约的资金费率历史"""
+        logger.debug(f"获取 {symbol} 资金费率历史: startTime={start_time}, endTime={end_time}")
+        
         try:
             url = f"https://fapi.binance.com/fapi/v1/fundingRate"
             params = {
@@ -135,25 +184,35 @@ class BinanceFutureScanner:
                     df['fundingRate'] = df['fundingRate'].astype(float)
                     df['fundingTime'] = pd.to_datetime(df['fundingTime'], unit='ms')
                     df = df.sort_values('fundingTime')
+                    logger.debug(f"获取到 {len(df)} 条资金费率历史记录")
+                    
+                    if logger.isEnabledFor(logging.DEBUG) and not df.empty:
+                        logger.debug(f"资金费率范围: {df['fundingRate'].min()} 到 {df['fundingRate'].max()}")
+                        logger.debug(f"时间范围: {df['fundingTime'].min()} 到 {df['fundingTime'].max()}")
+                        
                 return df
             else:
-                print(f"获取{symbol}资金费率历史失败")
+                logger.warning(f"获取 {symbol} 资金费率历史失败")
                 return pd.DataFrame()
         except Exception as e:
-            print(f"获取{symbol}资金费率历史时出错: {e}")
+            logger.exception(f"获取 {symbol} 资金费率历史时出错: {e}")
             return pd.DataFrame()
 
     def analyze_funding_rate_trend(self, symbol):
         """分析资金费率趋势是否一直减小"""
+        logger.debug(f"分析 {symbol} 资金费率趋势")
+        
         end_time = int(time.time() * 1000)
         start_time = end_time - (48 * 60 * 60 * 1000)  # 48小时前
         
         df = self.get_funding_rate_history(symbol, start_time, end_time)
         if df.empty:
+            logger.debug(f"{symbol} 没有资金费率历史数据")
             return False, 0
         
         # 检查是否至少有两个数据点
         if len(df) < 2:
+            logger.debug(f"{symbol} 资金费率历史数据点数不足: {len(df)}")
             return False, 0
         
         # 计算资金费率的差值
@@ -161,12 +220,20 @@ class BinanceFutureScanner:
         
         # 如果所有的diff都小于等于0（除了第一个NaN），则表示资金费率一直在减小
         decreasing = all(val <= 0 for val in df['diff'].dropna())
+        avg_rate = df['fundingRate'].mean()
+        
+        logger.debug(f"{symbol} 资金费率趋势是否减小: {decreasing}, 平均资金费率: {avg_rate}")
+        if logger.isEnabledFor(logging.DEBUG):
+            diffs = df['diff'].dropna().tolist()
+            logger.debug(f"{symbol} 资金费率变化序列: {diffs}")
         
         # 返回是否一直减小以及平均资金费率
-        return decreasing, df['fundingRate'].mean()
+        return decreasing, avg_rate
 
     def get_price_changes(self, symbol, period):
         """获取价格变化百分比"""
+        logger.debug(f"获取 {symbol} {period}小时价格变化")
+        
         try:
             # 计算周期对应的毫秒数和K线间隔
             if period <= 24:
@@ -176,6 +243,8 @@ class BinanceFutureScanner:
                 interval = '2h'
                 limit = period // 2 + (1 if period % 2 != 0 else 0)
                 limit = min(limit, 1000)  # Binance API限制
+                
+            logger.debug(f"K线参数: interval={interval}, limit={limit}")
 
             url = f"https://fapi.binance.com/fapi/v1/klines"
             params = {
@@ -191,14 +260,18 @@ class BinanceFutureScanner:
                     first_price = float(data[0][1])  # 开盘价
                     last_price = float(data[-1][4])  # 最新收盘价
                     price_change = ((last_price - first_price) / first_price) * 100
+                    logger.debug(f"{symbol} {period}小时价格变化: {price_change:.2f}% (从 {first_price} 到 {last_price})")
                     return price_change
+            logger.warning(f"无法获取 {symbol} 价格变化数据")
             return 0
         except Exception as e:
-            print(f"获取{symbol}价格变化时出错: {e}")
+            logger.exception(f"获取 {symbol} 价格变化时出错: {e}")
             return 0
 
     def get_open_interest(self, symbol):
         """获取合约持仓量"""
+        logger.debug(f"获取 {symbol} 合约持仓量")
+        
         try:
             url = f"https://fapi.binance.com/fapi/v1/openInterest"
             params = {"symbol": symbol}
@@ -206,16 +279,20 @@ class BinanceFutureScanner:
             data = self.api_request(url, params)
             
             if data:
-                return float(data['openInterest'])
+                oi = float(data['openInterest'])
+                logger.debug(f"{symbol} 合约持仓量: {oi}")
+                return oi
             else:
-                print(f"获取{symbol}持仓量失败")
+                logger.warning(f"获取 {symbol} 持仓量失败")
                 return 0
         except Exception as e:
-            print(f"获取{symbol}持仓量时出错: {e}")
+            logger.exception(f"获取 {symbol} 持仓量时出错: {e}")
             return 0
 
     def get_long_short_ratio(self, symbol, period="5m", limit=500):
         """获取多空比例数据"""
+        logger.debug(f"获取 {symbol} 多空比例数据")
+        
         result = {
             'long_short_account_ratio': None,
             'long_short_position_ratio': None,
@@ -239,6 +316,7 @@ class BinanceFutureScanner:
                     'shortAccount': float(data[0]['shortAccount']),
                     'longShortRatio': float(data[0]['longShortRatio'])
                 }
+                logger.debug(f"{symbol} 多空账户比: {result['long_short_account_ratio']}")
             
             # 2. 获取多空持仓量比
             url = f"https://fapi.binance.com/futures/data/globalLongShortPositionRatio"
@@ -250,6 +328,7 @@ class BinanceFutureScanner:
                     'shortPosition': float(data[0]['shortPosition']),
                     'longShortRatio': float(data[0]['longShortRatio'])
                 }
+                logger.debug(f"{symbol} 多空持仓比: {result['long_short_position_ratio']}")
             
             # 3. 获取主动买卖多空比
             url = f"https://fapi.binance.com/futures/data/takerlongshortRatio"
@@ -261,16 +340,23 @@ class BinanceFutureScanner:
                     'buyVol': float(data[0]['buyVol']),
                     'sellVol': float(data[0]['sellVol'])
                 }
+                logger.debug(f"{symbol} 主动买卖比: {result['taker_long_short_ratio']}")
             
             return result
         except Exception as e:
-            print(f"获取{symbol}多空比例数据时出错: {e}")
+            logger.exception(f"获取 {symbol} 多空比例数据时出错: {e}")
             return result
 
     def get_market_cap(self, symbol):
-        """获取币种市值（简化版本，避免API限制）"""
-        # 由于CoinGecko API有严格的速率限制，这里使用简化的方法
-        # 在实际使用中，应考虑缓存市值数据或使用付费API
+        """
+        获取币种市值
+        
+        注意：Binance API没有直接提供市值数据，这里使用一个模拟的映射表
+        实际应用中可以接入CoinMarketCap、CoinGecko等API
+        """
+        logger.debug(f"获取 {symbol} 市值数据")
+        
+        # 从symbol中提取币种名称（去掉USDT）
         coin = symbol.replace('USDT', '').lower()
         
         # 为了演示，这里使用一个简单的映射表来模拟一些常见币种的市值
@@ -326,10 +412,14 @@ class BinanceFutureScanner:
             'xai': 5_000_000,          # 500万美元
         }
         
-        return market_caps.get(coin, None)
+        market_cap = market_caps.get(coin, None)
+        logger.debug(f"{symbol} 市值数据: {market_cap}")
+        return market_cap
 
     def get_prices(self):
         """获取所有合约的当前价格"""
+        logger.info("获取所有合约的当前价格...")
+        
         try:
             url = "https://fapi.binance.com/fapi/v1/ticker/price"
             data = self.api_request(url)
@@ -338,16 +428,25 @@ class BinanceFutureScanner:
                 prices = {}
                 for ticker in data:
                     prices[ticker['symbol']] = float(ticker['price'])
+                
+                logger.info(f"获取到 {len(prices)} 个合约的价格数据")
+                
+                if logger.isEnabledFor(logging.DEBUG):
+                    sample_prices = {k: prices[k] for k in list(prices.keys())[:5]}
+                    logger.debug(f"价格数据样本: {sample_prices}")
+                
                 return prices
             else:
-                print(f"获取价格数据失败")
+                logger.error("获取价格数据失败")
                 return {}
         except Exception as e:
-            print(f"获取价格时出错: {e}")
+            logger.exception(f"获取价格时出错: {e}")
             return {}
 
     def calculate_oi_to_mc_ratio(self, symbol, open_interest, market_cap):
         """计算合约持仓量与市值的比例"""
+        logger.debug(f"计算 {symbol} 持仓量/市值比例: 持仓量={open_interest}, 市值={market_cap}")
+        
         if market_cap and market_cap > 0 and hasattr(self, 'prices') and symbol in self.prices:
             # 使用缓存的价格
             price = self.prices.get(symbol, 0)
@@ -357,7 +456,11 @@ class BinanceFutureScanner:
             
             # 计算持仓量/市值比例
             ratio = (oi_value_usd / market_cap) * 100
+            
+            logger.debug(f"{symbol} 持仓量美元价值: {oi_value_usd}, 持仓量/市值比例: {ratio:.4f}%")
             return ratio
+        
+        logger.debug(f"{symbol} 无法计算持仓量/市值比例: 市值数据缺失或价格数据缺失")
         return None
         
     def format_ratio_output(self, ratio):
@@ -368,49 +471,55 @@ class BinanceFutureScanner:
 
     def scan_best_futures(self):
         """扫描并筛选最佳合约标的"""
-        print("开始扫描Binance合约标的...")
+        logger.info("开始扫描Binance合约标的...")
+        logger.info(f"将筛选资金费率最小的前 {self.top_n} 个合约")
         
         # 1. 获取所有合约
         if not self.all_futures:
             self.get_all_futures()
         
         if not self.all_futures:
-            print("无法获取合约列表，退出")
+            logger.error("无法获取合约列表，退出")
             return
         
         # 2. 获取所有合约的当前资金费率
         current_funding_rates = self.get_current_funding_rates()
         if not current_funding_rates:
-            print("无法获取资金费率数据，退出")
+            logger.error("无法获取资金费率数据，退出")
             return
             
         # 3. 获取所有合约的当前价格
         self.prices = self.get_prices()
         if not self.prices:
-            print("无法获取价格数据，退出")
+            logger.error("无法获取价格数据，退出")
             return
         
-        # 4. 筛选资金费率最小的30个合约标的
+        # 4. 筛选资金费率最小的N个合约标的
         funding_rate_items = [(symbol, rate) for symbol, rate in current_funding_rates.items() 
                              if symbol in self.all_futures]
         funding_rate_items.sort(key=lambda x: x[1])  # 按资金费率升序排序
         
-        top_30_symbols = [item[0] for item in funding_rate_items[:30]]
+        top_n_symbols = [item[0] for item in funding_rate_items[:self.top_n]]
         
-        print(f"\n=== 资金费率最小的30个合约标的 ===")
+        logger.info(f"已筛选出资金费率最小的 {len(top_n_symbols)} 个合约标的")
+        logger.debug(f"筛选出的标的: {top_n_symbols}")
+        
+        print(f"\n=== 资金费率最小的 {self.top_n} 个合约标的 ===")
         print(f"{'合约标的':<10} {'当前资金费率':<15}")
         print("-" * 30)
-        for symbol, rate in funding_rate_items[:30]:
+        for symbol, rate in funding_rate_items[:self.top_n]:
             print(f"{symbol:<10} {rate*100:<15.6f}%")
         
-        # 5. 详细分析这30个合约标的
-        print("\n=== 详细分析资金费率最小的30个合约标的 ===")
+        # 5. 详细分析这N个合约标的
+        print(f"\n=== 详细分析资金费率最小的 {self.top_n} 个合约标的 ===")
         print(f"{'合约标的':<10} {'资金费率':<15} {'费率趋势减小':<15} {'24h涨跌幅':<15} {'48h涨跌幅':<15} {'合约持仓量':<15} {'持仓量/市值':<15} {'多空账户比':<15} {'多空持仓比':<15}")
         print("-" * 150)
         
         detailed_results = []
         
-        for symbol in top_30_symbols:
+        for symbol in top_n_symbols:
+            logger.info(f"分析 {symbol} 详细数据...")
+            
             # 分析资金费率趋势
             is_decreasing, avg_rate = self.analyze_funding_rate_trend(symbol)
             
@@ -460,7 +569,7 @@ class BinanceFutureScanner:
         # 6. 筛选并显示最终符合条件的合约标的
         print("\n=== 最终筛选结果 ===")
         print("符合以下条件的合约标的：")
-        print("1. 资金费率最小的前30")
+        print(f"1. 资金费率最小的前 {self.top_n}")
         print("2. 资金费率趋势一直在减小")
         print("3. 24小时和48小时涨跌幅度均小于20%")
         print("-" * 120)
@@ -513,14 +622,32 @@ class BinanceFutureScanner:
                 
                 print("-" * 50)
         
+        logger.info(f"符合所有条件的合约标的数量: {len(final_results)}")
         print(f"\n符合所有条件的合约标的数量: {len(final_results)}")
         
         return final_results
 
+
+def parse_args():
+    """解析命令行参数"""
+    parser = argparse.ArgumentParser(description="Binance合约标的筛选工具")
+    parser.add_argument("-n", "--top_n", type=int, default=5, help="筛选资金费率最小的前N个合约，默认5个")
+    parser.add_argument("-d", "--debug", action="store_true", help="启用调试模式，输出更详细的日志")
+    return parser.parse_args()
+
+
 async def main():
-    scanner = BinanceFutureScanner()
+    # 解析命令行参数
+    args = parse_args()
+    
+    # 创建扫描器实例
+    scanner = BinanceFutureScanner(top_n=args.top_n, debug=args.debug)
+    
+    # 执行扫描
     results = scanner.scan_best_futures()
+    
     return 0
+
 
 if __name__ == "__main__":
     loop = asyncio.new_event_loop()
