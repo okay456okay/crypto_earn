@@ -367,7 +367,7 @@ class BinanceFutureScanner:
             search_data = self.api_request(url, params)
             
             if not search_data or not search_data.get('coins'):
-                logger.warning(f"无法在CoinGecko找到 {coin} 的数据")
+                logger.debug(f"无法在CoinGecko找到 {coin} 的数据")
                 return None
                 
             coin_id = None
@@ -490,9 +490,9 @@ class BinanceFutureScanner:
             logger.info(f"已筛选出资金费率最小的 {len(top_n_symbols)} 个合约标的")
             logger.debug(f"筛选出的标的: {top_n_symbols}")
             
-            # 定义格式化字符串供后续使用，确保所有表格对齐
+            # 定义格式化字符串供后续使用，确保所有表格对齐，修复百分号问题
             header_format = "{:<15} {:<15} {:<15}"
-            data_format = "{:<15} {:<15.6f}% {:<15.6f}"
+            data_format = "{:<15} {:<15} {:<15.6f}"
             
             # 优化表格展示
             print("\n" + "=" * 45)
@@ -503,11 +503,11 @@ class BinanceFutureScanner:
             
             for symbol, rate in funding_rate_items[:self.top_n]:
                 price = self.prices.get(symbol, 'N/A')
-                print(data_format.format(symbol, rate*100, price))
+                print(data_format.format(symbol, f"{rate*100:.6f}%", price))
             
-            # 定义详细分析表格的格式
+            # 定义详细分析表格的格式，修复百分号问题
             detail_header_format = "{:<15} {:<15} {:<15} {:<15} {:<15} {:<15} {:<15} {:<15} {:<15}"
-            detail_data_format = "{:<15} {:<15.6f}% {:<15} {:<15.2f}% {:<15.2f}% {:<15.2f} {:<15} {:<15} {:<15}"
+            detail_data_format = "{:<15} {:<15} {:<15} {:<15} {:<15} {:<15} {:<15} {:<15} {:<15}"
             
             # 5. 详细分析这N个合约标的
             print("\n" + "=" * 135)
@@ -523,7 +523,7 @@ class BinanceFutureScanner:
             
             for symbol in top_n_symbols:
                 try:
-                    logger.debug(f"分析 {symbol} 详细数据...")
+                    logger.info(f"分析 {symbol} 详细数据...")
                     
                     # 分析资金费率趋势
                     is_decreasing, avg_rate = self.analyze_funding_rate_trend(symbol)
@@ -550,14 +550,19 @@ class BinanceFutureScanner:
                     # 多空持仓比
                     ls_position_ratio = ratios['long_short_position_ratio']['longShortRatio'] if ratios['long_short_position_ratio'] else None
                     
+                    # 格式化数据，确保百分号直接跟在数字后面
+                    funding_rate_str = f"{current_funding_rates[symbol]*100:.6f}%"
+                    price_change_24h_str = f"{price_change_24h:.2f}%"
+                    price_change_48h_str = f"{price_change_48h:.2f}%"
+                    
                     # 打印结果
                     print(detail_data_format.format(
                         symbol, 
-                        current_funding_rates[symbol]*100, 
+                        funding_rate_str, 
                         '是' if is_decreasing else '否', 
-                        price_change_24h, 
-                        price_change_48h, 
-                        open_interest, 
+                        price_change_24h_str, 
+                        price_change_48h_str, 
+                        f"{open_interest:.2f}", 
                         self.format_ratio_output(oi_to_market_cap), 
                         f"{ls_account_ratio:.2f}" if ls_account_ratio is not None else 'N/A', 
                         f"{ls_position_ratio:.2f}" if ls_position_ratio is not None else 'N/A'
