@@ -46,6 +46,7 @@ class HedgeTrader:
         # 设置合约交易对
         base, quote = symbol.split('/')
         self.contract_symbol = f"{base}/{quote}:{quote}"  # 例如: ETH/USDT:USDT
+        self.base_currency = base  # 存储基础货币，方便后续使用
 
         # 使用 ccxt pro 初始化交易所
         self.gateio = ccxtpro.gateio({
@@ -83,50 +84,34 @@ class HedgeTrader:
         # 用于控制WebSocket订阅
         self.ws_running = False
         self.price_updates = asyncio.Queue()
+        
+        # 用于跟踪操作造成的累计差额
+        self.cumulative_position_diff = 0  # 正值表示合约多于现货，负值表示现货多于合约
+        self.cumulative_position_diff_usdt = 0  # 以USDT计价的累计差额
+        self.trade_records = []  # 记录每次交易情况
+        self.trade_count = 0  # 交易计数器
+        self.rebalance_count = 0  # 平衡操作计数器
 
     async def initialize(self):
         """
         异步初始化方法，执行需要网络请求的初始化操作
         """
         try:
-            init_start_time = asyncio.get_event_loop().time()
-            logger.debug(f"开始初始化交易环境 - 时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
-            logger.debug(f"交易参数: symbol={self.symbol}, contract_symbol={self.contract_symbol}, "
+            logger.debug(f"开始初始化交易环境，参数: symbol={self.symbol}, contract_symbol={self.contract_symbol}, "
                        f"spot_amount={self.spot_amount}, min_spread={self.min_spread*100:.4f}%, leverage={self.leverage}")
             
-            # 记录交易所连接信息（安全起见不输出API密钥）
-            logger.debug(f"Gate.io连接配置: enableRateLimit={self.gateio.enableRateLimit}, 使用代理={bool(self.gateio.proxies)}")
-            logger.debug(f"Bitget连接配置: enableRateLimit={self.bitget.enableRateLimit}, 使用代理={bool(self.bitget.proxies)}")
-            
             # 获取市场信息以确定最大杠杆倍数
-            logger.debug("获取Bitget市场信息...")
-            fetch_markets_start = asyncio.get_event_loop().time()
             markets = await self.bitget.fetch_markets()
-            fetch_markets_duration = asyncio.get_event_loop().time() - fetch_markets_start
-            logger.debug(f"获取市场信息完成, 耗时: {fetch_markets_duration:.2f}秒, 获取到 {len(markets)} 个市场")
             
             # 查找对应的合约市场
-            logger.debug(f"查找合约 {self.contract_symbol} 的市场信息...")
             contract_market = next((m for m in markets if m['symbol'] == self.contract_symbol), None)
             
             if not contract_market:
                 logger.error(f"未找到合约 {self.contract_symbol} 的市场信息")
-                logger.debug("可用合约列表:")
-                contract_count = 0
-                for market in markets:
-                    if market.get('symbol', '').endswith(':USDT'):
-                        contract_count += 1
-                        if contract_count <= 10:  # 只记录前10个合约，避免日志过多
-                            logger.debug(f" - {market.get('symbol')}")
-                if contract_count > 10:
-                    logger.debug(f" ... 以及其他 {contract_count - 10} 个合约")
+                # 列出部分可用合约作为参考
+                contract_list = [m.get('symbol') for m in markets if m.get('symbol', '').endswith(':USDT')][:10]
+                logger.debug(f"可用合约示例: {contract_list}")
                 raise Exception(f"未找到合约 {self.contract_symbol} 的市场信息")
-            
-            # 记录找到的合约详细信息
-            logger.debug(f"找到合约 {self.contract_symbol} 的市场信息:")
-            for key, value in contract_market.items():
-                if key not in ['info']:  # 排除info字段，它通常很长
-                    logger.debug(f" - {key}: {value}")
             
             # 如果命令行参数没有指定杠杆倍数，则使用最大杠杆倍数
             if self.leverage is None:
@@ -141,40 +126,23 @@ class HedgeTrader:
                     self.leverage = max_leverage
 
             # 设置Bitget合约参数
-            logger.debug(f"设置Bitget合约杠杆倍数为 {self.leverage}倍...")
-            set_leverage_start = asyncio.get_event_loop().time()
-            leverage_result = await self.bitget.set_leverage(self.leverage, self.contract_symbol)
-            set_leverage_duration = asyncio.get_event_loop().time() - set_leverage_start
-            logger.debug(f"设置杠杆倍数完成, 耗时: {set_leverage_duration:.2f}秒, API返回: {leverage_result}")
+            await self.bitget.set_leverage(self.leverage, self.contract_symbol)
             logger.info(f"设置Bitget合约杠杆倍数为: {self.leverage}倍")
 
-            logger.info(f"初始化完成: 交易对={self.symbol}, 合约对={self.contract_symbol}, "
-                        f"最小价差={self.min_spread * 100}%, 杠杆={self.leverage}倍")
-
             # 获取并保存账户余额
-            logger.debug("获取账户余额...")
-            balance_start = asyncio.get_event_loop().time()
             self.gateio_usdt, self.bitget_usdt = await self.check_balances()
-            balance_duration = asyncio.get_event_loop().time() - balance_start
-            logger.debug(f"获取账户余额完成, 耗时: {balance_duration:.2f}秒")
             logger.debug(f"账户余额: Gate.io USDT={self.gateio_usdt}, Bitget USDT={self.bitget_usdt}")
 
             # 检查余额是否满足交易要求
             if self.spot_amount is not None:
-                logger.debug(f"检查余额是否满足交易要求, 计划交易量: {self.spot_amount} {self.symbol.split('/')[0]}")
                 # 获取当前价格
-                orderbook_start = asyncio.get_event_loop().time()
                 orderbook = await self.gateio.fetch_order_book(self.symbol)
-                orderbook_duration = asyncio.get_event_loop().time() - orderbook_start
-                logger.debug(f"获取订单簿完成, 耗时: {orderbook_duration:.2f}秒")
                 
                 if len(orderbook['asks']) == 0:
-                    logger.error(f"获取到的订单簿缺少asks数据: {orderbook}")
-                    raise Exception(f"无法从订单簿获取价格信息")
+                    raise Exception(f"无法从订单簿获取价格信息: {orderbook}")
                 
                 current_price = float(orderbook['asks'][0][0])
-                logger.debug(f"当前 {self.symbol} 价格: {current_price}")
-
+                
                 # 计算需要的USDT余额
                 required_usdt = float(self.spot_amount) * current_price * 1.02
                 required_margin = float(self.spot_amount) * current_price / self.leverage * 1.05
@@ -185,42 +153,28 @@ class HedgeTrader:
                 # Gate.io余额检查
                 if required_usdt > self.gateio_usdt or self.gateio_usdt < 50:
                     logger.warning(f"Gate.io USDT余额不足，需要约 {required_usdt:.2f} USDT，当前余额 {self.gateio_usdt:.2f} USDT")
-                    logger.debug(f"尝试从余币宝赎回 {max(required_usdt * 1.01, 50):.2f} USDT...")
                     
-                    redeem_start = asyncio.get_event_loop().time()
-                    redeem_result = redeem_earn('USDT', max(required_usdt * 1.01, 50))
-                    redeem_duration = asyncio.get_event_loop().time() - redeem_start
-                    logger.debug(f"余币宝赎回操作完成, 耗时: {redeem_duration:.2f}秒, 结果: {redeem_result}")
+                    # 尝试从余币宝赎回
+                    redeem_amount = max(required_usdt * 1.01, 50)
+                    redeem_result = redeem_earn('USDT', redeem_amount)
+                    logger.debug(f"从余币宝赎回 {redeem_amount:.2f} USDT，结果: {redeem_result}")
                     
                     # 重新获取并保存账户余额
-                    logger.debug("重新获取账户余额...")
-                    recheck_balance_start = asyncio.get_event_loop().time()
                     self.gateio_usdt, self.bitget_usdt = await self.check_balances()
-                    recheck_balance_duration = asyncio.get_event_loop().time() - recheck_balance_start
-                    logger.debug(f"重新获取账户余额完成, 耗时: {recheck_balance_duration:.2f}秒")
-                    logger.debug(f"赎回后账户余额: Gate.io USDT={self.gateio_usdt}, Bitget USDT={self.bitget_usdt}")
                     
                     if required_usdt > self.gateio_usdt:
-                        logger.error(f"赎回后Gate.io USDT余额仍不足，需要约 {required_usdt:.2f} USDT，当前余额 {self.gateio_usdt:.2f} USDT")
-                        raise Exception(f"Gate.io USDT余额不足，需要约 {required_usdt:.2f} USDT，当前余额 {self.gateio_usdt:.2f} USDT")
+                        raise Exception(f"赎回后Gate.io USDT余额仍不足，需要约 {required_usdt:.2f} USDT，当前余额 {self.gateio_usdt:.2f} USDT")
 
                 # Bitget余额检查
                 if required_margin > self.bitget_usdt:
-                    logger.error(f"Bitget USDT保证金不足，需要约 {required_margin:.2f} USDT，当前余额 {self.bitget_usdt:.2f} USDT")
-                    raise Exception(
-                        f"Bitget USDT保证金不足，需要约 {required_margin:.2f} USDT，当前余额 {self.bitget_usdt:.2f} USDT")
+                    raise Exception(f"Bitget USDT保证金不足，需要约 {required_margin:.2f} USDT，当前余额 {self.bitget_usdt:.2f} USDT")
 
-                logger.info(
-                    f"账户余额检查通过 - 预估所需Gate.io: {required_usdt:.2f} USDT, Bitget: {required_margin:.2f} USDT")
+                logger.info(f"账户余额检查通过 - 预估所需Gate.io: {required_usdt:.2f} USDT, Bitget: {required_margin:.2f} USDT")
 
-            # 计算初始化总耗时
-            init_duration = asyncio.get_event_loop().time() - init_start_time
-            logger.debug(f"初始化过程总耗时: {init_duration:.2f}秒")
+            logger.info(f"初始化完成: 交易对={self.symbol}, 合约对={self.contract_symbol}, 最小价差={self.min_spread * 100}%, 杠杆={self.leverage}倍")
 
         except Exception as e:
             logger.exception(f"初始化失败: {str(e)}")
-            import traceback
-            logger.debug(f"初始化错误堆栈:\n{traceback.format_exc()}")
             raise
 
     async def check_balances(self):
@@ -271,10 +225,10 @@ class HedgeTrader:
                             ob = task.result()
                             if task == tasks[0]:  # gateio task
                                 self.orderbooks['gateio'] = ob
-                                logger.debug(f"{self.symbol}收到Gate.io订单簿更新")
+                                logger.debug(f"收到Gate.io订单簿更新")
                             else:  # bitget task
                                 self.orderbooks['bitget'] = ob
-                                logger.debug(f"{self.symbol} 收到Bitget订单簿更新")
+                                logger.debug(f"收到Bitget订单簿更新")
 
                             # 如果两个订单簿都有数据，检查价差
                             if self.orderbooks['gateio'] and self.orderbooks['bitget']:
@@ -317,7 +271,6 @@ class HedgeTrader:
 
             # 检查订单簿数据是否存在
             if not gateio_ob or not bitget_ob:
-                logger.debug(f"订单簿数据不完整: Gate.io={bool(gateio_ob)}, Bitget={bool(bitget_ob)}")
                 return
 
             # 记录订单簿数据时间戳，用于检测数据新鲜度
@@ -344,28 +297,13 @@ class HedgeTrader:
             spread_percent = spread / gateio_ask
             
             # 记录完整的价格信息
-            logger.debug(f"订单簿完整价格信息 - 时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
-            logger.debug(f"Gate.io数据年龄: {gateio_age:.2f}秒, Bitget数据年龄: {bitget_age:.2f}秒")
-            logger.debug(f"Gate.io - 买1: {gateio_bid} (量: {gateio_bid_volume}), 卖1: {gateio_ask} (量: {gateio_ask_volume})")
-            logger.debug(f"Bitget - 买1: {bitget_bid} (量: {bitget_bid_volume}), 卖1: {bitget_ask} (量: {bitget_ask_volume})")
-            logger.debug(f"价差: {float(spread):.8f} ({float(spread_percent) * 100:.4f}%)")
+            logger.debug(f"订单簿数据 - Gate.io: 买1={gateio_bid}(量:{gateio_bid_volume}), 卖1={gateio_ask}(量:{gateio_ask_volume}), "
+                       f"Bitget: 买1={bitget_bid}(量:{bitget_bid_volume}), 卖1={bitget_ask}(量:{bitget_ask_volume}), "
+                       f"价差: {float(spread):.8f} ({float(spread_percent) * 100:.4f}%)")
             
             # 检查价差是否有效（防止异常价格导致错误决策）
             if abs(float(spread_percent)) > 0.1:  # 超过10%的价差可能是异常数据
                 logger.warning(f"检测到异常价差: {float(spread_percent) * 100:.4f}%，可能是订单簿数据异常")
-                
-                # 额外记录更多的订单簿数据进行分析
-                logger.debug(f"Gate.io订单簿深度(前3档):")
-                for i, (price, amount) in enumerate(gateio_ob['asks'][:3]):
-                    logger.debug(f"  卖{i+1}: 价格={price}, 数量={amount}")
-                for i, (price, amount) in enumerate(gateio_ob['bids'][:3]):
-                    logger.debug(f"  买{i+1}: 价格={price}, 数量={amount}")
-                
-                logger.debug(f"Bitget订单簿深度(前3档):")
-                for i, (price, amount) in enumerate(bitget_ob['asks'][:3]):
-                    logger.debug(f"  卖{i+1}: 价格={price}, 数量={amount}")
-                for i, (price, amount) in enumerate(bitget_ob['bids'][:3]):
-                    logger.debug(f"  买{i+1}: 价格={price}, 数量={amount}")
             
             # 将价差数据放入队列
             spread_data = {
@@ -385,7 +323,7 @@ class HedgeTrader:
                     await asyncio.wait_for(self.price_updates.put(spread_data), timeout=0.5)
                 else:
                     # 如果队列太大，清空队列并添加最新数据
-                    logger.warning(f"价差数据队列过大 (size={self.price_updates.qsize()})，清空并添加最新数据")
+                    logger.warning(f"价差数据队列过大，清空并添加最新数据")
                     while not self.price_updates.empty():
                         try:
                             self.price_updates.get_nowait()
@@ -396,17 +334,11 @@ class HedgeTrader:
                 logger.warning("价差数据入队超时")
 
         except Exception as e:
-            logger.error(f"{self.symbol}检查订单簿价差时出错: {str(e)}")
-            import traceback
-            logger.debug(f"检查订单簿价差错误堆栈:\n{traceback.format_exc()}")
+            logger.error(f"检查订单簿价差时出错: {str(e)}")
             # 如果出现异常，尝试记录订单簿状态以便调试
             try:
-                logger.debug(f"Gate.io订单簿状态: {'有数据' if self.orderbooks['gateio'] else '无数据'}")
-                logger.debug(f"Bitget订单簿状态: {'有数据' if self.orderbooks['bitget'] else '无数据'}")
-                if self.orderbooks['gateio']:
-                    logger.debug(f"Gate.io订单簿摘要: asks={len(self.orderbooks['gateio']['asks'])}, bids={len(self.orderbooks['gateio']['bids'])}")
-                if self.orderbooks['bitget']:
-                    logger.debug(f"Bitget订单簿摘要: asks={len(self.orderbooks['bitget']['asks'])}, bids={len(self.orderbooks['bitget']['bids'])}")
+                logger.debug(f"订单簿状态 - Gate.io: {'有数据' if self.orderbooks['gateio'] else '无数据'}, "
+                           f"Bitget: {'有数据' if self.orderbooks['bitget'] else '无数据'}")
             except:
                 pass
 
@@ -414,16 +346,12 @@ class HedgeTrader:
         """等待价差达到要求"""
         subscription_task = None
         try:
-            logger.debug(f"开始等待价差达到要求: {self.min_spread * 100:.4f}% - 时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
+            logger.debug(f"开始等待价差达到要求: {self.min_spread * 100:.4f}%")
             
             # 启动WebSocket订阅
-            logger.debug("启动WebSocket订阅订单簿...")
-            subscription_start = asyncio.get_event_loop().time()
             subscription_task = asyncio.create_task(self.subscribe_orderbooks())
-            logger.debug(f"WebSocket订阅任务已创建，任务ID: {id(subscription_task)}")
-
+            
             # 记录起始时间，用于计算总等待时间
-            wait_start_time = asyncio.get_event_loop().time()
             update_count = 0
             last_log_time = 0
 
@@ -431,114 +359,175 @@ class HedgeTrader:
                 try:
                     # 从队列中获取最新价差数据，设置超时
                     current_time = asyncio.get_event_loop().time()
-                    elapsed_time = current_time - wait_start_time
-                    
-                    logger.debug(f"等待价差数据，已等待: {elapsed_time:.2f}秒...")
-                    queue_wait_start = current_time
                     
                     spread_data = await asyncio.wait_for(
                         self.price_updates.get(),
                         timeout=30  # 30秒超时
                     )
-                    
-                    queue_wait_duration = asyncio.get_event_loop().time() - queue_wait_start
-                    logger.debug(f"从队列获取价差数据耗时: {queue_wait_duration:.2f}秒")
 
                     update_count += 1
                     spread_percent = spread_data['spread_percent']
                     
                     # 每10次更新或者至少间隔5秒记录一次详细日志
                     if update_count % 10 == 0 or (current_time - last_log_time) >= 5:
-                        logger.debug(
-                            f"价格检查 #{update_count} - Gate.io卖1: {spread_data['gateio_ask']} (量: {spread_data['gateio_ask_volume']}), "
-                            f"Bitget买1: {spread_data['bitget_bid']} (量: {spread_data['bitget_bid_volume']}), "
-                            f"价差: {spread_percent * 100:.4f}%, 最小要求: {self.min_spread * 100:.4f}%")
+                        logger.debug(f"价格检查 - Gate.io卖1: {spread_data['gateio_ask']} vs Bitget买1: {spread_data['bitget_bid']}, "
+                                   f"价差: {spread_percent * 100:.4f}%, 最小要求: {self.min_spread * 100:.4f}%")
                         last_log_time = current_time
                     
                     if spread_percent >= self.min_spread:
-                        total_wait_time = asyncio.get_event_loop().time() - wait_start_time
-                        logger.info(
-                            f"{self.symbol}"
-                            f"价格检查 - Gate.io卖1: {spread_data['gateio_ask']} (量: {spread_data['gateio_ask_volume']}), "
-                            f"Bitget买1: {spread_data['bitget_bid']} (量: {spread_data['bitget_bid_volume']}), "
-                            f"价差: {spread_percent * 100:.4f}%")
-                        logger.info(f"{self.symbol}价差条件满足: {spread_percent * 100:.4f}% >= {self.min_spread * 100:.4f}%, 等待总时间: {total_wait_time:.2f}秒, 检查次数: {update_count}")
+                        logger.info(f"价差条件满足: {spread_percent * 100:.4f}% >= {self.min_spread * 100:.4f}%")
                         return (spread_percent, spread_data['gateio_ask'], spread_data['bitget_bid'],
                                 spread_data['gateio_ask_volume'], spread_data['bitget_bid_volume'])
-                    else:
-                        if update_count % 10 == 0 or (current_time - last_log_time) >= 5:
-                            logger.debug(f"{self.symbol}价差条件不满足: {spread_percent * 100:.4f}% < {self.min_spread * 100:.4f}%, 继续等待...")
 
                 except asyncio.TimeoutError:
-                    wait_duration = asyncio.get_event_loop().time() - wait_start_time
-                    logger.warning(f"{self.symbol}等待价差数据超时({wait_duration:.2f}秒)，重新订阅订单簿")
+                    logger.warning(f"等待价差数据超时(30秒)，重新订阅订单簿")
                     # 重新启动订阅
                     if subscription_task:
-                        logger.debug(f"取消并重启WebSocket订阅任务，原任务ID: {id(subscription_task)}")
                         subscription_task.cancel()
                         try:
                             await subscription_task
                         except asyncio.CancelledError:
-                            logger.debug("原WebSocket订阅任务已成功取消")
                             pass
                     
-                    logger.debug("创建新的WebSocket订阅任务...")
                     subscription_task = asyncio.create_task(self.subscribe_orderbooks())
-                    logger.debug(f"新WebSocket订阅任务已创建，任务ID: {id(subscription_task)}")
 
         except Exception as e:
-            logger.error(f"{self.symbol}等待价差时出错: {str(e)}")
-            import traceback
-            logger.debug(f"等待价差错误堆栈:\n{traceback.format_exc()}")
+            logger.error(f"等待价差时出错: {str(e)}")
             raise
         finally:
             # 确保WebSocket订阅被停止
-            logger.debug("停止所有WebSocket订阅...")
             self.ws_running = False
             if subscription_task:
-                logger.debug(f"取消WebSocket订阅任务，任务ID: {id(subscription_task)}")
                 subscription_task.cancel()
                 try:
                     await subscription_task
-                    logger.debug("WebSocket订阅任务已成功取消")
                 except asyncio.CancelledError:
-                    logger.debug("WebSocket订阅任务已成功取消(通过CancelledError)")
                     pass
 
     async def execute_hedge_trade(self):
         """执行对冲交易"""
         try:
-            logger.debug(f"开始执行对冲交易流程 - 时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
-            # 1. 等待价差满足条件
-            logger.debug("等待价差满足条件...")
-            wait_start_time = asyncio.get_event_loop().time()
-            spread_data = await self.wait_for_spread()
-            wait_duration = asyncio.get_event_loop().time() - wait_start_time
-            logger.debug(f"价差条件满足, 等待耗时: {wait_duration:.2f}秒")
+            logger.debug("开始执行对冲交易流程")
             
+            # 1. 等待价差满足条件
+            spread_data = await self.wait_for_spread()
             spread_percent, gateio_ask, bitget_bid, gateio_ask_volume, bitget_bid_volume = spread_data
-            logger.debug(f"获取到的价差数据 - 价差百分比: {spread_percent*100:.4f}%, Gate.io卖一价: {gateio_ask}, "
-                       f"Bitget买一价: {bitget_bid}")
-            logger.debug(f"交易量信息 - Gate.io卖一量: {gateio_ask_volume}, Bitget买一量: {bitget_bid_volume}")
-
-            # 2. 立即准备下单参数, 补偿一点手续费，不然现货会比合约少一些
-            trade_amount = self.spot_amount * 1.0019612816536183
+            logger.debug(f"获取到的价差数据 - 价差: {spread_percent*100:.4f}%, Gate.io卖1: {gateio_ask}, Bitget买1: {bitget_bid}")
+            
+            # 2. 检查是否需要执行平衡操作（当累计差额超过6 USDT时）
+            current_price = float(gateio_ask)  # 使用当前Gate.io的卖一价格
+            self.cumulative_position_diff_usdt = abs(self.cumulative_position_diff * current_price)
+            
+            # 如果累计差额超过6 USDT，执行平衡操作
+            if self.cumulative_position_diff_usdt >= 6:
+                if self.cumulative_position_diff > 0:  # 合约多于现货，需要买入现货
+                    rebalance_amount = abs(self.cumulative_position_diff)
+                    logger.info("=" * 50)
+                    logger.info(f"【平衡操作】检测到累计差额: {self.cumulative_position_diff:.8f} {self.base_currency} "
+                               f"({self.cumulative_position_diff_usdt:.2f} USDT)")
+                    logger.info(f"【平衡操作】将买入 {rebalance_amount:.8f} {self.base_currency} 现货")
+                    
+                    try:
+                        # 计算买入现货所需的USDT (加1%作为滑点和手续费的缓冲)
+                        cost = float(rebalance_amount) * current_price * 1.01
+                        
+                        # 执行市价买入
+                        rebalance_order = await self.gateio.create_market_buy_order(
+                            symbol=self.symbol,
+                            amount=cost,
+                            params={'createMarketBuyOrderRequiresPrice': False, 'quoteOrderQty': True}
+                        )
+                        
+                        # 获取实际成交量
+                        filled_amount = float(rebalance_order.get('filled', 0))
+                        fees = rebalance_order.get('fees', [])
+                        base_fee = sum(float(fee.get('cost', 0)) for fee in fees if fee.get('currency') == self.base_currency)
+                        actual_filled = filled_amount - base_fee
+                        
+                        # 更新累计差额
+                        self.cumulative_position_diff -= actual_filled
+                        self.cumulative_position_diff_usdt = abs(self.cumulative_position_diff * current_price)
+                        
+                        # 记录平衡操作
+                        self.rebalance_count += 1
+                        
+                        # 申购余币宝
+                        try:
+                            if actual_filled > 0:
+                                earn_result = gateio_subscrible_earn(self.base_currency, actual_filled)
+                                logger.info(f"【平衡操作】已将 {actual_filled} {self.base_currency} 申购到余币宝")
+                        except Exception as e:
+                            logger.error(f"【平衡操作】余币宝申购失败: {str(e)}")
+                        
+                        # 记录平衡操作结果
+                        logger.info(f"【平衡操作】成功买入 {actual_filled} {self.base_currency} 现货，累计差额更新为 "
+                                  f"{self.cumulative_position_diff:.8f} {self.base_currency} ({self.cumulative_position_diff_usdt:.2f} USDT)")
+                        logger.info("=" * 50)
+                        
+                    except Exception as e:
+                        logger.error(f"【平衡操作】买入现货失败: {str(e)}")
+                
+                elif self.cumulative_position_diff < 0:  # 现货多于合约，需要增加合约空单
+                    rebalance_amount = abs(self.cumulative_position_diff)
+                    logger.info("=" * 50)
+                    logger.info(f"【平衡操作】检测到累计差额: {self.cumulative_position_diff:.8f} {self.base_currency} "
+                               f"({self.cumulative_position_diff_usdt:.2f} USDT)")
+                    logger.info(f"【平衡操作】将开立 {rebalance_amount:.8f} {self.base_currency} 合约空单")
+                    
+                    try:
+                        # 精确化合约数量
+                        contract_amount = self.bitget.amount_to_precision(self.contract_symbol, rebalance_amount)
+                        
+                        # 执行合约空单
+                        rebalance_order = await self.bitget.create_market_sell_order(
+                            symbol=self.contract_symbol,
+                            amount=contract_amount,
+                            params={"reduceOnly": False}
+                        )
+                        
+                        # 获取实际成交量
+                        filled_amount = float(rebalance_order.get('filled', 0))
+                        
+                        # 如果订单信息中没有成交量，尝试获取更新
+                        if filled_amount <= 0:
+                            try:
+                                await asyncio.sleep(0.5)
+                                order_id = rebalance_order.get('id')
+                                if order_id:
+                                    updated_order = await self.bitget.fetch_order(order_id, self.contract_symbol)
+                                    filled_amount = float(updated_order.get('filled', 0))
+                            except Exception as ex:
+                                logger.warning(f"【平衡操作】获取订单详情失败: {str(ex)}")
+                        
+                        # 如果仍然没有成交量，使用下单量作为估计
+                        if filled_amount <= 0:
+                            filled_amount = float(contract_amount)
+                            logger.warning(f"【平衡操作】无法获取实际成交量，使用下单量 {filled_amount} 作为估计")
+                        
+                        # 更新累计差额
+                        self.cumulative_position_diff += filled_amount
+                        self.cumulative_position_diff_usdt = abs(self.cumulative_position_diff * current_price)
+                        
+                        # 记录平衡操作
+                        self.rebalance_count += 1
+                        
+                        # 记录平衡操作结果
+                        logger.info(f"【平衡操作】成功开立 {filled_amount} {self.base_currency} 合约空单，累计差额更新为 "
+                                  f"{self.cumulative_position_diff:.8f} {self.base_currency} ({self.cumulative_position_diff_usdt:.2f} USDT)")
+                        logger.info("=" * 50)
+                        
+                    except Exception as e:
+                        logger.error(f"【平衡操作】开立合约空单失败: {str(e)}")
+            
+            # 3. 立即准备下单参数, 补偿一点手续费，不然现货会比合约少一些
+            trade_amount = self.spot_amount * 1.001
             cost = float(trade_amount) * float(gateio_ask)
             contract_amount = self.bitget.amount_to_precision(self.contract_symbol, trade_amount)
 
-            # 调试日志：记录下单前信息
-            logger.debug(f"准备下单 - Gate.io: {self.symbol}, 花费: {cost} USDT; Bitget: {self.contract_symbol}, 数量: {contract_amount}")
-            logger.debug(f"调整后的交易数量: {trade_amount}，原始数量: {self.spot_amount}，调整系数: 1.0019612816536183")
+            logger.debug(f"准备下单 - Gate.io: {self.symbol}，花费: {cost} USDT; Bitget: {self.contract_symbol}，数量: {contract_amount}")
 
-            # 3. 立即执行交易
+            # 4. 立即执行交易
             try:
-                logger.debug(f"开始下单 - 时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
-                order_start_time = asyncio.get_event_loop().time()
-                
-                # 记录请求参数
-                logger.debug(f"Gate.io市价买入参数: symbol={self.symbol}, amount={cost}, params={{createMarketBuyOrderRequiresPrice: false, quoteOrderQty: true}}")
-                logger.debug(f"Bitget市价卖出参数: symbol={self.contract_symbol}, amount={contract_amount}, params={{reduceOnly: false}}")
-                
                 spot_order, contract_order = await asyncio.gather(
                     self.gateio.create_market_buy_order(
                         symbol=self.symbol,
@@ -551,174 +540,59 @@ class HedgeTrader:
                         params={"reduceOnly": False}
                     )
                 )
-                order_duration = asyncio.get_event_loop().time() - order_start_time
-                logger.debug(f"下单请求已发送并获得初始响应, 耗时: {order_duration:.2f}秒")
-                logger.debug(f"Gate.io订单ID: {spot_order.get('id')}, Bitget订单ID: {contract_order.get('id')}")
+                logger.debug(f"下单请求已发送 - Gate.io订单ID: {spot_order.get('id')}, Bitget订单ID: {contract_order.get('id')}")
             except Exception as e:
                 logger.error(f"下单过程出错: {str(e)}")
-                import traceback
-                logger.debug(f"下单错误堆栈: {traceback.format_exc()}")
-                # 记录更多错误诊断信息
-                logger.debug(f"下单时的数据: Gate.io价格={gateio_ask}, Bitget价格={bitget_bid}, "
-                           f"交易量={trade_amount}, 合约量={contract_amount}, 花费={cost}")
                 raise
-                
-            # 4. 交易后再进行其他操作
+
+            # 5. 交易后操作
             base_currency = self.symbol.split('/')[0]
-            logger.info(f"计划交易数量: {trade_amount} {base_currency}")
-            logger.info(f"在Gate.io市价买入 {trade_amount} {base_currency}, 预估成本: {cost:.2f} USDT")
-            logger.info(f"在Bitget市价开空单 {contract_amount} {base_currency}")
+            logger.info(f"在Gate.io市价买入 {trade_amount} {base_currency}，在Bitget市价开空单 {contract_amount} {base_currency}")
             
             # 等待一段时间，确保订单状态已更新
-            logger.debug(f"等待1秒，让订单状态更新... - 时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
             await asyncio.sleep(1)
             
             # 获取最新的订单状态 - Gate.io
             spot_order_id = spot_order.get('id')
             if spot_order_id:
                 try:
-                    logger.debug(f"获取Gate.io订单详情, 订单ID: {spot_order_id} - 时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
-                    # 尝试首先使用fetch_closed_orders，因为市价单通常会立即成交
+                    # 尝试获取已完成订单
                     updated_spot_order = None
                     
                     try:
-                        logger.debug("尝试从已完成订单中获取Gate.io订单")
-                        closed_orders_start = asyncio.get_event_loop().time()
                         closed_orders = await self.gateio.fetch_closed_orders(self.symbol, since=int(time.time() * 1000) - 60000)
-                        closed_orders_duration = asyncio.get_event_loop().time() - closed_orders_start
-                        logger.debug(f"获取已完成订单耗时: {closed_orders_duration:.2f}秒")
-                        logger.debug(f"Gate.io返回 {len(closed_orders)} 个已完成订单")
                         
                         for order in closed_orders:
-                            logger.debug(f"检查订单: ID={order.get('id')}, 状态={order.get('status')}, 时间={order.get('datetime')}")
                             if order.get('id') == spot_order_id:
-                                logger.debug(f"在已完成订单中找到Gate.io订单: {order.get('id')}")
                                 updated_spot_order = order
                                 break
-                        else:
-                            logger.debug(f"在已完成订单中未找到Gate.io订单 {spot_order_id}，将使用fetch_order")
-                            # 如果在已完成订单中找不到，使用fetch_order
-                            fetch_order_start = asyncio.get_event_loop().time()
+                        
+                        if not updated_spot_order:
                             updated_spot_order = await self.gateio.fetch_order(spot_order_id, self.symbol)
-                            fetch_order_duration = asyncio.get_event_loop().time() - fetch_order_start
-                            logger.debug(f"使用fetch_order获取Gate.io订单耗时: {fetch_order_duration:.2f}秒")
                     except Exception as e:
                         logger.debug(f"获取已完成订单失败: {str(e)}，将直接使用fetch_order")
-                        # 如果获取已完成订单失败，直接使用fetch_order
-                        fetch_order_start = asyncio.get_event_loop().time()
                         updated_spot_order = await self.gateio.fetch_order(spot_order_id, self.symbol)
-                        fetch_order_duration = asyncio.get_event_loop().time() - fetch_order_start
-                        logger.debug(f"使用fetch_order获取Gate.io订单耗时: {fetch_order_duration:.2f}秒")
                         
                     if updated_spot_order:
                         logger.debug(f"获取到Gate.io最新订单状态: {updated_spot_order.get('status')}")
-                        # 如果成功获取到更新的订单信息，记录差异
-                        if updated_spot_order != spot_order:
-                            spot_filled_before = float(spot_order.get('filled', 0))
-                            spot_filled_after = float(updated_spot_order.get('filled', 0))
-                            spot_status_before = spot_order.get('status')
-                            spot_status_after = updated_spot_order.get('status')
-                            
-                            logger.debug(f"Gate.io订单状态变化: {spot_status_before} -> {spot_status_after}")
-                            logger.debug(f"Gate.io成交量变化: {spot_filled_before} -> {spot_filled_after}")
-                        
                         spot_order = updated_spot_order
                 except Exception as e:
                     logger.warning(f"获取Gate.io订单更新失败: {str(e)}")
-                    import traceback
-                    logger.debug(f"获取Gate.io订单错误堆栈: {traceback.format_exc()}")
-            else:
-                logger.warning("未获取到Gate.io订单ID，无法更新订单状态")
             
             # 获取最新的订单状态 - Bitget
             contract_order_id = contract_order.get('id')
             if contract_order_id:
                 try:
-                    logger.debug(f"获取Bitget订单详情, 订单ID: {contract_order_id} - 时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
-                    # 多种方式尝试获取订单状态
-                    updated_contract_order = None
-                    error_messages = []
-                    
-                    # 方法1: 尝试获取已完成订单信息
-                    try:
-                        logger.debug("方法1: 尝试使用fetch_closed_order获取Bitget订单")
-                        method1_start = asyncio.get_event_loop().time()
-                        updated_contract_order = await self.bitget.fetch_closed_order(contract_order_id, self.contract_symbol)
-                        method1_duration = asyncio.get_event_loop().time() - method1_start
-                        logger.debug(f"方法1耗时: {method1_duration:.2f}秒")
-                        logger.debug("成功从fetch_closed_order获取Bitget订单")
-                    except Exception as e:
-                        error_messages.append(f"fetch_closed_order失败: {str(e)}")
-                        logger.debug(f"方法1失败: {str(e)}")
-                        
-                    # 方法2: 如果方法1失败，尝试获取普通订单
-                    if updated_contract_order is None:
-                        try:
-                            logger.debug("方法2: 尝试使用fetch_order获取Bitget订单")
-                            method2_start = asyncio.get_event_loop().time()
-                            updated_contract_order = await self.bitget.fetch_order(contract_order_id, self.contract_symbol)
-                            method2_duration = asyncio.get_event_loop().time() - method2_start
-                            logger.debug(f"方法2耗时: {method2_duration:.2f}秒")
-                            logger.debug("成功从fetch_order获取Bitget订单")
-                        except Exception as e:
-                            error_messages.append(f"fetch_order失败: {str(e)}")
-                            logger.debug(f"方法2失败: {str(e)}")
-                    
-                    # 方法3: 如果前两种方法都失败，尝试获取最近订单列表
-                    if updated_contract_order is None:
-                        try:
-                            logger.debug("方法3: 尝试使用fetch_orders获取Bitget订单")
-                            method3_start = asyncio.get_event_loop().time()
-                            recent_orders = await self.bitget.fetch_orders(self.contract_symbol, limit=10)
-                            method3_duration = asyncio.get_event_loop().time() - method3_start
-                            logger.debug(f"方法3耗时: {method3_duration:.2f}秒")
-                            logger.debug(f"获取到 {len(recent_orders)} 个Bitget最近订单")
-                            
-                            for order in recent_orders:
-                                logger.debug(f"检查订单: ID={order.get('id')}, 状态={order.get('status')}, 时间={order.get('datetime')}")
-                                if order.get('id') == contract_order_id:
-                                    updated_contract_order = order
-                                    logger.debug("成功从fetch_orders获取Bitget订单")
-                                    break
-                            else:
-                                logger.debug(f"在最近订单中未找到Bitget订单 {contract_order_id}")
-                        except Exception as e:
-                            error_messages.append(f"fetch_orders失败: {str(e)}")
-                            logger.debug(f"方法3失败: {str(e)}")
+                    updated_contract_order = await self.bitget.fetch_order(contract_order_id, self.contract_symbol)
                     
                     if updated_contract_order:
                         logger.debug(f"获取到Bitget最新订单状态: {updated_contract_order.get('status')}")
-                        # 如果成功获取到更新的订单信息，记录差异
-                        if updated_contract_order != contract_order:
-                            contract_filled_before = float(contract_order.get('filled', 0))
-                            contract_filled_after = float(updated_contract_order.get('filled', 0))
-                            contract_status_before = contract_order.get('status')
-                            contract_status_after = updated_contract_order.get('status')
-                            
-                            logger.debug(f"Bitget订单状态变化: {contract_status_before} -> {contract_status_after}")
-                            logger.debug(f"Bitget成交量变化: {contract_filled_before} -> {contract_filled_after}")
-                        
                         contract_order = updated_contract_order
-                    else:
-                        logger.warning(f"无法获取Bitget订单更新，尝试的方法都失败: {', '.join(error_messages)}")
-                        logger.debug("将使用原始订单信息，并依赖持仓检查来验证")
                 except Exception as e:
                     logger.warning(f"获取Bitget订单更新失败: {str(e)}")
-                    import traceback
-                    logger.debug(f"获取Bitget订单错误堆栈: {traceback.format_exc()}")
-            else:
-                logger.warning("未获取到Bitget订单ID，无法更新订单状态")
-                    
-            # 记录订单详细信息
-            logger.debug(f"Gate.io订单详情: {spot_order}")
-            logger.debug(f"Bitget订单详情: {contract_order}")
-
+            
             # 检查订单执行状态
-            logger.debug(f"开始验证订单执行状态... - 时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
-            verify_start = asyncio.get_event_loop().time()
             order_verification = self.verify_order_execution(spot_order, contract_order)
-            verify_duration = asyncio.get_event_loop().time() - verify_start
-            logger.debug(f"订单验证完成, 耗时: {verify_duration:.2f}秒, 结果: {'通过' if order_verification else '失败'}")
             
             if not order_verification:
                 logger.error("订单执行异常，终止交易！")
@@ -733,47 +607,52 @@ class HedgeTrader:
             # 获取合约订单的实际成交数量
             contract_filled = float(contract_order.get('filled', contract_amount))
 
-            logger.info(f"Gate.io实际成交数量: {filled_amount} {base_currency}, "
-                        f"手续费: {base_fee} {base_currency}, "
-                        f"实际持仓: {actual_position} {base_currency}")
-            logger.info(f"Bitget合约实际成交数量: {contract_filled} {base_currency}")
-
-            # 详细记录手续费情况
-            logger.debug(f"Gate.io手续费详情:")
-            for fee in fees:
-                logger.debug(f" - 币种: {fee.get('currency')}, 数量: {fee.get('cost')}")
+            logger.info(f"Gate.io实际成交: {filled_amount} {base_currency}, 手续费: {base_fee} {base_currency}, 实际持仓: {actual_position} {base_currency}")
+            logger.info(f"Bitget合约实际成交: {contract_filled} {base_currency}")
 
             # 检查持仓情况
-            logger.debug(f"开始检查持仓情况... - 时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
-            position_check_start = asyncio.get_event_loop().time()
             position_balance = await self.check_positions(actual_position, contract_filled)
-            position_check_duration = asyncio.get_event_loop().time() - position_check_start
-            logger.debug(f"持仓检查耗时: {position_check_duration:.2f}秒, 结果: {'通过' if position_balance else '失败'}")
             
             if not position_balance:
                 logger.error("持仓检查不通过，确认交易执行有问题！终止交易！")
                 return None, None
 
+            # 计算并记录本次交易的差额
+            position_diff = contract_filled - actual_position  # 正值表示合约多，负值表示现货多
+            self.cumulative_position_diff += position_diff
+            self.cumulative_position_diff_usdt = abs(self.cumulative_position_diff * current_price)
+            
+            # 增加交易记录
+            self.trade_count += 1
+            trade_record = {
+                'trade_id': self.trade_count,
+                'timestamp': int(time.time()),
+                'spot_filled': actual_position,
+                'contract_filled': contract_filled,
+                'position_diff': position_diff,
+                'position_diff_usdt': position_diff * current_price,
+                'price': current_price,
+                'cumulative_diff': self.cumulative_position_diff,
+                'cumulative_diff_usdt': self.cumulative_position_diff_usdt
+            }
+            self.trade_records.append(trade_record)
+            
+            # 记录交易差额和累计差额
+            logger.info(f"【交易差额】- 现货: {actual_position} {base_currency}, 合约: {contract_filled} {base_currency}, "
+                      f"单次差额: {position_diff:.8f} {base_currency} ({position_diff * current_price:.2f} USDT), "
+                      f"累计差额: {self.cumulative_position_diff:.8f} {base_currency} ({self.cumulative_position_diff_usdt:.2f} USDT)")
+
             # 申购余币宝
             try:
-                logger.debug(f"开始申购余币宝... - 时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
-                earn_start = asyncio.get_event_loop().time()
                 earn_result = gateio_subscrible_earn(base_currency, actual_position)
-                earn_duration = asyncio.get_event_loop().time() - earn_start
-                logger.debug(f"余币宝申购返回结果: {earn_result}")
-                logger.info(f"已将 {actual_position} {base_currency} 申购到余币宝, 耗时: {earn_duration:.2f}秒")
+                logger.info(f"已将 {actual_position} {base_currency} 申购到余币宝")
             except Exception as e:
                 logger.error(f"余币宝申购失败，但不影响主要交易流程: {str(e)}")
-                import traceback
-                logger.debug(f"余币宝申购错误堆栈: {traceback.format_exc()}")
 
-            logger.debug(f"对冲交易完成 - 时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
             return spot_order, contract_order
 
         except Exception as e:
             logger.error(f"执行对冲交易时出错: {str(e)}")
-            import traceback
-            logger.debug(f"执行对冲交易错误堆栈: {traceback.format_exc()}")
             raise
 
     def verify_order_execution(self, spot_order, contract_order):
@@ -1002,12 +881,7 @@ class HedgeTrader:
                 logger.debug("尝试使用替代方法获取Bitget持仓信息...")
                 
                 try:
-                    # 方法1: 使用fetch_balance获取swap账户余额
-                    logger.debug("尝试使用fetch_balance获取Bitget Swap账户余额...")
-                    swap_balance = await self.bitget.fetch_balance({'type': 'swap'})
-                    logger.debug(f"Bitget Swap账户余额: {swap_balance}")
-                    
-                    # 方法2: 获取所有持仓
+                    # 获取所有持仓
                     logger.debug("尝试获取Bitget所有持仓...")
                     all_positions = await self.bitget.fetch_positions()
                     logger.debug(f"Bitget所有持仓数量: {len(all_positions)}")
@@ -1056,27 +930,6 @@ class HedgeTrader:
                 # 检查合约交易结果 - 必须确认合约确实开立
                 if contract_position <= 0:
                     logger.error(f"Bitget合约持仓为0! 交易可能未执行")
-                    # 记录附加调试信息
-                    logger.debug("*"*50)
-                    logger.debug("交易可能存在以下问题:")
-                    logger.debug("1. Bitget API下单成功但实际未成交")
-                    logger.debug("2. Bitget API返回的持仓信息不准确")
-                    logger.debug("3. 网络延迟导致持仓信息尚未更新")
-                    
-                    # 尝试获取更多诊断信息
-                    try:
-                        logger.debug("尝试获取更多诊断信息...")
-                        # 获取最近的交易历史
-                        recent_trades = await self.bitget.fetch_my_trades(self.contract_symbol, limit=10)
-                        logger.debug(f"最近 {len(recent_trades)} 笔交易历史:")
-                        for idx, trade in enumerate(recent_trades):
-                            logger.debug(f"交易 #{idx+1}: ID={trade.get('id')}, 时间={trade.get('datetime')}, "
-                                       f"交易对={trade.get('symbol')}, 类型={trade.get('type')}, 方向={trade.get('side')}, "
-                                       f"数量={trade.get('amount')}, 价格={trade.get('price')}")
-                    except Exception as e:
-                        logger.debug(f"获取诊断信息失败: {str(e)}")
-                    
-                    logger.debug("*"*50)
                     return False
                 
                 # 记录合约持仓与预期的比较
@@ -1094,8 +947,9 @@ class HedgeTrader:
                 position_diff = abs(float(actual_position) - float(contract_amount))
                 position_diff_percent = (position_diff / float(actual_position) * 100) if float(actual_position) > 0 else 0
                 
-                logger.info(f"本次操作 - 现货成交: {actual_position} {base_currency}, 合约成交: {contract_amount} {base_currency}, "
-                           f"差异: {position_diff:.8f} {base_currency} ({position_diff_percent:.2f}%)")
+                # 将交易后的现货和合约差额打印到日志里
+                logger.info(f"【持仓检查】- 现货: {actual_position} {base_currency}, 合约: {contract_amount} {base_currency}, "
+                           f"差额: {position_diff:.8f} {base_currency} ({position_diff_percent:.2f}%)")
                 
                 logger.info(f"交易执行检查通过 - 本次交易: 现货约 {actual_position} {base_currency} (可能已申购余币宝), 合约约 {contract_amount} {base_currency}")
                 return True
@@ -1180,58 +1034,27 @@ async def main():
     """
     异步主函数
     """
-    start_time = asyncio.get_event_loop().time()
-    logger.debug(f"程序启动 - 时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
-    
-    # 解析命令行参数
-    logger.debug("解析命令行参数...")
-    args = parse_arguments()
-    logger.debug(f"命令行参数: {args}")
-    
-    # 设置日志级别
-    if args.debug:
-        logger.setLevel(logging.DEBUG)
-        logger.debug("已启用调试日志模式")
-    else:
-        logger.setLevel(logging.INFO)
-        
-    logger.info(f"启动程序 - 交易对: {args.symbol}, 交易量: {args.amount}, 最小价差: {args.min_spread}, "
-                f"杠杆: {args.leverage if args.leverage else '自动'}, 重复次数: {args.count}")
-
-    # 记录系统信息
     try:
-        import platform
-        import psutil
+        # 解析命令行参数
+        args = parse_arguments()
         
-        logger.debug(f"系统信息:")
-        logger.debug(f" - 操作系统: {platform.system()} {platform.release()}")
-        logger.debug(f" - Python版本: {platform.python_version()}")
-        mem = psutil.virtual_memory()
-        logger.debug(f" - 内存: 总计 {mem.total / (1024**3):.2f} GB, 可用 {mem.available / (1024**3):.2f} GB")
-        logger.debug(f" - CPU: {psutil.cpu_count()} 核心")
-    except ImportError:
-        logger.debug("无法获取系统详细信息，需安装platform和psutil模块")
-    except Exception as e:
-        logger.debug(f"获取系统信息出错: {str(e)}")
+        # 设置日志级别
+        if args.debug:
+            logger.setLevel(logging.DEBUG)
+            logger.debug("已启用调试日志模式")
+        else:
+            logger.setLevel(logging.INFO)
+            
+        logger.info(f"启动程序 - 交易对: {args.symbol}, 交易量: {args.amount}, 最小价差: {args.min_spread}, "
+                    f"杠杆: {args.leverage if args.leverage else '自动'}, 重复次数: {args.count}")
 
-    # 如果是测试模式，只测试余币宝功能
-    if args.test_earn:
-        logger.info("进入余币宝测试模式")
-        try:
-            logger.debug("开始测试余币宝申购功能...")
-            test_start = asyncio.get_event_loop().time()
+        # 如果是测试模式，只测试余币宝功能
+        if args.test_earn:
+            logger.info("进入余币宝测试模式")
             await test_earn_subscription()
-            test_duration = asyncio.get_event_loop().time() - test_start
-            logger.debug(f"余币宝测试完成, 耗时: {test_duration:.2f}秒")
-        except Exception as e:
-            logger.error(f"余币宝测试模式执行失败: {str(e)}")
-            import traceback
-            logger.debug(f"余币宝测试错误堆栈:\n{traceback.format_exc()}")
-        return 0
+            return 0
 
-    try:
         # 创建并初始化交易器
-        logger.debug(f"创建交易器实例... - 时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
         trader = HedgeTrader(
             symbol=args.symbol,
             spot_amount=args.amount,
@@ -1239,11 +1062,7 @@ async def main():
             leverage=args.leverage  # 如果没有指定，这里会是None
         )
         
-        init_start = asyncio.get_event_loop().time()
-        logger.debug("开始初始化交易器...")
         await trader.initialize()
-        init_duration = asyncio.get_event_loop().time() - init_start
-        logger.debug(f"交易器初始化完成, 耗时: {init_duration:.2f}秒")
 
         # 记录交易次数
         completed_trades = 0
@@ -1255,16 +1074,9 @@ async def main():
 
         # 循环执行交易，直到达到指定次数
         while completed_trades < target_count:
-            iteration_start = asyncio.get_event_loop().time()
-            logger.info(f"开始执行第 {completed_trades + 1}/{target_count} 次交易... - 时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
-            
             try:
                 # 执行前检查余额是否足够
-                check_start = asyncio.get_event_loop().time()
-                logger.debug("检查交易要求...")
                 can_trade, reason = await trader.check_trade_requirements()
-                check_duration = asyncio.get_event_loop().time() - check_start
-                logger.debug(f"交易要求检查完成, 耗时: {check_duration:.2f}秒, 结果: {can_trade}")
                 
                 if not can_trade:
                     try:
@@ -1276,18 +1088,11 @@ async def main():
                             current_price = float(orderbook['asks'][0][0])
                             required_usdt = float(trader.spot_amount) * current_price * 1.02
                             
-                            redeem_start = asyncio.get_event_loop().time()
-                            logger.debug(f"从余币宝赎回约 {max(required_usdt * 1.01, 50):.2f} USDT...")
                             redeem_result = redeem_earn('USDT', max(required_usdt * 1.01, 50))
-                            redeem_duration = asyncio.get_event_loop().time() - redeem_start
-                            logger.debug(f"余币宝赎回操作完成, 耗时: {redeem_duration:.2f}秒, 结果: {redeem_result}")
+                            logger.debug(f"余币宝赎回结果: {redeem_result}")
                             
                             # 重新检查交易要求
-                            logger.debug("重新检查交易要求...")
-                            recheck_start = asyncio.get_event_loop().time()
                             can_trade, new_reason = await trader.check_trade_requirements()
-                            recheck_duration = asyncio.get_event_loop().time() - recheck_start
-                            logger.debug(f"重新检查交易要求完成, 耗时: {recheck_duration:.2f}秒, 结果: {can_trade}")
                             
                             if not can_trade:
                                 logger.error(f"赎回后仍不满足交易要求: {new_reason}")
@@ -1300,17 +1105,12 @@ async def main():
                             break
                     except Exception as e:
                         logger.error(f"处理交易要求问题时出错: {str(e)}")
-                        import traceback
-                        logger.debug(f"处理交易要求错误堆栈:\n{traceback.format_exc()}")
                         logger.info(f"已完成 {completed_trades}/{target_count} 次交易，退出")
                         break
                 
                 # 执行交易
-                logger.debug(f"开始执行对冲交易... - 时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
-                trade_start = asyncio.get_event_loop().time()
+                logger.info(f"开始执行第 {completed_trades + 1}/{target_count} 次交易...")
                 spot_order, contract_order = await trader.execute_hedge_trade()
-                trade_duration = asyncio.get_event_loop().time() - trade_start
-                logger.debug(f"对冲交易执行完成, 耗时: {trade_duration:.2f}秒, 结果: {spot_order is not None and contract_order is not None}")
                 
                 # 检查交易结果，任何失败都立即退出
                 if spot_order is None or contract_order is None:
@@ -1332,8 +1132,12 @@ async def main():
                 # 交易成功
                 completed_trades += 1
                 consecutive_errors = 0  # 重置连续失败计数
-                iteration_duration = asyncio.get_event_loop().time() - iteration_start
-                logger.info(f"第 {completed_trades}/{target_count} 次对冲交易成功完成! 耗时: {iteration_duration:.2f}秒")
+                logger.info(f"第 {completed_trades}/{target_count} 次对冲交易成功完成!")
+                
+                # 输出当前累计差额信息
+                if hasattr(trader, 'cumulative_position_diff') and hasattr(trader, 'cumulative_position_diff_usdt'):
+                    logger.info(f"当前累计差额: {trader.cumulative_position_diff:.8f} {trader.symbol.split('/')[0]} "
+                              f"({trader.cumulative_position_diff_usdt:.2f} USDT)")
                 
                 # 如果不是最后一次交易，等待一小段时间再继续
                 if completed_trades < target_count:
@@ -1344,8 +1148,6 @@ async def main():
                 total_errors += 1
                 consecutive_errors += 1
                 logger.error(f"执行第 {completed_trades + 1} 次交易时出错: {str(e)}")
-                import traceback
-                logger.debug(f"交易错误堆栈:\n{traceback.format_exc()}")
                 
                 # 如果连续3次失败，终止程序
                 if consecutive_errors >= 3:
@@ -1357,44 +1159,37 @@ async def main():
                 logger.info(f"等待10秒后继续尝试下一次交易...")
                 await asyncio.sleep(10)
                 
-        # 打印最终执行结果
-        total_duration = asyncio.get_event_loop().time() - start_time
+        # 打印最终执行结果和累计差额信息
         if completed_trades == target_count:
-            logger.info(f"所有计划交易已完成! 成功执行 {completed_trades}/{target_count} 次交易, 总耗时: {total_duration:.2f}秒")
+            logger.info(f"所有计划交易已完成! 成功执行 {completed_trades}/{target_count} 次交易")
         else:
-            logger.info(f"交易过程中止，成功执行 {completed_trades}/{target_count} 次交易, 总耗时: {total_duration:.2f}秒")
+            logger.info(f"交易过程中止，成功执行 {completed_trades}/{target_count} 次交易")
+        
+        # 输出最终累计差额信息
+        if hasattr(trader, 'cumulative_position_diff') and hasattr(trader, 'cumulative_position_diff_usdt'):
+            logger.info(f"最终累计差额: {trader.cumulative_position_diff:.8f} {trader.symbol.split('/')[0]} "
+                      f"({trader.cumulative_position_diff_usdt:.2f} USDT)")
+            if hasattr(trader, 'rebalance_count') and trader.rebalance_count > 0:
+                logger.info(f"执行了 {trader.rebalance_count} 次平衡操作")
         
         if total_errors > 0:
             logger.warning(f"执行过程中共发生 {total_errors} 次错误")
 
     except Exception as e:
         logger.error(f"程序执行过程中发生错误: {str(e)}")
-        import traceback
-        logger.debug(f"程序错误堆栈:\n{traceback.format_exc()}")
         if 'completed_trades' in locals() and 'target_count' in locals():
             logger.info(f"已完成 {completed_trades}/{target_count} 次交易")
-        total_duration = asyncio.get_event_loop().time() - start_time
-        logger.info(f"程序执行中止, 总耗时: {total_duration:.2f}秒")
         return 1
     finally:
         # 确保关闭交易所连接
         if 'trader' in locals():
-            logger.debug("正在关闭交易所连接...")
             try:
-                close_start = asyncio.get_event_loop().time()
                 await asyncio.gather(
                     trader.gateio.close(),
                     trader.bitget.close()
                 )
-                close_duration = asyncio.get_event_loop().time() - close_start
-                logger.debug(f"交易所连接已关闭, 耗时: {close_duration:.2f}秒")
             except Exception as e:
                 logger.error(f"关闭交易所连接时出错: {str(e)}")
-        
-        # 记录程序结束时间
-        end_time = asyncio.get_event_loop().time()
-        total_duration = end_time - start_time
-        logger.debug(f"程序结束 - 时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}, 总耗时: {total_duration:.2f}秒")
 
     return 0
 

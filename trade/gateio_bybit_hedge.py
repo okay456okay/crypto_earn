@@ -20,6 +20,7 @@ from decimal import Decimal
 import asyncio
 import ccxt.pro as ccxtpro  # 使用 ccxt pro 版本
 import logging
+import time
 
 # 添加项目根目录到系统路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -97,6 +98,13 @@ class HedgeTrader:
         # 记录本次操作的实际持仓数量
         self.last_trade_spot_amount = 0
         self.last_trade_contract_amount = 0
+        
+        # 记录累计的现货和合约差额
+        self.cumulative_position_diff = 0  # 正值表示合约多于现货，负值表示现货多于合约
+        self.cumulative_position_diff_usdt = 0  # 以USDT计价的累计差额
+        self.trade_records = []  # 交易记录列表
+        self.trade_count = 0  # 交易计数
+        self.rebalance_count = 0  # 平衡操作计数
 
     async def initialize(self):
         """
@@ -353,8 +361,144 @@ class HedgeTrader:
             # 1. 等待价差满足条件
             spread_data = await self.wait_for_spread()
             spread_percent, gateio_ask, bybit_bid, gateio_ask_volume, bybit_bid_volume = spread_data
+            
+            # 2. 检查是否需要执行平衡操作（当累计差额超过6 USDT时）
+            current_price = float(gateio_ask)  # 使用当前Gate.io的卖一价格
+            need_rebalance = False
+            rebalance_side = None
+            rebalance_amount = 0
+            
+            # 更新差额的USDT价值（价格可能发生变化）
+            self.cumulative_position_diff_usdt = self.cumulative_position_diff * current_price
+            
+            if abs(self.cumulative_position_diff_usdt) >= 6:
+                need_rebalance = True
+                
+                if self.cumulative_position_diff > 0:  # 合约多于现货，需要买入现货
+                    rebalance_side = "spot"
+                    rebalance_amount = abs(self.cumulative_position_diff)
+                    logger.info("=" * 50)
+                    logger.info(f"【平衡操作】检测到累计差额: {self.cumulative_position_diff:.8f} {self.base_currency} "
+                               f"({self.cumulative_position_diff_usdt:.2f} USDT)")
+                    logger.info(f"【平衡操作】将买入 {rebalance_amount:.8f} {self.base_currency} 现货")
+                    
+                    try:
+                        # 计算买入现货所需的USDT (加1%作为滑点和手续费的缓冲)
+                        cost = float(rebalance_amount) * current_price * 1.01
+                        
+                        # 执行市价买入
+                        rebalance_order = await self.gateio.create_market_buy_order(
+                            symbol=self.symbol,
+                            amount=cost,
+                            params={'createMarketBuyOrderRequiresPrice': False, 'quoteOrderQty': True}
+                        )
+                        
+                        logger.debug(f"平衡操作 - 买入现货订单: {rebalance_order}")
+                        
+                        # 获取实际成交量
+                        filled_amount = float(rebalance_order.get('filled', 0))
+                        fees = rebalance_order.get('fees', [])
+                        base_fee = sum(float(fee.get('cost', 0)) for fee in fees if fee.get('currency') == self.base_currency)
+                        actual_filled = filled_amount - base_fee
+                        
+                        # 更新累计差额
+                        self.cumulative_position_diff -= actual_filled
+                        self.cumulative_position_diff_usdt = self.cumulative_position_diff * current_price
+                        
+                        # 记录平衡操作
+                        self.rebalance_count += 1
+                        rebalance_record = {
+                            'trade_id': f"R{self.rebalance_count}",
+                            'timestamp': int(time.time()),
+                            'side': 'spot',
+                            'amount': actual_filled,
+                            'price': current_price,
+                            'cost': actual_filled * current_price,
+                            'before_diff': self.cumulative_position_diff + actual_filled,
+                            'after_diff': self.cumulative_position_diff,
+                            'is_rebalance': True
+                        }
+                        self.trade_records.append(rebalance_record)
+                        
+                        logger.info(f"【平衡操作】买入现货成功，实际买入: {actual_filled:.8f} {self.base_currency}")
+                        logger.info(f"【平衡操作】剩余累计差额: {self.cumulative_position_diff:.8f} {self.base_currency} "
+                                   f"({self.cumulative_position_diff_usdt:.2f} USDT)")
+                        
+                    except Exception as e:
+                        logger.error(f"【平衡操作】买入现货失败: {str(e)}")
+                        # 继续正常的对冲交易，不因平衡操作失败而中断
+                
+                else:  # 现货多于合约，需要开更多合约空单
+                    rebalance_side = "contract"
+                    rebalance_amount = abs(self.cumulative_position_diff)
+                    logger.info("=" * 50)
+                    logger.info(f"【平衡操作】检测到累计差额: {self.cumulative_position_diff:.8f} {self.base_currency} "
+                               f"({self.cumulative_position_diff_usdt:.2f} USDT)")
+                    logger.info(f"【平衡操作】将开空 {rebalance_amount:.8f} {self.base_currency} 合约")
+                    
+                    try:
+                        # 精确化合约数量
+                        contract_amount = self.bybit.amount_to_precision(self.contract_symbol, rebalance_amount)
+                        
+                        # 执行合约空单
+                        rebalance_order = await self.bybit.create_market_sell_order(
+                            symbol=self.contract_symbol,
+                            amount=contract_amount,
+                            params={
+                                "category": "linear",
+                                "positionIdx": 0,  # 单向持仓
+                                "reduceOnly": False
+                            }
+                        )
+                        
+                        logger.debug(f"平衡操作 - 开空合约订单: {rebalance_order}")
+                        
+                        # 获取实际成交量
+                        filled_amount = float(rebalance_order.get('filled', 0))
+                        if filled_amount <= 0:
+                            # 如果订单信息中没有成交量，尝试从持仓中获取
+                            try:
+                                await asyncio.sleep(0.5)  # 等待持仓更新
+                                positions = await self.bybit.fetch_positions([self.contract_symbol], {'category': 'linear'})
+                                for position in positions:
+                                    if position['info']['symbol'] == self.contract_symbol:
+                                        # 因为我们无法确定此次操作的具体成交量，所以使用下单量作为估计
+                                        filled_amount = float(contract_amount)
+                                        break
+                            except Exception as ex:
+                                logger.warning(f"从持仓获取合约成交量失败: {str(ex)}")
+                                filled_amount = float(contract_amount)  # 使用下单量作为估计
+                        
+                        # 更新累计差额
+                        self.cumulative_position_diff += filled_amount
+                        self.cumulative_position_diff_usdt = self.cumulative_position_diff * current_price
+                        
+                        # 记录平衡操作
+                        self.rebalance_count += 1
+                        rebalance_record = {
+                            'trade_id': f"R{self.rebalance_count}",
+                            'timestamp': int(time.time()),
+                            'side': 'contract',
+                            'amount': filled_amount,
+                            'price': current_price,
+                            'cost': filled_amount * current_price,
+                            'before_diff': self.cumulative_position_diff - filled_amount,
+                            'after_diff': self.cumulative_position_diff,
+                            'is_rebalance': True
+                        }
+                        self.trade_records.append(rebalance_record)
+                        
+                        logger.info(f"【平衡操作】开空合约成功，实际成交: {filled_amount:.8f} {self.base_currency}")
+                        logger.info(f"【平衡操作】剩余累计差额: {self.cumulative_position_diff:.8f} {self.base_currency} "
+                                   f"({self.cumulative_position_diff_usdt:.2f} USDT)")
+                        
+                    except Exception as e:
+                        logger.error(f"【平衡操作】开空合约失败: {str(e)}")
+                        # 继续正常的对冲交易，不因平衡操作失败而中断
+                        
+                logger.info("=" * 50)
 
-            # 2. 立即准备下单参数, 补偿一点手续费，不然现货会比合约少一些
+            # 3. 立即准备下单参数, 补偿一点手续费，不然现货会比合约少一些
             trade_amount = self.spot_amount * 1.0019618834080717
             cost = float(trade_amount) * float(gateio_ask)
             contract_amount = self.bybit.amount_to_precision(self.contract_symbol, trade_amount)
@@ -362,7 +506,7 @@ class HedgeTrader:
             logger.debug(f"准备下单 - Gate.io现货买入参数: 交易对={self.symbol}, 金额={cost} USDT")
             logger.debug(f"准备下单 - Bybit合约卖出参数: 交易对={self.contract_symbol}, 数量={contract_amount} {self.base_currency}")
 
-            # 3. 立即执行交易
+            # 4. 立即执行交易
             spot_order = None
             contract_order = None
             try:
@@ -393,19 +537,19 @@ class HedgeTrader:
                     logger.error("Bybit合约订单已提交，但Gate.io现货订单失败")
                 raise
 
-            # 4. 交易后再进行其他操作
+            # 5. 交易后再进行其他操作
             logger.info(f"计划交易数量: {trade_amount} {self.base_currency}")
             logger.info(f"在Gate.io市价买入 {trade_amount} {self.base_currency}, 预估成本: {cost:.2f} USDT")
             logger.info(f"在Bybit市价开空单 {contract_amount} {self.base_currency}")
 
-            # 5. 验证订单是否有效
+            # 6. 验证订单是否有效
             if not spot_order or not contract_order:
                 raise Exception("订单执行失败：一个或两个订单未成功创建")
 
             # 等待一小段时间，确保订单状态更新
             await asyncio.sleep(0.5)
                 
-            # 6. 获取最新的订单信息
+            # 7. 获取最新的订单信息
             spot_order_id = spot_order.get('id')
             contract_order_id = contract_order.get('id')
             
@@ -446,7 +590,7 @@ class HedgeTrader:
             except Exception as e:
                 logger.warning(f"获取订单详情时出错: {str(e)}")
             
-            # 7. 检查订单状态 - 注意Bybit可能返回None作为状态，我们将其视为成功
+            # 8. 检查订单状态 - 注意Bybit可能返回None作为状态，我们将其视为成功
             valid_statuses = ['closed', 'open', 'filled', None]
             spot_status = spot_order.get('status')
             contract_status = contract_order.get('status')
@@ -459,7 +603,7 @@ class HedgeTrader:
             if contract_status not in valid_statuses:
                 raise Exception(f"Bybit合约订单状态异常: {contract_status}")
 
-            # 8. 获取现货订单的实际成交结果
+            # 9. 获取现货订单的实际成交结果
             filled_amount = float(spot_order.get('filled', 0))
             if filled_amount <= 0:
                 logger.warning("Gate.io订单似乎未成交，将从balance中获取实际成交量")
@@ -477,7 +621,7 @@ class HedgeTrader:
             base_fee = sum(float(fee.get('cost', 0)) for fee in fees if fee.get('currency') == self.base_currency)
             actual_position = filled_amount - base_fee
             
-            # 9. 获取合约订单的实际成交结果
+            # 10. 获取合约订单的实际成交结果
             contract_filled = 0.0  # 初始化为0
             
             # 首先尝试从订单信息中获取成交量
@@ -515,13 +659,13 @@ class HedgeTrader:
                         f"实际持仓: {actual_position} {self.base_currency}")
             logger.info(f"Bybit合约实际成交数量: {contract_filled} {self.base_currency}")
 
-            # 10. 检查持仓是否平衡
+            # 11. 检查持仓是否平衡
             if not await self.check_trade_balance():
                 logger.warning("本次交易现货和合约持仓不平衡，请检查")
             else:
                 logger.info("本次交易现货和合约持仓平衡")
 
-            # 11. 申购余币宝
+            # 12. 申购余币宝
             try:
                 if actual_position > 0:
                     gateio_subscrible_earn(self.base_currency, actual_position)
@@ -640,24 +784,64 @@ class HedgeTrader:
                 logger.warning(f"合约记录为0，但现货记录为{self.last_trade_spot_amount}，视为成功交易")
                 return True
                 
-            # 计算持仓差异
-            position_diff = abs(self.last_trade_spot_amount - self.last_trade_contract_amount)
-            position_diff_percent = position_diff / self.last_trade_spot_amount * 100
+            # 计算持仓差异 (正值表示合约多，负值表示现货多)
+            position_diff = self.last_trade_contract_amount - self.last_trade_spot_amount
+            position_diff_abs = abs(position_diff)
+            position_diff_percent = position_diff_abs / self.last_trade_spot_amount * 100
+            
+            # 记录交易
+            self.trade_count += 1
+            
+            # 获取当前价格用于计算USDT价值
+            current_price = 0
+            try:
+                orderbook = await self.gateio.fetch_order_book(self.symbol)
+                current_price = float(orderbook['asks'][0][0])
+            except Exception as e:
+                logger.warning(f"获取当前价格失败: {str(e)}")
+                # 如果无法获取当前价格，使用最近交易的平均价格
+                if self.last_trade_spot_amount > 0:
+                    current_price = 1  # 默认值，后续可能被覆盖
+            
+            # 更新累计差额
+            self.cumulative_position_diff += position_diff
+            self.cumulative_position_diff_usdt = self.cumulative_position_diff * current_price
+            
+            # 记录交易信息
+            trade_record = {
+                'trade_id': self.trade_count,
+                'timestamp': int(time.time()),
+                'spot_filled': self.last_trade_spot_amount,
+                'contract_filled': self.last_trade_contract_amount,
+                'position_diff': position_diff,
+                'position_diff_usdt': position_diff * current_price,
+                'price': current_price,
+                'cumulative_diff': self.cumulative_position_diff,
+                'cumulative_diff_usdt': self.cumulative_position_diff_usdt,
+                'is_rebalance': False
+            }
+            self.trade_records.append(trade_record)
             
             logger.info(f"本次交易持仓对比 - 现货: {self.last_trade_spot_amount} {self.base_currency}, "
                       f"合约: {self.last_trade_contract_amount} {self.base_currency}, "
-                      f"差异: {position_diff} {self.base_currency} ({position_diff_percent:.2f}%)")
+                      f"差异: {position_diff_abs} {self.base_currency} ({position_diff_percent:.2f}%)")
+            
+            # 打印累计差额信息
+            logger.info(f"【累计差额】- 数量: {self.cumulative_position_diff:.8f} {self.base_currency}, "
+                      f"价值: {self.cumulative_position_diff_usdt:.2f} USDT")
             
             # 检查是否平衡（允许0.5%的误差）
             if position_diff_percent > 0.5:  # 允许0.5%的误差
-                logger.warning(f"本次交易现货和合约持仓不平衡! 差异: {position_diff} {self.base_currency} ({position_diff_percent:.2f}%)")
+                logger.warning(f"本次交易现货和合约持仓不平衡! 差异: {position_diff_abs} {self.base_currency} ({position_diff_percent:.2f}%)")
                 return False
             else:
-                logger.info(f"本次交易现货和合约持仓基本平衡，差异在允许范围内: {position_diff} {self.base_currency} ({position_diff_percent:.2f}%)")
+                logger.info(f"本次交易现货和合约持仓基本平衡，差异在允许范围内: {position_diff_abs} {self.base_currency} ({position_diff_percent:.2f}%)")
                 return True
                 
         except Exception as e:
             logger.error(f"检查本次交易持仓平衡时出错: {str(e)}")
+            import traceback
+            logger.debug(f"错误堆栈:\n{traceback.format_exc()}")
             # 出错时，我们认为交易是成功的，错误主要来自检查逻辑
             return True
 
@@ -835,6 +1019,65 @@ async def main():
         if executed_count > 0:
             success_rate = (successful_count / executed_count) * 100
             logger.info(f"交易成功率: {success_rate:.2f}%")
+        
+        # 打印累计差额信息，如果有交易记录
+        if 'trader' in locals() and hasattr(trader, 'trade_records') and trader.trade_records:
+            # 获取当前价格更新差额的价值
+            current_price = 0
+            try:
+                orderbook = await trader.gateio.fetch_order_book(trader.symbol)
+                current_price = float(orderbook['asks'][0][0])
+                # 更新最新的USDT价值
+                trader.cumulative_position_diff_usdt = trader.cumulative_position_diff * current_price
+            except Exception as e:
+                logger.warning(f"获取最新价格失败: {str(e)}")
+            
+            logger.info("=" * 50)
+            logger.info("【仓位差额汇总】")
+            logger.info(f"累计差额数量: {trader.cumulative_position_diff:.8f} {trader.base_currency}")
+            logger.info(f"累计差额价值: {trader.cumulative_position_diff_usdt:.2f} USDT")
+            
+            # 解释差额方向
+            if trader.cumulative_position_diff > 0:
+                logger.info(f"差额方向: 合约多于现货 (正值)")
+                logger.info(f"建议: 买入 {abs(trader.cumulative_position_diff):.8f} {trader.base_currency} 现货补足差额")
+            elif trader.cumulative_position_diff < 0:
+                logger.info(f"差额方向: 现货多于合约 (负值)")
+                logger.info(f"建议: 开空 {abs(trader.cumulative_position_diff):.8f} {trader.base_currency} 合约补足差额")
+            else:
+                logger.info("差额方向: 平衡 (零)")
+                
+            # 显示平衡操作次数
+            if trader.rebalance_count > 0:
+                logger.info(f"执行平衡操作: {trader.rebalance_count} 次")
+                
+            # 显示最近3条交易记录
+            if len(trader.trade_records) > 0:
+                logger.info("-" * 40)
+                logger.info("最近交易记录:")
+                for record in trader.trade_records[-min(3, len(trader.trade_records)):]:
+                    if record.get('is_rebalance', False):
+                        # 平衡操作记录
+                        op_side = "买入现货" if record.get('side') == 'spot' else "开空合约"
+                        logger.info(f"【平衡操作】{record.get('trade_id')} - {op_side}: {record.get('amount'):.8f} {trader.base_currency}, "
+                                   f"价值: {record.get('cost', 0):.2f} USDT")
+                    else:
+                        # 常规交易记录
+                        spot = record.get('spot_filled', 0)
+                        contract = record.get('contract_filled', 0)
+                        diff = record.get('position_diff', 0)
+                        logger.info(f"【常规交易】#{record.get('trade_id')} - 现货: {spot:.8f}, 合约: {contract:.8f}, "
+                                   f"差额: {diff:.8f} {trader.base_currency} ({record.get('position_diff_usdt', 0):.2f} USDT)")
+            
+            # 显示是否需要平衡
+            if abs(trader.cumulative_position_diff_usdt) >= 6:
+                logger.info("-" * 40)
+                balance_side = "买入现货" if trader.cumulative_position_diff > 0 else "开空合约"
+                logger.info(f"建议: 需要{balance_side}来平衡仓位")
+                logger.info(f"平衡数量: {abs(trader.cumulative_position_diff):.8f} {trader.base_currency}")
+                logger.info(f"预计成本: {abs(trader.cumulative_position_diff_usdt):.2f} USDT")
+            
+            logger.info("=" * 50)
         
         # 确保关闭交易所连接
         if 'trader' in locals():
