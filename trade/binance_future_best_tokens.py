@@ -506,7 +506,7 @@ class BinanceFutureScanner:
                 print(data_format.format(symbol, f"{rate*100:.6f}%", price))
             
             # 定义详细分析表格的格式，修复百分号问题
-            detail_header_format = "{:<11} {:<11} {:<11} {:<11} {:<11} {:<11} {:<11} {:<11} {:<15}"
+            detail_header_format = "{:<11} {:<10} {:<11} {:<11} {:<13} {:<11} {:<11} {:<11} {:<15}"
             detail_data_format = "{:<15} {:<15} {:<15} {:<15} {:<15} {:<15} {:<15} {:<15} {:<15}"
             
             # 5. 详细分析这N个合约标的
