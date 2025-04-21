@@ -90,7 +90,7 @@ class BinanceFutureScanner:
                     return data
                 elif response.status_code == 429:  # 速率限制
                     retry_after = int(response.headers.get('Retry-After', retry_delay * 2))
-                    logger.warning(f"API速率限制，等待 {retry_after} 秒后重试... (尝试 {retry+1}/{max_retries})")
+                    logger.debug(f"API速率限制，等待 {retry_after} 秒后重试... (尝试 {retry+1}/{max_retries})")
                     time.sleep(retry_after)
                 else:
                     logger.error(f"API请求失败: URL={url}, 状态码={response.status_code}, 响应={response.text}")
@@ -490,17 +490,34 @@ class BinanceFutureScanner:
             logger.info(f"已筛选出资金费率最小的 {len(top_n_symbols)} 个合约标的")
             logger.debug(f"筛选出的标的: {top_n_symbols}")
             
-            print(f"\n=== 资金费率最小的 {self.top_n} 个合约标的 ===")
-            print(f"{'合约标的':<12} {'当前资金费率':<15} {'当前价格':<15}")
-            print("-" * 42)
+            # 定义格式化字符串供后续使用，确保所有表格对齐
+            header_format = "{:<15} {:<15} {:<15}"
+            data_format = "{:<15} {:<15.6f}% {:<15.6f}"
+            
+            # 优化表格展示
+            print("\n" + "=" * 45)
+            print(f" 资金费率最小的 {self.top_n} 个合约标的 ")
+            print("=" * 45)
+            print(header_format.format("合约标的", "当前资金费率", "当前价格"))
+            print("-" * 45)
+            
             for symbol, rate in funding_rate_items[:self.top_n]:
                 price = self.prices.get(symbol, 'N/A')
-                print(f"{symbol:<12} {rate*100:<15.6f}% {price:<15.6f}")
+                print(data_format.format(symbol, rate*100, price))
+            
+            # 定义详细分析表格的格式
+            detail_header_format = "{:<15} {:<15} {:<15} {:<15} {:<15} {:<15} {:<15} {:<15} {:<15}"
+            detail_data_format = "{:<15} {:<15.6f}% {:<15} {:<15.2f}% {:<15.2f}% {:<15.2f} {:<15} {:<15} {:<15}"
             
             # 5. 详细分析这N个合约标的
-            print(f"\n=== 详细分析资金费率最小的 {self.top_n} 个合约标的 ===")
-            print(f"{'合约标的':<12} {'资金费率':<15} {'费率趋势减小':<15} {'24h涨跌幅':<15} {'48h涨跌幅':<15} {'合约持仓量':<15} {'持仓量/市值':<15} {'多空账户比':<15} {'多空持仓比':<15}")
-            print("-" * 150)
+            print("\n" + "=" * 135)
+            print(f" 详细分析资金费率最小的 {self.top_n} 个合约标的 ")
+            print("=" * 135)
+            print(detail_header_format.format(
+                "合约标的", "资金费率", "费率趋势减小", "24h涨跌幅", "48h涨跌幅", 
+                "合约持仓量", "持仓量/市值", "多空账户比", "多空持仓比"
+            ))
+            print("-" * 135)
             
             detailed_results = []
             
@@ -534,7 +551,17 @@ class BinanceFutureScanner:
                     ls_position_ratio = ratios['long_short_position_ratio']['longShortRatio'] if ratios['long_short_position_ratio'] else None
                     
                     # 打印结果
-                    print(f"{symbol:<12} {current_funding_rates[symbol]*100:<15.6f}% {'是' if is_decreasing else '否':<15} {price_change_24h:<15.2f}% {price_change_48h:<15.2f}% {open_interest:<15.2f} {self.format_ratio_output(oi_to_market_cap):<15} {ls_account_ratio if ls_account_ratio is not None else 'N/A':<15} {ls_position_ratio if ls_position_ratio is not None else 'N/A':<15}")
+                    print(detail_data_format.format(
+                        symbol, 
+                        current_funding_rates[symbol]*100, 
+                        '是' if is_decreasing else '否', 
+                        price_change_24h, 
+                        price_change_48h, 
+                        open_interest, 
+                        self.format_ratio_output(oi_to_market_cap), 
+                        f"{ls_account_ratio:.2f}" if ls_account_ratio is not None else 'N/A', 
+                        f"{ls_position_ratio:.2f}" if ls_position_ratio is not None else 'N/A'
+                    ))
                     
                     # 存储详细结果
                     detailed_results.append({
@@ -558,12 +585,14 @@ class BinanceFutureScanner:
                     continue
             
             # 6. 筛选并显示最终符合条件的合约标的
-            print("\n=== 最终筛选结果 ===")
+            print("\n" + "=" * 45)
+            print(" 最终筛选结果 ")
+            print("=" * 45)
             print("符合以下条件的合约标的：")
             print(f"1. 资金费率最小的前 {self.top_n}")
             print("2. 资金费率趋势一直在减小")
             print("3. 24小时和48小时涨跌幅度均小于20%")
-            print("-" * 120)
+            print("-" * 45)
             
             final_results = []
             for result in detailed_results:
@@ -574,7 +603,9 @@ class BinanceFutureScanner:
                     
                     # 打印详细多空数据
                     symbol = result['symbol']
-                    print(f"\n合约标的: {symbol}")
+                    print(f"\n{'-' * 45}")
+                    print(f"合约标的: {symbol}")
+                    print(f"{'-' * 45}")
                     print(f"当前资金费率: {result['funding_rate']*100:.6f}%")
                     print(f"资金费率趋势是否减小: {'是' if result['is_decreasing'] else '否'}")
                     print(f"24小时涨跌幅: {result['price_change_24h']:.2f}%")
@@ -582,6 +613,8 @@ class BinanceFutureScanner:
                     print(f"合约持仓量: {result['open_interest']:.2f}")
                     print(f"市值: {result['market_cap']:,.2f} USD")
                     print(f"持仓量/市值比例: {self.format_ratio_output(result['oi_to_market_cap'])}")
+                    
+                    print(f"{'-' * 20} 多空数据 {'-' * 20}")
                     
                     # 打印多空账户数据
                     if result['account_data']:
@@ -612,11 +645,9 @@ class BinanceFutureScanner:
                         print(f"  主动买卖比例: {buy_sell_ratio:.2f}")
                         print(f"  主动买入量: {buy_vol:.2f}")
                         print(f"  主动卖出量: {sell_vol:.2f}")
-                    
-                    print("-" * 50)
             
-            logger.info(f"符合所有条件的合约标的数量: {len(final_results)}")
             print(f"\n符合所有条件的合约标的数量: {len(final_results)}")
+            logger.info(f"符合所有条件的合约标的数量: {len(final_results)}")
             
             return final_results
             
