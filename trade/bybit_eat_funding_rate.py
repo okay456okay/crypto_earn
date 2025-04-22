@@ -341,14 +341,9 @@ class BybitScanner:
             # 开多单（使用buy而不是sell）
             logger.info(f"在结算时间前{self.open_position_time}秒开多单: {position_size} {symbol}")
             open_time = time.time()  # 记录开仓时间
-            buy_order = await self.exchange.create_market_buy_order(
+            buy_order = await self.create_market_buy_order_open(
                 symbol=symbol,
-                amount=position_size,
-                params={
-                    "category": "linear",
-                    "positionIdx": 0,  # 单向持仓
-                    "reduceOnly": False
-                }
+                amount=position_size
             )
             logger.info(f"执行交易 - 开多单结果: {buy_order}")
             
@@ -361,14 +356,9 @@ class BybitScanner:
             
             # 平多单（使用sell而不是buy）
             logger.info(f"在结算时间提前{self.advance_time*1000:.0f}ms平多单: {position_size} {symbol}")
-            sell_order = await self.exchange.create_market_sell_order(
+            sell_order = await self.create_market_sell_order_close(
                 symbol=symbol,
-                amount=position_size,
-                params={
-                    "category": "linear",
-                    "positionIdx": 0,  # 单向持仓
-                    "reduceOnly": True  # 确保是平仓操作
-                }
+                amount=position_size
             )
             logger.info(f"执行交易 - 平多单结果: {sell_order}")
             
