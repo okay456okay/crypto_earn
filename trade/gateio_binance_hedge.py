@@ -374,7 +374,7 @@ class HedgeTrader:
             # 这一步可能有网络调用，单独计时
             contract_amount = self.binance.amount_to_precision(self.contract_symbol, trade_amount)
             t4 = time.time()
-            logger.debug(f"[时序] 4.amount_to_precision调用: {(t4-t3)*1000:.3f}ms")
+            logger.debug(f"[时序] 4.amount_to_precision调用: {(t4-t3)*1000:.3f}ms, {self.contract_symbol}, {trade_amount}, {contract_amount}")
             
             # 检查是否需要平衡现货和合约 - 如果需要，则推迟到主交易完成后执行
             need_rebalance = abs(self.cumulative_position_diff_usdt) >= 6
