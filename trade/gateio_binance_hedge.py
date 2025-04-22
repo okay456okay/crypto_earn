@@ -290,14 +290,6 @@ class HedgeTrader:
                                   f"Binance: {binance_bid_volume/self.spot_amount:.2f}x")
                         
                         if self.test_mode:
-                            # 测试模式下不执行实际交易，但仍记录详细信息
-                            logger.info("=" * 50)
-                            logger.info("当前市场深度:")
-                            logger.info(f"Gate.io 买1: {gateio_bid} (量: {gateio_bid_volume}), 卖1: {gateio_ask} (量: {gateio_ask_volume})")
-                            logger.info(f"Binance 买1: {binance_bid} (量: {binance_bid_volume}), 卖1: {binance_ask} (量: {binance_ask_volume})")
-                            logger.info(f"价差: {spread_percent*100:.4f}% ({(binance_bid - gateio_ask):.8f} USDT)")
-                            logger.info("-" * 50)
-                            
                             logger.info("=" * 50)
                             logger.info("交易计划:")
                             logger.info(f"Gate.io 现货买入: {self.spot_amount} {self.symbol.split('/')[0]} @ {gateio_ask} USDT")
@@ -305,7 +297,6 @@ class HedgeTrader:
                             logger.info(f"Binance 合约开空: {self.spot_amount} {self.contract_symbol} @ {binance_bid} USDT")
                             logger.info(f"当前价差: {spread_percent*100:.4f}%")
                             logger.info("=" * 50)
-                            
                             logger.info("测试模式: 不执行实际交易")
                             return None, None
                         
@@ -345,23 +336,9 @@ class HedgeTrader:
                                 spot_order = updated_spot_order
                             
                             if contract_order_id:
-                                # 尝试多种方法获取Binance订单状态
-                                try:
-                                    updated_contract_order = await self.binance.fetch_order(contract_order_id, self.contract_symbol)
-                                    logger.debug(f"获取到Binance更新后的订单状态: {updated_contract_order.get('status')}")
-                                    contract_order = updated_contract_order
-                                except Exception as e:
-                                    logger.warning(f"通过fetch_order获取Binance订单状态失败: {str(e)}")
-                                    try:
-                                        # 尝试获取最近的已完成订单
-                                        closed_orders = await self.binance.fetch_closed_orders(self.contract_symbol, limit=10)
-                                        for order in closed_orders:
-                                            if order.get('id') == contract_order_id:
-                                                contract_order = order
-                                                logger.debug(f"从已完成订单列表获取到Binance订单状态: {order.get('status')}")
-                                                break
-                                    except Exception as e2:
-                                        logger.warning(f"通过fetch_closed_orders获取Binance订单状态失败: {str(e2)}")
+                                updated_contract_order = await self.binance.fetch_order(contract_order_id, self.contract_symbol)
+                                logger.debug(f"获取到Binance更新后的订单状态: {updated_contract_order.get('status')}")
+                                contract_order = updated_contract_order
                         except Exception as e:
                             logger.warning(f"获取更新后的订单状态时出错: {str(e)}")
                         
@@ -423,9 +400,8 @@ class HedgeTrader:
                         current_price = float(gateio_ask)
                         position_diff_usdt = position_diff_abs * current_price
                         
-                        # 更新累计差额 (正值表示合约多于现货，负值表示现货多于合约)
+                        # 更新累计差额
                         self.cumulative_position_diff += position_diff
-                        # 更新以USDT计价的累计差额
                         self.cumulative_position_diff_usdt = self.cumulative_position_diff * current_price
                         
                         # 记录本次交易
@@ -454,8 +430,6 @@ class HedgeTrader:
                         
                         if spot_actual_position > 0:
                             position_diff_percent = position_diff_abs / spot_actual_position * 100
-                            
-                            # 记录本次操作的持仓情况与累计差额
                             logger.info(f"【持仓差异】数量: {position_diff_abs} {self.symbol.split('/')[0]} ({position_diff_percent:.2f}%)")
                             logger.info(f"【累计差额】{self.cumulative_position_diff:.8f} {self.symbol.split('/')[0]} ({self.cumulative_position_diff_usdt:.2f} USDT)")
                             
@@ -466,7 +440,7 @@ class HedgeTrader:
                         
                         # 检查持仓情况 (保留这个调用，但降低日志级别)
                         await self.check_positions()
-
+                        
                         # 申购余币宝
                         if not self.test_mode:
                             try:
@@ -474,7 +448,7 @@ class HedgeTrader:
                                 logger.info(f"已将 {spot_actual_position} {self.symbol.split('/')[0]} 申购到余币宝")
                             except Exception as e:
                                 logger.error(f"余币宝申购失败，但不影响主要交易流程: {str(e)}")
-                                
+                        
                         return spot_order, contract_order
                 
                 # 短暂等待后重新检查，避免CPU占用过高
