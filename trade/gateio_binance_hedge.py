@@ -560,8 +560,8 @@ class HedgeTrader:
             logger.info(f"在Gate.io市价买入 {trade_amount} {base_currency}, 预估成本: {cost:.2f} USDT")
             logger.info(f"在Binance市价开空单 {contract_amount} {base_currency}")
             
-            # 等待1秒让订单状态更新
-            await asyncio.sleep(1)
+            # 等待2秒让订单状态更新
+            await asyncio.sleep(2)
             
             # 尝试获取最新的订单状态
             try:

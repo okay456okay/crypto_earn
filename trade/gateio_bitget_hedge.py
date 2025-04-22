@@ -567,7 +567,7 @@ class HedgeTrader:
             logger.info(f"在Gate.io市价买入 {trade_amount} {base_currency}，在Bitget市价开空单 {contract_amount} {base_currency}")
             
             # 等待一段时间，确保订单状态已更新
-            await asyncio.sleep(1)
+            await asyncio.sleep(2)
             
             # 获取最新的订单状态 - Gate.io
             spot_order_id = spot_order.get('id')

@@ -565,7 +565,7 @@ class HedgeTrader:
                 raise Exception("订单执行失败：一个或两个订单未成功创建")
 
             # 等待一小段时间，确保订单状态更新
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(2)
                 
             # 7. 获取最新的订单信息
             spot_order_id = spot_order.get('id')
