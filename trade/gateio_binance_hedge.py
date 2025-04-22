@@ -28,7 +28,7 @@ from trade.gateio_api import subscrible_earn as gateio_subscrible_earn, redeem_e
 
 
 class HedgeTrader:
-    def __init__(self, symbol, spot_amount=None, min_spread=0.001, leverage=None, test_mode=False):
+    def __init__(self, symbol, spot_amount=None, min_spread=0.001, leverage=None, test_mode=False, depth_multiplier=10):
         """
         初始化基本属性
         
@@ -38,12 +38,14 @@ class HedgeTrader:
             min_spread (float, optional): 最小价差要求，默认0.001 (0.1%)
             leverage (int, optional): 合约杠杆倍数，如果不指定则使用该交易对支持的最大杠杆倍数
             test_mode (bool, optional): 是否为测试模式，默认False
+            depth_multiplier (int, optional): 市场深度乘数要求，默认10倍交易量
         """
         self.symbol = symbol
         self.spot_amount = spot_amount
         self.min_spread = min_spread
         self.leverage = leverage  # 初始化为None，将在initialize中设置
         self.test_mode = test_mode
+        self.depth_multiplier = depth_multiplier  # 市场深度乘数要求
         
         # 设置合约交易对
         base, quote = symbol.split('/')
@@ -86,7 +88,6 @@ class HedgeTrader:
         
         # 用于控制WebSocket订阅
         self.ws_running = False
-        self.price_updates = asyncio.Queue()
         
         # 新增：用于跟踪现货和合约持仓差异的累计值
         self.cumulative_position_diff = 0  # 正数表示合约多，负数表示现货多
@@ -153,7 +154,8 @@ class HedgeTrader:
             logger.info(f"设置Binance合约杠杆倍数为: {self.leverage}倍")
             
             logger.info(f"初始化完成: 交易对={self.symbol}, 合约对={self.contract_symbol}, "
-                       f"最小价差={self.min_spread*100}%, 杠杆={self.leverage}倍")
+                       f"最小价差={self.min_spread*100}%, 杠杆={self.leverage}倍, "
+                       f"市场深度要求={self.depth_multiplier}倍交易量")
             
             # 获取并保存账户余额
             self.gateio_usdt, self.binance_usdt = await self.check_balances()
@@ -212,10 +214,6 @@ class HedgeTrader:
                                 self.orderbooks['binance'] = ob
                                 logger.debug(f"收到Binance订单簿更新")
                             
-                            # 如果两个订单簿都有数据，检查价差
-                            if self.orderbooks['gateio'] and self.orderbooks['binance']:
-                                await self.check_spread_from_orderbooks()
-                            
                         except Exception as e:
                             logger.error(f"处理订单簿数据时出错: {str(e)}")
                     
@@ -244,93 +242,97 @@ class HedgeTrader:
             except Exception as e:
                 logger.error(f"关闭WebSocket连接时出错: {str(e)}")
 
-    async def check_spread_from_orderbooks(self):
-        """从已缓存的订单簿数据中检查价差"""
-        try:
-            gateio_ob = self.orderbooks['gateio']
-            binance_ob = self.orderbooks['binance']
-            
-            if not gateio_ob or not binance_ob:
-                return
-            
-            gateio_ask = Decimal(str(gateio_ob['asks'][0][0]))
-            gateio_ask_volume = Decimal(str(gateio_ob['asks'][0][1]))
-            gateio_bid = Decimal(str(gateio_ob['bids'][0][0]))
-            gateio_bid_volume = Decimal(str(gateio_ob['bids'][0][1]))
-            
-            binance_bid = Decimal(str(binance_ob['bids'][0][0]))
-            binance_bid_volume = Decimal(str(binance_ob['bids'][0][1]))
-            binance_ask = Decimal(str(binance_ob['asks'][0][0]))
-            binance_ask_volume = Decimal(str(binance_ob['asks'][0][1]))
-            
-            spread = binance_bid - gateio_ask
-            spread_percent = spread / gateio_ask
-            
-            # 将价差数据放入队列
-            spread_data = {
-                'spread_percent': float(spread_percent),
-                'gateio_ask': float(gateio_ask),
-                'gateio_ask_volume': float(gateio_ask_volume),
-                'gateio_bid': float(gateio_bid),
-                'gateio_bid_volume': float(gateio_bid_volume),
-                'binance_bid': float(binance_bid),
-                'binance_bid_volume': float(binance_bid_volume),
-                'binance_ask': float(binance_ask),
-                'binance_ask_volume': float(binance_ask_volume)
-            }
-            await self.price_updates.put(spread_data)
-            
-        except Exception as e:
-            logger.error(f"{self.symbol}检查订单簿价差时出错: {str(e)}")
-
     async def wait_for_spread(self):
-        """等待价差达到要求"""
+        """等待价差达到要求，并确保市场深度足够"""
         subscription_task = None
         try:
             # 启动WebSocket订阅
             subscription_task = asyncio.create_task(self.subscribe_orderbooks())
             
             while True:
-                try:
-                    # 从队列中获取最新价差数据，设置超时
-                    spread_data = await asyncio.wait_for(
-                        self.price_updates.get(),
-                        timeout=30  # 30秒超时
+                # 直接检查当前订单簿数据，而非通过队列
+                if self.orderbooks['gateio'] and self.orderbooks['binance']:
+                    # 提取订单簿数据
+                    gateio_ob = self.orderbooks['gateio']
+                    binance_ob = self.orderbooks['binance']
+                    
+                    gateio_ask = float(gateio_ob['asks'][0][0])
+                    gateio_ask_volume = float(gateio_ob['asks'][0][1])
+                    gateio_bid = float(gateio_ob['bids'][0][0])
+                    gateio_bid_volume = float(gateio_ob['bids'][0][1])
+                    
+                    binance_bid = float(binance_ob['bids'][0][0])
+                    binance_bid_volume = float(binance_ob['bids'][0][1])
+                    binance_ask = float(binance_ob['asks'][0][0])
+                    binance_ask_volume = float(binance_ob['asks'][0][1])
+                    
+                    # 计算价差
+                    spread = binance_bid - gateio_ask
+                    spread_percent = spread / gateio_ask
+                    
+                    # 计算交易量相对于市场深度的比例
+                    trade_amount = self.spot_amount or 1
+                    adjusted_trade_amount = trade_amount * 1.002  # 使用更新后的系数
+                    
+                    # 检查市场深度
+                    depth_sufficient = (
+                        gateio_ask_volume >= adjusted_trade_amount * self.depth_multiplier and 
+                        binance_bid_volume >= adjusted_trade_amount * self.depth_multiplier
                     )
                     
-                    spread_percent = spread_data['spread_percent']
+                    # 日志记录
+                    logger.debug(f"{self.symbol}价格检查 - Gate.io卖1: {gateio_ask} (量: {gateio_ask_volume}), "
+                              f"Gate.io买1: {gateio_bid} (量: {gateio_bid_volume}), "
+                              f"Binance买1: {binance_bid} (量: {binance_bid_volume}), "
+                              f"Binance卖1: {binance_ask} (量: {binance_ask_volume}), "
+                              f"价差: {spread_percent*100:.4f}%, 深度足够: {depth_sufficient}")
                     
-                    # 将价格检查的日志改为DEBUG级别
-                    logger.debug(f"{self.symbol}价格检查 - Gate.io卖1: {spread_data['gateio_ask']} (量: {spread_data['gateio_ask_volume']}), "
-                               f"Gate.io买1: {spread_data['gateio_bid']} (量: {spread_data['gateio_bid_volume']}), "
-                               f"Binance买1: {spread_data['binance_bid']} (量: {spread_data['binance_bid_volume']}), "
-                               f"Binance卖1: {spread_data['binance_ask']} (量: {spread_data['binance_ask_volume']}), "
-                               f"价差: {spread_percent*100:.4f}%")
-                    
-                    if spread_percent >= self.min_spread:
-                        logger.info(f"{self.symbol}价差条件满足: {spread_percent*100:.4f}% >= {self.min_spread*100:.4f}%")
+                    # 如果价差满足条件且市场深度足够，直接返回
+                    if spread_percent >= self.min_spread and depth_sufficient:
+                        # 提高日志到INFO级别，记录找到的机会
+                        logger.info(f"{self.symbol}交易条件满足:")
+                        logger.info(f"价差: {spread_percent*100:.4f}% >= {self.min_spread*100:.4f}%")
+                        
+                        spot_depth_ratio = gateio_ask_volume / adjusted_trade_amount
+                        contract_depth_ratio = binance_bid_volume / adjusted_trade_amount
+                        
+                        logger.info(f"市场深度 - Gate.io卖1: {gateio_ask_volume} {self.symbol.split('/')[0]}, "
+                                  f"Binance买1: {binance_bid_volume} {self.symbol.split('/')[0]}")
+                        logger.info(f"交易量: {adjusted_trade_amount} {self.symbol.split('/')[0]}, "
+                                  f"深度比例 - Gate.io: {spot_depth_ratio:.2f}x, "
+                                  f"Binance: {contract_depth_ratio:.2f}x")
+                        
+                        # 立即返回最新的订单簿数据
                         return (spread_percent, 
-                               spread_data['gateio_ask'], 
-                               spread_data['binance_bid'],
-                               spread_data['gateio_ask_volume'], 
-                               spread_data['binance_bid_volume'],
-                               spread_data['gateio_bid'],
-                               spread_data['gateio_bid_volume'],
-                               spread_data['binance_ask'],
-                               spread_data['binance_ask_volume'])
+                              gateio_ask, 
+                              binance_bid,
+                              gateio_ask_volume, 
+                              binance_bid_volume,
+                              gateio_bid,
+                              gateio_bid_volume,
+                              binance_ask,
+                              binance_ask_volume)
                     
-                    logger.debug(f"{self.symbol}价差条件不满足: {spread_percent*100:.4f}% < {self.min_spread*100:.4f}%")
-                    
-                except asyncio.TimeoutError:
-                    logger.warning(f"{self.symbol}等待价差数据超时，重新订阅订单簿")
-                    # 重新启动订阅
-                    if subscription_task:
-                        subscription_task.cancel()
-                        try:
-                            await subscription_task
-                        except asyncio.CancelledError:
-                            pass
-                    subscription_task = asyncio.create_task(self.subscribe_orderbooks())
+                    # 如果价差满足但深度不够，记录特定信息
+                    if spread_percent >= self.min_spread and not depth_sufficient:
+                        spot_depth_ratio = gateio_ask_volume / adjusted_trade_amount if adjusted_trade_amount > 0 else 0
+                        contract_depth_ratio = binance_bid_volume / adjusted_trade_amount if adjusted_trade_amount > 0 else 0
+                        insufficient_side = []
+                        
+                        if spot_depth_ratio < self.depth_multiplier:
+                            insufficient_side.append(f"Gate.io卖1(比例: {spot_depth_ratio:.2f}x)")
+                        if contract_depth_ratio < self.depth_multiplier:
+                            insufficient_side.append(f"Binance买1(比例: {contract_depth_ratio:.2f}x)")
+                        
+                        insufficient_text = "、".join(insufficient_side)
+                        
+                        logger.info(f"{self.symbol}价差条件满足但市场深度不足: {spread_percent*100:.4f}% >= {self.min_spread*100:.4f}%")
+                        logger.info(f"市场深度 - Gate.io卖1: {gateio_ask_volume}, Binance买1: {binance_bid_volume}")
+                        logger.info(f"交易量: {adjusted_trade_amount}, 所需深度: {adjusted_trade_amount * self.depth_multiplier}")
+                        logger.info(f"深度不足的一方: {insufficient_text}")
+                
+                # 短暂等待后重新检查，避免CPU占用过高
+                await asyncio.sleep(0.05)  # 50毫秒检查一次，减少延迟
                     
         except Exception as e:
             logger.error(f"{self.symbol}等待价差时出错: {str(e)}")
@@ -355,189 +357,40 @@ class HedgeTrader:
             # 获取基础货币
             base_currency = self.symbol.split('/')[0]
             
-            # 详细记录市场深度信息
-            logger.info("=" * 50)
-            logger.info("当前市场深度:")
-            logger.info(f"Gate.io 买1: {gateio_bid} (量: {gateio_bid_volume}), 卖1: {gateio_ask} (量: {gateio_ask_volume})")
-            logger.info(f"Binance 买1: {binance_bid} (量: {binance_bid_volume}), 卖1: {binance_ask} (量: {binance_ask_volume})")
-            logger.info(f"价差: {spread_percent*100:.4f}% ({(binance_bid - gateio_ask):.8f} USDT)")
-            logger.info("-" * 50)
-            
-            # 检查是否需要平衡现货和合约
-            need_to_rebalance = False
-            rebalance_message = ""
-            rebalance_side = None
-            rebalance_amount = 0
-            
-            # 如果累计差额超过6 USDT，则需要平衡
-            if abs(self.cumulative_position_diff_usdt) >= 6:
-                need_to_rebalance = True
-                current_price = float(gateio_ask)  # 使用当前Gate.io的卖一价格
-                
-                if self.cumulative_position_diff > 0:  # 合约多，买入现货
-                    rebalance_side = "spot"
-                    rebalance_amount = abs(self.cumulative_position_diff)
-                    rebalance_message = f"检测到累计差额 {self.cumulative_position_diff} {base_currency} ({self.cumulative_position_diff_usdt:.2f} USDT)，需要买入现货"
-                else:  # 现货多，开更多合约空单
-                    rebalance_side = "contract"
-                    rebalance_amount = abs(self.cumulative_position_diff)
-                    rebalance_message = f"检测到累计差额 {self.cumulative_position_diff} {base_currency} ({self.cumulative_position_diff_usdt:.2f} USDT)，需要开空合约"
-                
-                logger.info("=" * 50)
-                logger.info(rebalance_message)
-                logger.info(f"当前价格: {current_price} USDT/{base_currency}")
-                logger.info(f"平衡数量: {rebalance_amount} {base_currency}")
-                logger.info("=" * 50)
-                
-                # 根据是否为测试模式决定是否执行平衡操作
-                if self.test_mode:
-                    logger.info("测试模式: 不执行实际平衡交易")
-                else:
-                    if rebalance_side == "spot":  # 需要买入现货
-                        try:
-                            # 计算买入现货所需的USDT
-                            cost = float(rebalance_amount) * float(gateio_ask) * 1.01  # 添加1%的缓冲
-                            
-                            # 执行买入操作
-                            spot_balance_order = await self.gateio.create_market_buy_order(
-                                symbol=self.symbol,
-                                amount=cost,
-                                params={'createMarketBuyOrderRequiresPrice': False, 'quoteOrderQty': True}
-                            )
-                            
-                            # 获取实际成交数量
-                            spot_filled_amount = float(spot_balance_order.get('filled', 0))
-                            spot_fees = spot_balance_order.get('fees', [])
-                            spot_base_fee = sum(float(fee.get('cost', 0)) for fee in spot_fees if fee.get('currency') == base_currency)
-                            spot_actual_filled = spot_filled_amount - spot_base_fee
-                            
-                            # 计算实际成交价格
-                            spot_cost = float(spot_balance_order.get('cost', 0))
-                            if spot_filled_amount > 0:
-                                spot_actual_price = spot_cost / spot_filled_amount
-                            else:
-                                spot_actual_price = 0
-                                
-                            # 记录实际成交价格与市场价格的差异
-                            price_diff_percent = ((spot_actual_price - float(gateio_ask)) / float(gateio_ask) * 100) if float(gateio_ask) > 0 else 0
-                            logger.info(f"现货平衡买入价格分析 - 市场卖1价: {gateio_ask}, 实际成交价: {spot_actual_price:.8f}, "
-                                      f"差异: {price_diff_percent:.4f}%, 滑点: {(spot_actual_price - float(gateio_ask)):.8f} USDT")
-                            
-                            # 更新累计差额 (调整累计差额，减去新买入的现货)
-                            self.cumulative_position_diff -= spot_actual_filled
-                            self.cumulative_position_diff_usdt = self.cumulative_position_diff * float(gateio_ask)
-                            
-                            # 记录本次交易作为一条新记录
-                            self.trade_count += 1
-                            rebalance_record = {
-                                'trade_id': f"rebalance-{self.trade_count}",
-                                'timestamp': spot_balance_order.get('timestamp', 0),
-                                'spot_filled': spot_actual_filled,
-                                'contract_filled': 0,
-                                'position_diff': -spot_actual_filled,  # 负值表示现货增加
-                                'position_diff_usdt': -spot_actual_filled * current_price,
-                                'price': current_price,
-                                'market_price': float(gateio_ask),
-                                'execution_price': spot_actual_price,
-                                'price_diff_percent': price_diff_percent,
-                                'cumulative_diff': self.cumulative_position_diff,
-                                'cumulative_diff_usdt': self.cumulative_position_diff_usdt,
-                                'is_rebalance': True
-                            }
-                            self.trade_records.append(rebalance_record)
-                            
-                            # 记录平衡操作
-                            logger.info(f"成功买入 {spot_actual_filled} {base_currency} 现货用于平衡持仓")
-                            
-                            # 申购余币宝
-                            try:
-                                gateio_subscrible_earn(base_currency, spot_actual_filled)
-                                logger.info(f"已将新买入的 {spot_actual_filled} {base_currency} 申购到余币宝")
-                            except Exception as e:
-                                logger.error(f"余币宝申购失败，但不影响平衡操作: {str(e)}")
-                                
-                        except Exception as e:
-                            logger.error(f"执行现货平衡买入操作失败: {str(e)}")
-                    
-                    elif rebalance_side == "contract":  # 需要开更多合约空单
-                        try:
-                            # 精确化合约数量
-                            contract_amount = self.binance.amount_to_precision(self.contract_symbol, rebalance_amount)
-                            
-                            # 执行合约空单
-                            contract_balance_order = await self.binance.create_market_sell_order(
-                                symbol=self.contract_symbol,
-                                amount=contract_amount,
-                                params={'positionSide': 'SHORT'}
-                            )
-                            
-                            # 获取实际成交数量
-                            contract_filled_amount = float(contract_balance_order.get('filled', 0))
-                            contract_fees = contract_balance_order.get('fees', [])
-                            contract_base_fee = sum(float(fee.get('cost', 0)) for fee in contract_fees if fee.get('currency') == base_currency)
-                            contract_actual_filled = contract_filled_amount - contract_base_fee
-                            
-                            # 计算实际成交价格
-                            contract_cost = float(contract_balance_order.get('cost', 0))
-                            if contract_filled_amount > 0:
-                                contract_actual_price = contract_cost / contract_filled_amount
-                            else:
-                                contract_actual_price = 0
-                                
-                            # 记录实际成交价格与市场价格的差异
-                            price_diff_percent = ((float(binance_bid) - contract_actual_price) / float(binance_bid) * 100) if float(binance_bid) > 0 else 0
-                            logger.info(f"合约平衡空单价格分析 - 市场买1价: {binance_bid}, 实际成交价: {contract_actual_price:.8f}, "
-                                      f"差异: {price_diff_percent:.4f}%, 滑点: {(float(binance_bid) - contract_actual_price):.8f} USDT")
-                            
-                            # 更新累计差额 (调整累计差额，增加合约空单)
-                            self.cumulative_position_diff += contract_actual_filled
-                            self.cumulative_position_diff_usdt = self.cumulative_position_diff * float(gateio_ask)
-                            
-                            # 记录本次交易作为一条新记录
-                            self.trade_count += 1
-                            rebalance_record = {
-                                'trade_id': f"rebalance-{self.trade_count}",
-                                'timestamp': contract_balance_order.get('timestamp', 0),
-                                'spot_filled': 0,
-                                'contract_filled': contract_actual_filled,
-                                'position_diff': contract_actual_filled,  # 正值表示合约增加
-                                'position_diff_usdt': contract_actual_filled * current_price,
-                                'price': current_price,
-                                'market_price': float(binance_bid),
-                                'execution_price': contract_actual_price,
-                                'price_diff_percent': price_diff_percent,
-                                'cumulative_diff': self.cumulative_position_diff,
-                                'cumulative_diff_usdt': self.cumulative_position_diff_usdt,
-                                'is_rebalance': True
-                            }
-                            self.trade_records.append(rebalance_record)
-                            
-                            # 记录平衡操作
-                            logger.info(f"成功开空 {contract_actual_filled} {base_currency} 合约用于平衡持仓")
-                            
-                        except Exception as e:
-                            logger.error(f"执行合约平衡空单操作失败: {str(e)}")
-            
-            # 2. 立即准备下单参数, 不然现货会比合约少一些
-            trade_amount = self.spot_amount * 1.0019618834080717
+            # 2. 立即准备下单参数并执行交易，减少不必要的延迟
+            trade_amount = self.spot_amount * 1.002
+            adjusted_trade_amount = trade_amount
             cost = float(trade_amount) * float(gateio_ask)
             contract_amount = self.binance.amount_to_precision(self.contract_symbol, trade_amount)
             
-            # 打印交易计划
-            logger.info("=" * 50)
-            logger.info("交易计划:")
-            logger.info(f"Gate.io 现货买入: {trade_amount} {base_currency} @ {gateio_ask} USDT")
-            logger.info(f"预计成本: {cost:.2f} USDT")
-            logger.info(f"Binance 合约开空: {contract_amount} {self.contract_symbol} @ {binance_bid} USDT")
-            logger.info(f"当前价差: {spread_percent*100:.4f}%")
-            logger.info("=" * 50)
+            # 检查是否需要平衡现货和合约 - 如果需要，则推迟到主交易完成后执行
+            need_rebalance = abs(self.cumulative_position_diff_usdt) >= 6
             
             if self.test_mode:
+                # 测试模式下不执行实际交易，但仍记录详细信息
+                logger.info("=" * 50)
+                logger.info("当前市场深度:")
+                logger.info(f"Gate.io 买1: {gateio_bid} (量: {gateio_bid_volume}), 卖1: {gateio_ask} (量: {gateio_ask_volume})")
+                logger.info(f"Binance 买1: {binance_bid} (量: {binance_bid_volume}), 卖1: {binance_ask} (量: {binance_ask_volume})")
+                logger.info(f"价差: {spread_percent*100:.4f}% ({(binance_bid - gateio_ask):.8f} USDT)")
+                logger.info("-" * 50)
+                
+                logger.info("=" * 50)
+                logger.info("交易计划:")
+                logger.info(f"Gate.io 现货买入: {trade_amount} {base_currency} @ {gateio_ask} USDT")
+                logger.info(f"预计成本: {cost:.2f} USDT")
+                logger.info(f"Binance 合约开空: {contract_amount} {self.contract_symbol} @ {binance_bid} USDT")
+                logger.info(f"当前价差: {spread_percent*100:.4f}%")
+                logger.info("=" * 50)
+                
                 logger.info("测试模式: 不执行实际交易")
                 return None, None
             
-            # 3. 立即执行交易
-            logger.debug(f"准备下单 - Gate.io现货买入量: {cost} USDT, Binance合约开空: {contract_amount} {self.contract_symbol}")
+            # 非测试模式下，立即执行交易以减少延迟
+            # 只记录关键信息，详细分析留到交易后
+            logger.info(f"执行交易 - 价差: {spread_percent*100:.4f}%, Gate.io: {gateio_ask}, Binance: {binance_bid}")
+            
+            # 3. 立即执行交易，不再中间插入其他操作
             spot_order, contract_order = await asyncio.gather(
                 self.gateio.create_market_buy_order(
                     symbol=self.symbol,
@@ -551,14 +404,12 @@ class HedgeTrader:
                 )
             )
             
-            # 记录原始订单响应
+            # 4. 交易后再进行详细分析和记录
+            logger.info(f"订单已发送 - Gate.io现货买入: {cost:.2f} USDT, Binance合约开空: {contract_amount} {self.contract_symbol}")
+            
+            # 记录原始订单响应 (debug级别)
             logger.debug(f"Gate.io订单原始响应: {spot_order}")
             logger.debug(f"Binance订单原始响应: {contract_order}")
-            
-            # 4. 交易后再进行其他操作
-            logger.info(f"计划交易数量: {trade_amount} {base_currency}")
-            logger.info(f"在Gate.io市价买入 {trade_amount} {base_currency}, 预估成本: {cost:.2f} USDT")
-            logger.info(f"在Binance市价开空单 {contract_amount} {base_currency}")
             
             # 等待2秒让订单状态更新
             await asyncio.sleep(2)
@@ -640,13 +491,11 @@ class HedgeTrader:
             
             # 记录价格执行信息
             logger.info("=" * 50)
-            logger.info("价格执行分析:")
-            logger.info(f"现货 - 市场卖1价: {gateio_ask}, 实际成交价: {spot_actual_price:.8f}, "
-                      f"差异: {spot_price_diff:.8f} USDT ({spot_price_diff_percent:.4f}%)")
-            logger.info(f"合约 - 市场买1价: {binance_bid}, 实际成交价: {contract_actual_price:.8f}, "
-                      f"差异: {contract_price_diff:.8f} USDT ({contract_price_diff_percent:.4f}%)")
+            logger.info("交易已完成 - 价格执行分析:")
+            logger.info(f"【交易前市场】Gate.io卖1: {gateio_ask}, Binance买1: {binance_bid}, 价差: {spread_percent*100:.4f}%")
+            logger.info(f"【实际成交】现货: {spot_actual_price:.8f} (滑点: {spot_price_diff_percent:.4f}%), 合约: {contract_actual_price:.8f} (滑点: {contract_price_diff_percent:.4f}%)")
+            logger.info(f"【成交数量】现货: {spot_actual_position} {base_currency}, 合约: {contract_actual_position} {base_currency}")
             logger.info(f"总滑点成本: {(spot_price_diff + contract_price_diff) * float(spot_actual_position):.8f} USDT")
-            logger.info("=" * 50)
             
             # 检查本次操作的现货和合约持仓差异
             position_diff = contract_actual_position - spot_actual_position  # 正值表示合约多，负值表示现货多
@@ -675,6 +524,8 @@ class HedgeTrader:
                 'contract_market_price': float(binance_bid),
                 'contract_execution_price': contract_actual_price,
                 'contract_price_diff_percent': contract_price_diff_percent,
+                'market_depth_ratio_spot': float(gateio_ask_volume) / adjusted_trade_amount,
+                'market_depth_ratio_contract': float(binance_bid_volume) / adjusted_trade_amount,
                 'cumulative_diff': self.cumulative_position_diff,
                 'cumulative_diff_usdt': self.cumulative_position_diff_usdt,
                 'is_rebalance': False
@@ -685,18 +536,15 @@ class HedgeTrader:
                 position_diff_percent = position_diff_abs / spot_actual_position * 100
                 
                 # 记录本次操作的持仓情况与累计差额
-                logger.info(f"本次操作 - 现货成交: {spot_actual_position} {base_currency}, "
-                           f"合约成交: {contract_actual_position} {base_currency}, "
-                           f"差异: {position_diff_abs} {base_currency} ({position_diff_percent:.2f}%)")
-                logger.info(f"累计差额 - 数量: {self.cumulative_position_diff:.8f} {base_currency}, "
-                           f"价值: {self.cumulative_position_diff_usdt:.2f} USDT")
+                logger.info(f"【持仓差异】数量: {position_diff_abs} {base_currency} ({position_diff_percent:.2f}%)")
+                logger.info(f"【累计差额】{self.cumulative_position_diff:.8f} {base_currency} ({self.cumulative_position_diff_usdt:.2f} USDT)")
                 
                 # 如果持仓差异超过2%，视为异常
                 if position_diff_percent > 2:
                     logger.error(f"本次操作的现货和合约持仓差异过大: {position_diff_abs} {base_currency} ({position_diff_percent:.2f}%)")
                     return None, None
             
-            # 检查持仓情况
+            # 检查持仓情况 (保留这个调用，但降低日志级别)
             await self.check_positions()
 
             # 申购余币宝
@@ -706,6 +554,174 @@ class HedgeTrader:
                     logger.info(f"已将 {spot_actual_position} {base_currency} 申购到余币宝")
                 except Exception as e:
                     logger.error(f"余币宝申购失败，但不影响主要交易流程: {str(e)}")
+                    
+            # 如果需要平衡，在主交易之后进行平衡操作
+            if need_rebalance:
+                logger.info("-" * 50)
+                logger.info("开始执行平衡操作")
+                
+                # 重新获取当前市场价格
+                orderbook_gateio = await self.gateio.fetch_order_book(self.symbol)
+                orderbook_binance = await self.binance.fetch_order_book(self.contract_symbol)
+                current_gateio_ask = float(orderbook_gateio['asks'][0][0])
+                current_binance_bid = float(orderbook_binance['bids'][0][0])
+                
+                current_price = current_gateio_ask
+                
+                if self.cumulative_position_diff > 0:  # 合约多，买入现货
+                    rebalance_side = "spot"
+                    rebalance_amount = abs(self.cumulative_position_diff)
+                    rebalance_message = f"检测到累计差额 {self.cumulative_position_diff} {base_currency} ({self.cumulative_position_diff_usdt:.2f} USDT)，需要买入现货"
+                else:  # 现货多，开更多合约空单
+                    rebalance_side = "contract"
+                    rebalance_amount = abs(self.cumulative_position_diff)
+                    rebalance_message = f"检测到累计差额 {self.cumulative_position_diff} {base_currency} ({self.cumulative_position_diff_usdt:.2f} USDT)，需要开空合约"
+                
+                logger.info(rebalance_message)
+                logger.info(f"当前价格: {current_price} USDT/{base_currency}")
+                logger.info(f"平衡数量: {rebalance_amount} {base_currency}")
+
+                # 检查市场深度是否足够
+                is_depth_sufficient, orderbook, market_price, available_volume = await self.check_market_depth_for_amount(
+                    rebalance_amount, rebalance_side)
+
+                depth_ratio = available_volume / rebalance_amount
+                logger.info(f"市场深度检查 - {'Gate.io卖一' if rebalance_side=='spot' else 'Binance买一'}: {available_volume} {base_currency}, "
+                          f"深度比例: {depth_ratio:.2f}x (目标: {self.depth_multiplier}x)")
+
+                if not is_depth_sufficient:
+                    logger.warning(f"市场深度不足，可能导致较高滑点，建议稍后重试或减小平衡数量")
+                    if depth_ratio < 2:  # 如果深度比例小于2倍，建议不执行
+                        logger.warning(f"市场深度严重不足 (比例: {depth_ratio:.2f}x < 2x)，取消平衡操作")
+                        logger.info("-" * 50)
+                        return spot_order, contract_order
+                
+                if rebalance_side == "spot":  # 需要买入现货
+                    try:
+                        # 计算买入现货所需的USDT
+                        cost = float(rebalance_amount) * current_price * 1.01  # 添加1%的缓冲
+                        
+                        # 执行买入操作
+                        spot_balance_order = await self.gateio.create_market_buy_order(
+                            symbol=self.symbol,
+                            amount=cost,
+                            params={'createMarketBuyOrderRequiresPrice': False, 'quoteOrderQty': True}
+                        )
+                        
+                        # 获取实际成交数量
+                        spot_filled_amount = float(spot_balance_order.get('filled', 0))
+                        spot_fees = spot_balance_order.get('fees', [])
+                        spot_base_fee = sum(float(fee.get('cost', 0)) for fee in spot_fees if fee.get('currency') == base_currency)
+                        spot_actual_filled = spot_filled_amount - spot_base_fee
+                        
+                        # 计算实际成交价格
+                        spot_cost = float(spot_balance_order.get('cost', 0))
+                        if spot_filled_amount > 0:
+                            spot_actual_price = spot_cost / spot_filled_amount
+                        else:
+                            spot_actual_price = 0
+                            
+                        # 记录实际成交价格与市场价格的差异
+                        price_diff_percent = ((spot_actual_price - current_price) / current_price * 100) if current_price > 0 else 0
+                        logger.info(f"现货平衡买入价格分析 - 市场卖1价: {current_price}, 实际成交价: {spot_actual_price:.8f}, "
+                                  f"差异: {price_diff_percent:.4f}%, 滑点: {(spot_actual_price - current_price):.8f} USDT")
+                        
+                        # 更新累计差额 (调整累计差额，减去新买入的现货)
+                        self.cumulative_position_diff -= spot_actual_filled
+                        self.cumulative_position_diff_usdt = self.cumulative_position_diff * current_price
+                        
+                        # 记录本次交易作为一条新记录
+                        self.trade_count += 1
+                        rebalance_record = {
+                            'trade_id': f"rebalance-{self.trade_count}",
+                            'timestamp': spot_balance_order.get('timestamp', 0),
+                            'spot_filled': spot_actual_filled,
+                            'contract_filled': 0,
+                            'position_diff': -spot_actual_filled,  # 负值表示现货增加
+                            'position_diff_usdt': -spot_actual_filled * current_price,
+                            'price': current_price,
+                            'market_price': current_price,
+                            'execution_price': spot_actual_price,
+                            'price_diff_percent': price_diff_percent,
+                            'cumulative_diff': self.cumulative_position_diff,
+                            'cumulative_diff_usdt': self.cumulative_position_diff_usdt,
+                            'is_rebalance': True
+                        }
+                        self.trade_records.append(rebalance_record)
+                        
+                        # 记录平衡操作
+                        logger.info(f"成功买入 {spot_actual_filled} {base_currency} 现货用于平衡持仓")
+                        
+                        # 申购余币宝
+                        try:
+                            gateio_subscrible_earn(base_currency, spot_actual_filled)
+                            logger.info(f"已将新买入的 {spot_actual_filled} {base_currency} 申购到余币宝")
+                        except Exception as e:
+                            logger.error(f"余币宝申购失败，但不影响平衡操作: {str(e)}")
+                            
+                    except Exception as e:
+                        logger.error(f"执行现货平衡买入操作失败: {str(e)}")
+                
+                elif rebalance_side == "contract":  # 需要开更多合约空单
+                    try:
+                        # 精确化合约数量
+                        contract_amount = self.binance.amount_to_precision(self.contract_symbol, rebalance_amount)
+                        
+                        # 执行合约空单
+                        contract_balance_order = await self.binance.create_market_sell_order(
+                            symbol=self.contract_symbol,
+                            amount=contract_amount,
+                            params={'positionSide': 'SHORT'}
+                        )
+                        
+                        # 获取实际成交数量
+                        contract_filled_amount = float(contract_balance_order.get('filled', 0))
+                        contract_fees = contract_balance_order.get('fees', [])
+                        contract_base_fee = sum(float(fee.get('cost', 0)) for fee in contract_fees if fee.get('currency') == base_currency)
+                        contract_actual_filled = contract_filled_amount - contract_base_fee
+                        
+                        # 计算实际成交价格
+                        contract_cost = float(contract_balance_order.get('cost', 0))
+                        if contract_filled_amount > 0:
+                            contract_actual_price = contract_cost / contract_filled_amount
+                        else:
+                            contract_actual_price = 0
+                            
+                        # 记录实际成交价格与市场价格的差异
+                        price_diff_percent = ((current_binance_bid - contract_actual_price) / current_binance_bid * 100) if current_binance_bid > 0 else 0
+                        logger.info(f"合约平衡空单价格分析 - 市场买1价: {current_binance_bid}, 实际成交价: {contract_actual_price:.8f}, "
+                                  f"差异: {price_diff_percent:.4f}%, 滑点: {(current_binance_bid - contract_actual_price):.8f} USDT")
+                        
+                        # 更新累计差额 (调整累计差额，增加合约空单)
+                        self.cumulative_position_diff += contract_actual_filled
+                        self.cumulative_position_diff_usdt = self.cumulative_position_diff * current_price
+                        
+                        # 记录本次交易作为一条新记录
+                        self.trade_count += 1
+                        rebalance_record = {
+                            'trade_id': f"rebalance-{self.trade_count}",
+                            'timestamp': contract_balance_order.get('timestamp', 0),
+                            'spot_filled': 0,
+                            'contract_filled': contract_actual_filled,
+                            'position_diff': contract_actual_filled,  # 正值表示合约增加
+                            'position_diff_usdt': contract_actual_filled * current_price,
+                            'price': current_price,
+                            'market_price': current_binance_bid,
+                            'execution_price': contract_actual_price,
+                            'price_diff_percent': price_diff_percent,
+                            'cumulative_diff': self.cumulative_position_diff,
+                            'cumulative_diff_usdt': self.cumulative_position_diff_usdt,
+                            'is_rebalance': True
+                        }
+                        self.trade_records.append(rebalance_record)
+                        
+                        # 记录平衡操作
+                        logger.info(f"成功开空 {contract_actual_filled} {base_currency} 合约用于平衡持仓")
+                        
+                    except Exception as e:
+                        logger.error(f"执行合约平衡空单操作失败: {str(e)}")
+                
+                logger.info("-" * 50)
 
             return spot_order, contract_order
             
@@ -789,6 +805,41 @@ class HedgeTrader:
             logger.error(f"检查余额时出错: {str(e)}")
             raise
 
+    async def check_market_depth_for_amount(self, amount, side="spot"):
+        """
+        检查市场深度是否足够支持给定数量的交易
+        
+        Args:
+            amount (float): 要交易的数量
+            side (str): 交易方向，"spot"表示买入现货，"contract"表示开空合约
+            
+        Returns:
+            tuple: (是否深度足够, 订单簿数据)
+        """
+        try:
+            # 获取最新的订单簿数据
+            if side == "spot":
+                orderbook = await self.gateio.fetch_order_book(self.symbol)
+                available_volume = float(orderbook['asks'][0][1])  # 现货卖一量
+                price = float(orderbook['asks'][0][0])  # 现货卖一价
+            else:  # contract side
+                orderbook = await self.binance.fetch_order_book(self.contract_symbol)
+                available_volume = float(orderbook['bids'][0][1])  # 合约买一量
+                price = float(orderbook['bids'][0][0])  # 合约买一价
+            
+            # 检查深度是否满足要求
+            is_depth_sufficient = available_volume >= amount * self.depth_multiplier
+            
+            if not is_depth_sufficient:
+                logger.warning(f"市场深度不足 - {'Gate.io卖一' if side=='spot' else 'Binance买一'}: {available_volume}, "
+                             f"交易量: {amount}, 所需深度: {amount * self.depth_multiplier}")
+            
+            return is_depth_sufficient, orderbook, price, available_volume
+            
+        except Exception as e:
+            logger.error(f"检查市场深度时出错: {str(e)}")
+            return False, None, 0, 0
+
 def parse_arguments():
     """
     解析命令行参数
@@ -802,6 +853,7 @@ def parse_arguments():
     parser.add_argument('-p', '--min-spread', type=float, default=-0.0001, help='最小价差要求，默认0.001 (0.1%%)')
     parser.add_argument('-l', '--leverage', type=int, default=None, help='合约杠杆倍数，如果不指定则使用该交易对支持的最大杠杆倍数')
     parser.add_argument('-c', '--count', type=int, default=1, help='交易重复执行次数，默认为1')
+    parser.add_argument('-m', '--depth-multiplier', type=int, default=10, help='市场深度要求的乘数，默认为交易量的10倍')
     parser.add_argument('--test-earn', action='store_true', help='测试余币宝申购功能')
     parser.add_argument('-t', '--test', action='store_true', help='测试模式，只打印交易信息，不实际下单')
     parser.add_argument('-d', '--debug', action='store_true', help='启用调试日志')
@@ -857,7 +909,8 @@ async def main():
             spot_amount=args.amount,
             min_spread=args.min_spread,
             leverage=args.leverage,
-            test_mode=args.test  # 添加测试模式参数
+            test_mode=args.test,  # 添加测试模式参数
+            depth_multiplier=args.depth_multiplier  # 添加depth_multiplier参数
         )
         await trader.initialize()
         
@@ -1007,6 +1060,64 @@ async def main():
                         avg_cost_per_unit = total_cost / total_volume
                         logger.info(f"平均每单位滑点成本: {avg_cost_per_unit:.8f} USDT/{base_currency}")
                         logger.info(f"总滑点成本: {total_cost:.8f} USDT")
+            
+            # 分析市场深度与滑点的关系
+            logger.info("-" * 40)
+            logger.info("市场深度分析:")
+            
+            # 收集深度比例数据
+            depth_ratios_spot = [r.get('market_depth_ratio_spot', 0) for r in regular_trades if 'market_depth_ratio_spot' in r]
+            depth_ratios_contract = [r.get('market_depth_ratio_contract', 0) for r in regular_trades if 'market_depth_ratio_contract' in r]
+            
+            if depth_ratios_spot:
+                avg_depth_ratio_spot = sum(depth_ratios_spot) / len(depth_ratios_spot)
+                min_depth_ratio_spot = min(depth_ratios_spot)
+                max_depth_ratio_spot = max(depth_ratios_spot)
+                logger.info(f"现货市场深度比例: 平均 {avg_depth_ratio_spot:.2f}x (最小: {min_depth_ratio_spot:.2f}x, 最大: {max_depth_ratio_spot:.2f}x)")
+            
+            if depth_ratios_contract:
+                avg_depth_ratio_contract = sum(depth_ratios_contract) / len(depth_ratios_contract)
+                min_depth_ratio_contract = min(depth_ratios_contract)
+                max_depth_ratio_contract = max(depth_ratios_contract)
+                logger.info(f"合约市场深度比例: 平均 {avg_depth_ratio_contract:.2f}x (最小: {min_depth_ratio_contract:.2f}x, 最大: {max_depth_ratio_contract:.2f}x)")
+            
+            # 尝试分析深度比例与滑点的相关性
+            if spot_slippage and depth_ratios_spot:
+                # 简单计算高深度和低深度时的平均滑点
+                high_depth_indices = [i for i, ratio in enumerate(depth_ratios_spot) if ratio >= trader.depth_multiplier]
+                low_depth_indices = [i for i, ratio in enumerate(depth_ratios_spot) if ratio < trader.depth_multiplier]
+                
+                if high_depth_indices:
+                    high_depth_slippage = [spot_slippage[i] for i in high_depth_indices]
+                    avg_high_depth_slippage = sum(high_depth_slippage) / len(high_depth_slippage)
+                    logger.info(f"高深度现货交易(>={trader.depth_multiplier}x)平均滑点: {avg_high_depth_slippage:.4f}%")
+                
+                if low_depth_indices:
+                    low_depth_slippage = [spot_slippage[i] for i in low_depth_indices]
+                    avg_low_depth_slippage = sum(low_depth_slippage) / len(low_depth_slippage)
+                    logger.info(f"低深度现货交易(<{trader.depth_multiplier}x)平均滑点: {avg_low_depth_slippage:.4f}%")
+                    
+                # 建议
+                logger.info("-" * 40)
+                logger.info("滑点优化建议:")
+                if high_depth_indices and low_depth_indices:
+                    slippage_diff = avg_low_depth_slippage - avg_high_depth_slippage
+                    if slippage_diff > 0:
+                        logger.info(f"高深度交易的滑点比低深度交易低 {slippage_diff:.4f}%，当前深度倍数({trader.depth_multiplier}x)设置有效")
+                        if avg_high_depth_slippage > 0.05:  # 如果高深度交易的滑点仍然较高
+                            logger.info(f"建议增加深度倍数至 {trader.depth_multiplier * 1.5:.0f}x 以进一步降低滑点")
+                    else:
+                        logger.info(f"当前深度倍数({trader.depth_multiplier}x)设置可能不足以有效降低滑点")
+                        logger.info(f"建议增加深度倍数至 {trader.depth_multiplier * 2:.0f}x 或调整交易大小")
+                elif high_depth_indices:
+                    if avg_high_depth_slippage > 0.05:  # 如果高深度交易的滑点较高
+                        logger.info(f"即使在高深度条件下滑点仍达到 {avg_high_depth_slippage:.4f}%")
+                        logger.info(f"建议增加深度倍数至 {trader.depth_multiplier * 1.5:.0f}x 或减小交易规模")
+                    else:
+                        logger.info(f"当前深度倍数({trader.depth_multiplier}x)设置有效，平均滑点为 {avg_high_depth_slippage:.4f}%")
+                elif low_depth_indices:
+                    logger.info(f"所有交易都在低深度(<{trader.depth_multiplier}x)条件下执行，平均滑点为 {avg_low_depth_slippage:.4f}%")
+                    logger.info(f"建议增加深度倍数至 {trader.depth_multiplier * 2:.0f}x 或减小交易规模以降低滑点")
             
         logger.info("=" * 50)
             

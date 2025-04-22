@@ -517,7 +517,7 @@ class HedgeTrader:
                 logger.info("=" * 50)
 
             # 3. 立即准备下单参数, 补偿一点手续费，不然现货会比合约少一些
-            trade_amount = self.spot_amount * 1.0019618834080717
+            trade_amount = self.spot_amount * 1.002
             cost = float(trade_amount) * float(gateio_ask)
             contract_amount = self.bybit.amount_to_precision(self.contract_symbol, trade_amount)
             

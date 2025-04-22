@@ -537,7 +537,7 @@ class HedgeTrader:
                         logger.error(f"【平衡操作】开立合约空单失败: {str(e)}")
             
             # 3. 立即准备下单参数, 补偿一点手续费，不然现货会比合约少一些
-            trade_amount = self.spot_amount * 1.001
+            trade_amount = self.spot_amount * 1.002
             cost = float(trade_amount) * float(gateio_ask)
             contract_amount = self.bitget.amount_to_precision(self.contract_symbol, trade_amount)
 
