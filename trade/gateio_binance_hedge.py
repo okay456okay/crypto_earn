@@ -19,6 +19,7 @@ import argparse
 from decimal import Decimal
 import asyncio
 import ccxt.pro as ccxtpro  # 使用 ccxt pro 版本
+import time
 
 # 添加项目根目录到系统路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -352,19 +353,33 @@ class HedgeTrader:
         try:
             # 1. 等待价差满足条件
             spread_data = await self.wait_for_spread()
+            t0 = time.time()  # 记录满足交易条件的时间点
+            
             spread_percent, gateio_ask, binance_bid, gateio_ask_volume, binance_bid_volume, gateio_bid, gateio_bid_volume, binance_ask, binance_ask_volume = spread_data
+            t1 = time.time()
+            logger.debug(f"[时序] 1.解包spread_data: {(t1-t0)*1000:.3f}ms")
             
             # 获取基础货币
             base_currency = self.symbol.split('/')[0]
+            t2 = time.time()
+            logger.debug(f"[时序] 2.获取base_currency: {(t2-t1)*1000:.3f}ms")
             
             # 2. 立即准备下单参数并执行交易，减少不必要的延迟
             trade_amount = self.spot_amount * 1.002
             adjusted_trade_amount = trade_amount
             cost = float(trade_amount) * float(gateio_ask)
+            t3 = time.time()
+            logger.debug(f"[时序] 3.计算交易数量和成本: {(t3-t2)*1000:.3f}ms")
+            
+            # 这一步可能有网络调用，单独计时
             contract_amount = self.binance.amount_to_precision(self.contract_symbol, trade_amount)
+            t4 = time.time()
+            logger.debug(f"[时序] 4.amount_to_precision调用: {(t4-t3)*1000:.3f}ms")
             
             # 检查是否需要平衡现货和合约 - 如果需要，则推迟到主交易完成后执行
             need_rebalance = abs(self.cumulative_position_diff_usdt) >= 6
+            t5 = time.time()
+            logger.debug(f"[时序] 5.检查是否需要平衡: {(t5-t4)*1000:.3f}ms")
             
             if self.test_mode:
                 # 测试模式下不执行实际交易，但仍记录详细信息
@@ -387,10 +402,12 @@ class HedgeTrader:
                 return None, None
             
             # 非测试模式下，立即执行交易以减少延迟
-            # 只记录关键信息，详细分析留到交易后
             logger.info(f"执行交易 - 价差: {spread_percent*100:.4f}%, Gate.io: {gateio_ask}, Binance: {binance_bid}")
+            t6 = time.time()
+            logger.debug(f"[时序] 6.记录执行日志: {(t6-t5)*1000:.3f}ms")
             
             # 3. 立即执行交易，不再中间插入其他操作
+            logger.debug(f"[时序] ===从满足条件到准备发送订单共耗时: {(t6-t0)*1000:.3f}ms===")
             spot_order, contract_order = await asyncio.gather(
                 self.gateio.create_market_buy_order(
                     symbol=self.symbol,
