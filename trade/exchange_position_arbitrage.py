@@ -287,8 +287,8 @@ class ExchangeArbitrageCalculator:
         
         # 打印GateIO理财与套利情况
         print("\n【GateIO理财与套利情况】")
-        print(f"{'代币':<8} {'理财数量':<12} {'合约净仓位':<15} {'对冲差额':<12} {'当前价格':<12} {'套利价值(USDT)':<15} {'资金费率':<10}")
-        print("-"*90)
+        print(f"{'代币':<8} {'理财数量':<12} {'合约净仓位':<15} {'对冲差额':<12} {'当前价格':<12} {'套利价值(USDT)':<15}")
+        print("-"*80)
         
         # 计算套利情况
         for earn_position in self.gateio_earn_positions:
@@ -300,14 +300,15 @@ class ExchangeArbitrageCalculator:
             if token in self.aggregated_positions:
                 net_position = self.aggregated_positions[token]['long'] - self.aggregated_positions[token]['short']
                 
+                # 如果合约净仓位为0，则跳过显示
+                if net_position == 0:
+                    continue
+                
                 # 理财多少，合约应该空多少 (净空仓)，所以理财量+净仓位应该接近0
                 hedge_diff = earn_amount + net_position
                 arbitrage_value = abs(hedge_diff) * price
                 
-                # 检查资金费率是否有利 (这里假设相反方向的资金费率)
-                funding_rate = "未知"  # 实际应从各交易所API获取
-                
-                print(f"{token:<8} {earn_amount:<12.2f} {net_position:<15.2f} {hedge_diff:<12.2f} {price:<12.6f} {arbitrage_value:<15.2f} {funding_rate:<10}")
+                print(f"{token:<8} {earn_amount:<12.2f} {net_position:<15.2f} {hedge_diff:<12.2f} {price:<12.6f} {arbitrage_value:<15.2f}")
                 
                 arbitrage_results.append({
                     'token': token,
@@ -322,7 +323,7 @@ class ExchangeArbitrageCalculator:
             
             # 理财中有但合约没有的代币
             else:
-                print(f"{token:<8} {earn_amount:<12.2f} {'0':<15} {earn_amount:<12.2f} {price:<12.6f} {earn_amount * price:<15.2f} {'N/A':<10}")
+                print(f"{token:<8} {earn_amount:<12.2f} {'0':<15} {earn_amount:<12.2f} {price:<12.6f} {earn_amount * price:<15.2f}")
                 
                 arbitrage_results.append({
                     'token': token,
@@ -339,10 +340,15 @@ class ExchangeArbitrageCalculator:
         for token, positions in self.aggregated_positions.items():
             if token not in [p['token'] for p in self.gateio_earn_positions]:
                 net_position = positions['long'] - positions['short']
+                
+                # 如果合约净仓位为0，则跳过显示
+                if net_position == 0:
+                    continue
+                
                 price = self.token_prices.get(token, 0)
                 arbitrage_value = abs(net_position) * price
                 
-                print(f"{token:<8} {'0':<12.2f} {net_position:<15.2f} {-net_position:<12.2f} {price:<12.6f} {arbitrage_value:<15.2f} {'N/A':<10}")
+                print(f"{token:<8} {'0':<12.2f} {net_position:<15.2f} {-net_position:<12.2f} {price:<12.6f} {arbitrage_value:<15.2f}")
                 
                 arbitrage_results.append({
                     'token': token,
