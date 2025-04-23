@@ -81,15 +81,6 @@ class HedgeTrader:
         self.gateio_usdt = 0
         self.binance_usdt = None
         
-        # 用于存储最新订单簿数据
-        self.orderbooks = {
-            'gateio': None,
-            'binance': None
-        }
-        
-        # 用于控制WebSocket订阅
-        self.ws_running = False
-        
         # 新增：用于跟踪现货和合约持仓差异的累计值
         self.cumulative_position_diff = 0  # 正数表示合约多，负数表示现货多
         self.cumulative_position_diff_usdt = 0  # 以USDT计价的差额
@@ -134,6 +125,21 @@ class HedgeTrader:
         异步初始化方法，执行需要网络请求的初始化操作
         """
         try:
+            # 测试模式下使用默认杠杆倍数
+            if self.test_mode:
+                if self.leverage is None:
+                    self.leverage = 20  # 测试模式下使用20倍杠杆作为默认值
+                logger.info(f"测试模式: 使用杠杆倍数 {self.leverage}倍")
+                logger.info(f"初始化完成: 交易对={self.symbol}, 合约对={self.contract_symbol}, "
+                           f"最小价差={self.min_spread*100}%, 杠杆={self.leverage}倍, "
+                           f"市场深度要求={self.depth_multiplier}倍交易量")
+                # 在测试模式下假设有足够的余额
+                self.gateio_usdt = 10000
+                self.binance_usdt = 10000
+                logger.info(f"测试模式: 假设账户余额 - Gate.io: {self.gateio_usdt} USDT, Binance: {self.binance_usdt} USDT")
+                return
+            
+            # 生产模式下的初始化
             # 如果杠杆倍数未指定，获取最大杠杆倍数
             if self.leverage is None:
                 self.leverage = await self.get_max_leverage()
@@ -186,85 +192,88 @@ class HedgeTrader:
             logger.exception(f"初始化失败: {str(e)}")
             raise
 
-    async def subscribe_orderbooks(self):
-        """订阅交易对的订单簿数据"""
-        try:
-            self.ws_running = True
-            while self.ws_running:
-                try:
-                    # 创建两个任务来订阅订单簿
-                    tasks = [
-                        asyncio.create_task(self.gateio.watch_order_book(self.symbol)),
-                        asyncio.create_task(self.binance.watch_order_book(self.contract_symbol))
-                    ]
-                    
-                    # 等待任意一个订单簿更新
-                    done, pending = await asyncio.wait(
-                        tasks,
-                        return_when=asyncio.FIRST_COMPLETED
-                    )
-                    
-                    # 处理完成的任务
-                    for task in done:
-                        try:
-                            ob = task.result()
-                            if task == tasks[0]:  # gateio task
-                                self.orderbooks['gateio'] = ob
-                                logger.debug(f"收到Gate.io订单簿更新")
-                            else:  # binance task
-                                self.orderbooks['binance'] = ob
-                                logger.debug(f"收到Binance订单簿更新")
-                            
-                        except Exception as e:
-                            logger.error(f"处理订单簿数据时出错: {str(e)}")
-                    
-                    # 取消未完成的任务
-                    for task in pending:
-                        task.cancel()
-                        try:
-                            await task
-                        except asyncio.CancelledError:
-                            pass
-                        
-                except Exception as e:
-                    logger.error(f"订阅订单簿时出错: {str(e)}")
-                    await asyncio.sleep(1)  # 出错后等待一秒再重试
-                    
-        except Exception as e:
-            logger.error(f"订单簿订阅循环出错: {str(e)}")
-        finally:
-            self.ws_running = False
-            # 确保所有WebSocket连接都被关闭
-            try:
-                await asyncio.gather(
-                    self.gateio.close(),
-                    self.binance.close()
-                )
-            except Exception as e:
-                logger.error(f"关闭WebSocket连接时出错: {str(e)}")
-
     async def execute_hedge_trade(self):
-        """执行对冲交易"""
-        subscription_task = None
+        """
+        优化版的对冲交易执行函数 - 合并了订单簿订阅和交易执行，最小化延迟
+        
+        直接监听订单簿并在满足条件时立即执行交易，不使用队列进行中间传递
+        """
         try:
-            # 启动WebSocket订阅
-            subscription_task = asyncio.create_task(self.subscribe_orderbooks())
+            # 记录开始时间
+            start_time = time.time()
             
+            logger.info(f"开始监听 {self.symbol} 的交易机会...")
+            logger.info(f"条件: 最小价差 >= {self.min_spread*100:.4f}%, 市场深度 >= {self.depth_multiplier}倍交易量")
+            
+            # 记录上次价差日志的时间，避免过于频繁的日志输出
+            last_spread_log_time = 0
+            
+            # 测试模式下的模拟订单簿数据
+            if self.test_mode:
+                # 模拟测试数据
+                base = self.symbol.split('/')[0]
+                quote = self.symbol.split('/')[1]
+                
+                # 生成一个符合条件的模拟订单簿数据
+                await asyncio.sleep(2)  # 模拟等待找到机会的时间
+                
+                # 模拟订单簿数据
+                base_price = 3000.0 if base == 'ETH' else 60000.0 if base == 'BTC' else 1.0
+                gateio_ask = base_price * 0.998  # 稍低的卖价
+                binance_bid = base_price * 1.002  # 稍高的买价
+                
+                # 确保价差满足要求
+                spread = binance_bid - gateio_ask
+                spread_percent = spread / gateio_ask
+                
+                if spread_percent < self.min_spread:
+                    # 调整价格以确保满足最小价差
+                    binance_bid = gateio_ask * (1 + self.min_spread * 1.5)
+                
+                # 重新计算价差
+                spread = binance_bid - gateio_ask
+                spread_percent = spread / gateio_ask
+                
+                # 模拟足够的市场深度
+                depth_multiple = self.depth_multiplier * 2
+                gateio_ask_volume = self.spot_amount * depth_multiple
+                binance_bid_volume = self.spot_amount * depth_multiple
+                
+                # 记录找到的机会
+                opportunity_duration = 2.0  # 模拟等待时间
+                logger.info(f"{self.symbol}交易条件满足 (等待了 {opportunity_duration:.2f}秒):")
+                logger.info(f"价差: {spread_percent*100:.4f}% >= {self.min_spread*100:.4f}%")
+                logger.info(f"市场深度 - Gate.io卖1: {gateio_ask_volume} {base}, "
+                          f"Binance买1: {binance_bid_volume} {base}")
+                logger.info(f"交易量: {self.spot_amount} {base}, "
+                          f"深度比例 - Gate.io: {gateio_ask_volume/self.spot_amount:.2f}x, "
+                          f"Binance: {binance_bid_volume/self.spot_amount:.2f}x")
+                
+                logger.info("=" * 50)
+                logger.info("交易计划:")
+                logger.info(f"Gate.io 现货买入: {self.spot_amount} {base} @ {gateio_ask} {quote}")
+                logger.info(f"预计成本: {float(self.spot_amount) * float(gateio_ask):.2f} {quote}")
+                logger.info(f"Binance 合约开空: {self.spot_amount} {self.contract_symbol} @ {binance_bid} {quote}")
+                logger.info(f"当前价差: {spread_percent*100:.4f}%")
+                logger.info("=" * 50)
+                logger.info("测试模式: 不执行实际交易")
+                return None, None
+            
+            # 实际模式的订单簿监控和交易逻辑
             while True:
-                # 直接检查当前订单簿数据
-                if self.orderbooks['gateio'] and self.orderbooks['binance']:
-                    gateio_ob = self.orderbooks['gateio']
-                    binance_ob = self.orderbooks['binance']
+                try:
+                    # 创建两个任务来并行获取最新订单簿
+                    gateio_task = asyncio.create_task(self.gateio.watch_order_book(self.symbol))
+                    binance_task = asyncio.create_task(self.binance.watch_order_book(self.contract_symbol))
                     
+                    # 等待两个订单簿都更新
+                    gateio_ob, binance_ob = await asyncio.gather(gateio_task, binance_task)
+                    
+                    # 快速提取需要的价格和数量数据
                     gateio_ask = float(gateio_ob['asks'][0][0])
                     gateio_ask_volume = float(gateio_ob['asks'][0][1])
-                    gateio_bid = float(gateio_ob['bids'][0][0])
-                    gateio_bid_volume = float(gateio_ob['bids'][0][1])
-                    
                     binance_bid = float(binance_ob['bids'][0][0])
                     binance_bid_volume = float(binance_ob['bids'][0][1])
-                    binance_ask = float(binance_ob['asks'][0][0])
-                    binance_ask_volume = float(binance_ob['asks'][0][1])
                     
                     # 计算价差
                     spread = binance_bid - gateio_ask
@@ -281,7 +290,8 @@ class HedgeTrader:
                         t0 = time.time()  # 记录满足交易条件的时间点
                         
                         # 记录找到的机会
-                        logger.info(f"{self.symbol}交易条件满足:")
+                        opportunity_duration = t0 - start_time
+                        logger.info(f"{self.symbol}交易条件满足 (等待了 {opportunity_duration:.2f}秒):")
                         logger.info(f"价差: {spread_percent*100:.4f}% >= {self.min_spread*100:.4f}%")
                         logger.info(f"市场深度 - Gate.io卖1: {gateio_ask_volume} {self.symbol.split('/')[0]}, "
                                   f"Binance买1: {binance_bid_volume} {self.symbol.split('/')[0]}")
@@ -305,7 +315,7 @@ class HedgeTrader:
                         t1 = time.time()
                         logger.debug(f"[时序] 1.记录日志: {(t1-t0)*1000:.3f}ms")
                         
-                        # 直接执行交易，不再中间插入其他操作
+                        # 使用最新的订单簿数据直接执行交易，不再检查价格
                         spot_order, contract_order = await asyncio.gather(
                             self.gateio.create_market_buy_order(
                                 symbol=self.symbol,
@@ -450,22 +460,33 @@ class HedgeTrader:
                                 logger.error(f"余币宝申购失败，但不影响主要交易流程: {str(e)}")
                         
                         return spot_order, contract_order
-                
-                # 短暂等待后重新检查，避免CPU占用过高
-                await asyncio.sleep(0.05)  # 50毫秒检查一次，减少延迟
                     
+                    # 不满足条件时，继续下一次轮询，避免打印过多日志
+                    # 每30秒输出一次当前观察到的价差情况
+                    now = time.time()
+                    if now - last_spread_log_time >= 30:
+                        logger.debug(f"当前价差: {spread_percent*100:.4f}%, 最小要求: {self.min_spread*100:.4f}%, "
+                                   f"深度比例 - Gate.io: {gateio_ask_volume/self.spot_amount:.2f}x, Binance: {binance_bid_volume/self.spot_amount:.2f}x")
+                        last_spread_log_time = now
+                    
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.error(f"监控订单簿时出错: {str(e)}")
+                    # 短暂等待后重试
+                    await asyncio.sleep(1)
+                
+                # 短暂等待后继续轮询，降低CPU占用
+                await asyncio.sleep(0.01)  # 10毫秒轮询一次，比之前的50毫秒更快
+                
+        except asyncio.CancelledError:
+            logger.info("交易监控任务被取消")
+            raise
         except Exception as e:
             logger.error(f"{self.symbol}执行对冲交易时出错: {str(e)}")
+            import traceback
+            logger.error(f"错误详情: {traceback.format_exc()}")
             raise
-        finally:
-            # 确保WebSocket订阅被停止
-            self.ws_running = False
-            if subscription_task:
-                subscription_task.cancel()
-                try:
-                    await subscription_task
-                except asyncio.CancelledError:
-                    pass
 
     async def check_positions(self):
         """异步检查交易后的持仓情况"""
@@ -634,6 +655,7 @@ async def main():
     
     # 记录成功完成的交易次数
     successful_trades = 0
+    trader = None
     
     try:
         logger.info(f"计划执行 {args.count} 次交易操作")
@@ -871,7 +893,7 @@ async def main():
         return 1
     finally:
         # 确保关闭交易所连接
-        if 'trader' in locals():
+        if trader:
             try:
                 await asyncio.gather(
                     trader.gateio.close(),
