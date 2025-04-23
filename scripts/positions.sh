@@ -20,7 +20,8 @@ python ../trade/gateio_positions.py >reports/gateio_positions_$suffix.log
 python ../trade/bitget_positions.py >reports/bitget_positions_$suffix.log
 python ../trade/bybit_positions.py >reports/bybit_positions_$suffix.log
 python ../trade/binance_positions.py >reports/binance_positions_$suffix.log
+python ../trade/exchange_position_arbitrage.py >reports/positions_sum_$suffix.log
 
 cd reports
-cat gateio_positions_$suffix.log bitget_positions_$suffix.log bybit_positions_$suffix.log binance_positions_$suffix.log >positions
+cat gateio_positions_$suffix.log bitget_positions_$suffix.log bybit_positions_$suffix.log binance_positions_$suffix.log positions_sum_$suffix.log >positions
 cat positions
