@@ -293,7 +293,7 @@ class HedgeTrader:
             bitget_ask = Decimal(str(bitget_ob['asks'][0][0])) if bitget_ob['asks'] else Decimal('0')
             bitget_ask_volume = Decimal(str(bitget_ob['asks'][0][1])) if bitget_ob['asks'] else Decimal('0')
 
-            # 计算价差
+            # 计算价差  bitget买一（卖出）  - gateio卖一（买入）
             spread = bitget_bid - gateio_ask
             spread_percent = spread / gateio_ask
             
