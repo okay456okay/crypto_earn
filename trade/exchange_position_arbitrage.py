@@ -321,20 +321,20 @@ class ExchangeArbitrageCalculator:
                 
                 total_arbitrage_value += arbitrage_value
             
-            # 理财中有但合约没有的代币
-            else:
-                print(f"{token:<8} {earn_amount:<12.2f} {'0':<15} {earn_amount:<12.2f} {price:<12.6f} {earn_amount * price:<15.2f}")
-                
-                arbitrage_results.append({
-                    'token': token,
-                    'earn_amount': earn_amount,
-                    'net_position': 0,
-                    'hedge_diff': earn_amount,
-                    'price': price,
-                    'arbitrage_value': earn_amount * price
-                })
-                
-                total_arbitrage_value += earn_amount * price
+            # 理财中有但合约没有的代币（这部分应该跳过，不显示）
+            # else:
+            #     print(f"{token:<8} {earn_amount:<12.2f} {'0':<15} {earn_amount:<12.2f} {price:<12.6f} {earn_amount * price:<15.2f}")
+            #     
+            #     arbitrage_results.append({
+            #         'token': token,
+            #         'earn_amount': earn_amount,
+            #         'net_position': 0,
+            #         'hedge_diff': earn_amount,
+            #         'price': price,
+            #         'arbitrage_value': earn_amount * price
+            #     })
+            #     
+            #     total_arbitrage_value += earn_amount * price
         
         # 打印合约中有但理财没有的代币
         for token, positions in self.aggregated_positions.items():
