@@ -18,13 +18,12 @@ import sys
 import os
 import asyncio
 import ccxt.async_support as ccxt
-from datetime import datetime, timedelta
-from decimal import Decimal
+from datetime import datetime
 import logging
 import time
 import ntplib
-from pytz import timezone, utc
-import argparse  # 添加argparse模块
+from pytz import utc
+import argparse
 
 # 添加项目根目录到系统路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -52,12 +51,6 @@ class BybitScanner:
             'proxies': proxies,
         })
         self.time_offset = 0  # 本地时间与服务器时间的偏移量（秒）
-        """
-        [2025-04-17 12:00:00,340] INFO bybit_anti_funding_rate.py:323) 开仓耗时 0.337 秒，等待 1.663 秒后平仓
-        [2025-04-17 16:00:01,607] INFO bybit_anti_funding_rate.py:324) 开仓耗时 0.333 秒，等待 0.393 秒后平仓
-        [2025-04-17 20:00:00,191] INFO bybit_anti_funding_rate.py:335) 开仓耗时 0.337 秒，等待 1.809 秒后平仓
-        [2025-04-18 00:00:00,069] INFO bybit_anti_funding_rate.py:336) 开仓耗时 0.365 秒，等待 1.931 秒后平仓
-        """
         self.advance_time = advance_time  # 提前平仓时间（秒）
         self.open_position_time = open_position_time  # 开仓提前时间（秒）
         self.funding_rate_threshold = funding_rate_threshold  # 资金费率筛选阈值（百分比）
@@ -93,11 +86,9 @@ class BybitScanner:
             # 进行多次微调
             max_attempts = 5
             min_offset = float('inf')
-            best_offset = self.time_offset
             
             for attempt in range(max_attempts):
-                # 等待一小段时间，让网络延迟稳定
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.1)  # 等待一小段时间，让网络延迟稳定
                 
                 # 再次获取服务器时间
                 server_time = await self.exchange.fetch_time()
@@ -112,10 +103,8 @@ class BybitScanner:
                 # 记录最小偏移量
                 if abs(current_offset) < abs(min_offset):
                     min_offset = current_offset
-                    best_offset = current_offset
+                    self.time_offset = current_offset
             
-            # 使用最佳偏移量
-            self.time_offset = best_offset
             logger.info(f"最终时间同步结果 - 时间偏移: {self.time_offset:.3f}秒 "
                        f"({self.time_offset*1000:.1f}毫秒)")
             
@@ -163,17 +152,19 @@ class BybitScanner:
             logger.error(f"获取{symbol}资金费率失败: {str(e)}")
             return None
 
+    def _get_contract_symbol(self, symbol):
+        """从交易对获取合约符号 (例如: 'AERGO/USDT:USDT' -> 'AERGOUSDT')"""
+        base, quote = symbol.split('/')
+        quote = quote.split(':')[0]  # 去掉:USDT后缀
+        return f"{base}{quote}"
+        
     async def get_max_leverage(self, symbol):
         """获取交易对支持的最大杠杆倍数"""
         try:
             # 处理交易对格式
-            base, quote = symbol.split('/')
-            quote = quote.split(':')[0]  # 去掉:USDT后缀
-            contract_symbol = f"{base}{quote}"  # 例如: AERGOUSDT
+            contract_symbol = self._get_contract_symbol(symbol)
             
             logger.info(f"获取最大杠杆倍数 - 原始交易对: {symbol}")
-            logger.info(f"获取最大杠杆倍数 - 基础币: {base}")
-            logger.info(f"获取最大杠杆倍数 - 计价币: {quote}")
             logger.info(f"获取最大杠杆倍数 - 合约交易对: {contract_symbol}")
             
             params = {
@@ -205,13 +196,9 @@ class BybitScanner:
         """设置杠杆倍数"""
         try:
             # 处理交易对格式
-            base, quote = symbol.split('/')
-            quote = quote.split(':')[0]  # 去掉:USDT后缀
-            contract_symbol = f"{base}{quote}"  # 例如: AERGOUSDT
+            contract_symbol = self._get_contract_symbol(symbol)
             
             logger.info(f"设置杠杆倍数 - 原始交易对: {symbol}")
-            logger.info(f"设置杠杆倍数 - 基础币: {base}")
-            logger.info(f"设置杠杆倍数 - 计价币: {quote}")
             logger.info(f"设置杠杆倍数 - 合约交易对: {contract_symbol}")
             
             params = {
@@ -238,13 +225,11 @@ class BybitScanner:
         try:
             symbol = opportunity['symbol']  # 例如: AERGO/USDT:USDT
             # 处理交易对格式
-            base, quote = symbol.split('/')
-            quote = quote.split(':')[0]  # 去掉:USDT后缀
-            contract_symbol = f"{base}{quote}"  # 例如: AERGOUSDT
+            base = symbol.split('/')[0]
+            contract_symbol = self._get_contract_symbol(symbol)
             
             logger.info(f"执行交易 - 原始交易对: {symbol}")
             logger.info(f"执行交易 - 基础币: {base}")
-            logger.info(f"执行交易 - 计价币: {quote}")
             logger.info(f"执行交易 - 合约交易对: {contract_symbol}")
             
             # 计算交易金额
@@ -446,11 +431,12 @@ class BybitScanner:
                 # 获取资金费率信息
                 funding_info = await self.get_funding_rate(symbol)
                 
-                if funding_info is None:
+                if not funding_info:
                     continue
 
-                # 检查是否满足条件：资金费率小于-1.0%且24小时交易量大于200万
-                if (funding_info['rate'] <= self.funding_rate_threshold and funding_info['volume_24h'] >= 2000000):
+                # 检查是否满足条件：资金费率小于阈值且24小时交易量大于200万
+                if (funding_info['rate'] <= self.funding_rate_threshold and 
+                    funding_info['volume_24h'] >= 2000000):
                     results.append({
                         'symbol': symbol,
                         'funding_rate': funding_info['rate'],
@@ -481,17 +467,18 @@ class BybitScanner:
         # 获取最近的结算时间
         nearest_time = sorted_by_time[0]['next_funding_datetime']
         
-        # 筛选出所有结算时间等于最近时间的交易对
-        # 过滤掉VOXEL
-        nearest_opportunities = [result for result in sorted_by_time 
-                               if result['next_funding_datetime'] == nearest_time
-                                 and result['symbol'].find('VOXEL') == -1]
+        # 筛选出所有结算时间等于最近时间的交易对，并过滤掉VOXEL
+        nearest_opportunities = [
+            result for result in sorted_by_time 
+            if (result['next_funding_datetime'] == nearest_time)
+        ]
         
         # 在最近时间的交易对中，按资金费率升序排序
-        nearest_opportunities.sort(key=lambda x: x['funding_rate'])
+        if nearest_opportunities:
+            nearest_opportunities.sort(key=lambda x: x['funding_rate'])
+            return nearest_opportunities[0]
         
-        # 返回资金费率最小的交易对
-        return nearest_opportunities[0] if nearest_opportunities else None
+        return None
 
     async def close(self):
         """关闭交易所连接"""
@@ -510,7 +497,8 @@ def print_results(results):
         "交易对", "资金费率(%)", "下次结算时间", "24h交易量(USDT)"))
     logger.info("-" * 70)
 
-    for result in sorted(results, key=lambda x: x['funding_rate']):  # 按资金费率升序排序
+    # 按资金费率升序排序
+    for result in sorted(results, key=lambda x: x['funding_rate']):
         logger.info("{:<15} {:<15.4f} {:<25} {:<15.2f}".format(
             result['symbol'],
             result['funding_rate'],
@@ -525,10 +513,10 @@ def print_best_opportunity(best_opportunity):
         return
 
     logger.info("\n=== 最佳交易机会 ===")
-    logger.info("交易对: {}".format(best_opportunity['symbol']))
-    logger.info("资金费率: {:.4f}%".format(best_opportunity['funding_rate']))
-    logger.info("下次结算时间: {}".format(best_opportunity['next_funding_time']))
-    logger.info("24小时交易量: {:.2f} USDT".format(best_opportunity['volume_24h']))
+    logger.info(f"交易对: {best_opportunity['symbol']}")
+    logger.info(f"资金费率: {best_opportunity['funding_rate']:.4f}%")
+    logger.info(f"下次结算时间: {best_opportunity['next_funding_time']}")
+    logger.info(f"24小时交易量: {best_opportunity['volume_24h']:.2f} USDT")
 
 
 async def main():
@@ -544,10 +532,9 @@ async def main():
     parser.add_argument('-l', '--trade-limit', type=float, default=1000.0,
                       help='单笔交易限额（USDT），默认1000.0 USDT')
     
-    # 解析命令行参数
     args = parser.parse_args()
     
-    # 创建扫描器实例，传入参数
+    # 创建扫描器实例
     scanner = BybitScanner(
         advance_time=args.advance_time,
         open_position_time=args.open_time,
@@ -556,17 +543,16 @@ async def main():
     )
     
     try:
-        # 扫描市场
+        # 扫描市场并找出最佳交易机会
         results = await scanner.scan_markets()
         print_results(results)
         
-        # 找出最佳交易机会
         best_opportunity = scanner.find_best_opportunity(results)
         print_best_opportunity(best_opportunity)
         
+        # 执行交易
         if best_opportunity:
-            # 执行交易
-            buy_order, sell_order = await scanner.execute_trade(best_opportunity)
+            await scanner.execute_trade(best_opportunity)
             logger.info("交易执行完成!")
         
     except Exception as e:

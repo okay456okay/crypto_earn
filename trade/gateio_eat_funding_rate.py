@@ -58,7 +58,7 @@ class GateioScanner:
         self.open_position_time = open_position_time  # 开仓提前时间（秒）
         self.funding_rate_threshold = funding_rate_threshold  # 资金费率筛选阈值（百分比）
         self.trade_amount_limit = trade_amount_limit  # 单笔交易限额（USDT）
-        self.gateio_futures_volumes = {}  # 缓存合约交易量数据 
+        self.gateio_futures_volumes = {}  # 缓存合约交易量数据
 
     async def sync_time(self):
         """同步服务器时间，确保毫秒级精度"""
@@ -272,6 +272,21 @@ class GateioScanner:
             now = datetime.fromtimestamp(self.get_current_time(), tz=utc)
             wait_seconds = (next_funding_time - now).total_seconds()
             
+            # 开仓参数准备
+            open_params = {
+                "type": "swap",
+                "reduceOnly": False,
+                "crossLeverageLimit": 0,  # 使用账户设置的杠杆
+                "account": "cross_margin"  # 使用全仓模式
+            }
+            
+            # 平仓参数准备
+            close_params = {
+                "type": "swap",
+                "reduceOnly": True,  # 确保是平仓操作
+                "account": "cross_margin"  # 使用全仓模式
+            }
+            
             if wait_seconds > 120:  # 如果还有超过2分钟
                 logger.info(f"距离结算时间还有 {wait_seconds:.3f} 秒，等待中...")
                 await asyncio.sleep(wait_seconds - 120)  # 等待到距离结算时间2分钟
@@ -307,21 +322,16 @@ class GateioScanner:
             
             # 开多单（使用市价买单开仓）
             logger.info(f"在结算时间前{self.open_position_time}秒开多单: {position_size} {symbol}")
+            
             try:
                 # 记录开仓请求发出时间（毫秒级时间戳）
                 open_request_time = int(time.time() * 1000)
                 buy_order = await self.exchange.create_market_buy_order(
                     symbol=contract_symbol,
                     amount=position_size,
-                    params={
-                        "type": "swap",
-                        "reduceOnly": False,
-                        "crossLeverageLimit": 0,  # 使用账户设置的杠杆
-                        "account": "cross_margin"  # 使用全仓模式
-                    }
+                    params=open_params
                 )
                 logger.info(f"创建多单成功: {buy_order}")
-                logger.info(f"执行交易 - 开多单结果: {buy_order}")
             except Exception as e:
                 logger.error(f"创建多单失败: {str(e)}")
                 raise
@@ -341,14 +351,9 @@ class GateioScanner:
                 sell_order = await self.exchange.create_market_sell_order(
                     symbol=contract_symbol,
                     amount=position_size,
-                    params={
-                        "type": "swap",
-                        "reduceOnly": True,  # 确保是平仓操作
-                        "account": "cross_margin"  # 使用全仓模式
-                    }
+                    params=close_params
                 )
                 logger.info(f"创建平仓单成功: {sell_order}")
-                logger.info(f"执行交易 - 平多单结果: {sell_order}")
             except Exception as e:
                 logger.error(f"创建平仓单失败: {str(e)}")
                 raise
@@ -372,34 +377,51 @@ class GateioScanner:
                 logger.warning(f"获取平仓订单详情失败: {str(e)}")
                 sell_order_details = sell_order  # 使用原始订单信息作为备选
             
-            # 获取开仓和平仓价格
+            # 获取开仓和平仓价格及手续费
             try:
                 # 从订单详情中提取关键信息
                 open_price = float(buy_order_details.get('average', 0) or 0)
                 close_price = float(sell_order_details.get('average', 0) or 0)
                 filled_amount = float(buy_order_details.get('filled', 0) or 0)
                 
-                # 尝试从fee字段获取手续费
-                open_fee = float(buy_order_details.get('fee', {}).get('cost', 0) or 0)
-                close_fee = float(sell_order_details.get('fee', {}).get('cost', 0) or 0)
+                # 初始化手续费为0
+                open_fee = 0.0
+                close_fee = 0.0
+                
+                # 安全地尝试从fee字段获取手续费
+                fee_data = buy_order_details.get('fee')
+                if fee_data is not None and isinstance(fee_data, dict):
+                    open_fee = float(fee_data.get('cost', 0) or 0)
+                
+                fee_data = sell_order_details.get('fee')
+                if fee_data is not None and isinstance(fee_data, dict):
+                    close_fee = float(fee_data.get('cost', 0) or 0)
                 
                 # 从Gate.io独有的字段中获取信息 - info.fill_price
-                if 'info' in buy_order_details and not open_price and 'fill_price' in buy_order_details['info']:
-                    open_price = float(buy_order_details['info'].get('fill_price', 0) or 0)
+                info = buy_order_details.get('info', {})
+                if info and not open_price and 'fill_price' in info:
+                    open_price = float(info.get('fill_price', 0) or 0)
                 
-                if 'info' in sell_order_details and not close_price and 'fill_price' in sell_order_details['info']:
-                    close_price = float(sell_order_details['info'].get('fill_price', 0) or 0)
+                info = sell_order_details.get('info', {})
+                if info and not close_price and 'fill_price' in info:
+                    close_price = float(info.get('fill_price', 0) or 0)
                 
-                # 如果fee字段不存在，尝试从info中的费率计算手续费
-                if not open_fee and 'info' in buy_order_details and 'tkfr' in buy_order_details['info']:
-                    tkfr = float(buy_order_details['info'].get('tkfr', 0) or 0)
-                    cost = float(buy_order_details.get('cost', 0) or 0)
-                    open_fee = cost * tkfr
+                # 如果fee字段不存在或为None，尝试从info中的费率计算手续费
+                if open_fee == 0 and 'info' in buy_order_details and buy_order_details['info']:
+                    info = buy_order_details['info']
+                    if 'tkfr' in info:
+                        tkfr = float(info.get('tkfr', 0) or 0)
+                        cost = float(buy_order_details.get('cost', 0) or 0)
+                        open_fee = cost * tkfr
+                        logger.debug(f"从费率计算开仓手续费: cost={cost}, tkfr={tkfr}, fee={open_fee}")
                 
-                if not close_fee and 'info' in sell_order_details and 'tkfr' in sell_order_details['info']:
-                    tkfr = float(sell_order_details['info'].get('tkfr', 0) or 0)
-                    cost = float(sell_order_details.get('cost', 0) or 0)
-                    close_fee = cost * tkfr
+                if close_fee == 0 and 'info' in sell_order_details and sell_order_details['info']:
+                    info = sell_order_details['info']
+                    if 'tkfr' in info:
+                        tkfr = float(info.get('tkfr', 0) or 0)
+                        cost = float(sell_order_details.get('cost', 0) or 0)
+                        close_fee = cost * tkfr
+                        logger.debug(f"从费率计算平仓手续费: cost={cost}, tkfr={tkfr}, fee={close_fee}")
                 
                 # 获取订单时间戳信息
                 open_success_time = int(buy_order_details.get('timestamp', 0) or 0)
@@ -409,8 +431,9 @@ class GateioScanner:
                 open_latency = open_success_time - open_request_time
                 close_latency = close_success_time - close_request_time
                 
-            except (KeyError, TypeError) as e:
+            except (KeyError, TypeError, ValueError) as e:
                 logger.warning(f"获取订单价格信息失败: {str(e)}")
+                logger.warning(f"错误位置: {e.__traceback__.tb_frame.f_code.co_filename}:{e.__traceback__.tb_lineno}")
                 # 如果无法获取详细信息，使用订单创建时的信息
                 open_price = float(buy_order.get('price', 0) or buy_order.get('average', 0) or 0)
                 close_price = float(sell_order.get('price', 0) or sell_order.get('average', 0) or 0)
@@ -431,10 +454,10 @@ class GateioScanner:
             net_profit = gross_profit - total_fee
             profit_percent = (price_diff / open_price) * 100 if open_price != 0 else 0
             
+            # 输出交易结果
             logger.info(f"\n=== 交易结果统计 ===")
             logger.info(f"交易对: {symbol}")
             logger.info(f"开仓时间: {buy_order_details.get('datetime', '')}")
-
             logger.info(f"开仓价格: {open_price:.8f} USDT")
             logger.info(f"平仓价格: {close_price:.8f} USDT")
             logger.info(f"持仓数量: {filled_amount:.8f} {base}")
@@ -455,7 +478,7 @@ class GateioScanner:
             logger.info(f"平仓延迟: {close_latency} 毫秒")
             
             return buy_order, sell_order
-
+            
         except Exception as e:
             logger.error(f"执行交易时出错: {str(e)}")
             raise
@@ -592,7 +615,7 @@ async def main():
         
         if best_opportunity:
             # 执行交易
-            buy_order, sell_order = await scanner.execute_trade(best_opportunity)
+            await scanner.execute_trade(best_opportunity)
             logger.info("交易执行完成!")
         
     except Exception as e:
