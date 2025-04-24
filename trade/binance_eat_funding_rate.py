@@ -491,7 +491,7 @@ class BinanceScanner:
                     results.append({
                         'symbol': symbol,
                         'funding_rate': funding_info['rate'],
-                        'next_funding_time': funding_info['next_time'],
+                        'next_time': funding_info['next_time'],
                         'volume_24h': funding_info['volume_24h']
                     })
 
