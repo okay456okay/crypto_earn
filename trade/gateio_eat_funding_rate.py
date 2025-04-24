@@ -328,7 +328,7 @@ class GateioScanner:
             
             # 计算需要等待的时间，确保在结算时间提前advance_time秒平仓
             now = time.time()
-            settlement_time = datetime.fromisoformat(opportunity['next_funding_time'].replace('Z', '+00:00')).timestamp()
+            settlement_time = next_funding_time.timestamp()
             wait_until_close = max(0, settlement_time - now - self.advance_time)  # 在结算时间提前advance_time秒平仓
             logger.info(f"等待 {wait_until_close:.3f} 秒后平仓")
             await asyncio.sleep(wait_until_close)
