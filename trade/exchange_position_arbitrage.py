@@ -259,31 +259,31 @@ class ExchangeArbitrageCalculator:
         arbitrage_results = []
         total_arbitrage_value = 0
 
-        # 打印标题
-        print("\n" + "="*120)
-        print(f"GateIO理财与合约套利分析 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print("="*120)
-
-        # 先打印持仓汇总表头
-        print("\n【合约持仓汇总】")
-        print(f"{'代币':<8} {'Binance多':<12} {'Binance空':<12} {'Bybit多':<12} {'Bybit空':<12} {'Bitget多':<12} {'Bitget空':<12} {'总多仓':<12} {'总空仓':<12} {'净仓位':<12} {'当前价格':<12}")
-        print("-"*150)
-
-        # 合约持仓汇总
-        for token, positions in self.aggregated_positions.items():
-            binance_long = sum(p['contracts'] for p in self.positions['binance'] if p['token'] == token and p['side'] == 'long')
-            binance_short = sum(p['contracts'] for p in self.positions['binance'] if p['token'] == token and p['side'] == 'short')
-            bybit_long = sum(p['contracts'] for p in self.positions['bybit'] if p['token'] == token and p['side'] == 'long')
-            bybit_short = sum(p['contracts'] for p in self.positions['bybit'] if p['token'] == token and p['side'] == 'short')
-            bitget_long = sum(p['contracts'] for p in self.positions['bitget'] if p['token'] == token and p['side'] == 'long')
-            bitget_short = sum(p['contracts'] for p in self.positions['bitget'] if p['token'] == token and p['side'] == 'short')
-
-            total_long = positions['long']
-            total_short = positions['short']
-            net_position = total_long - total_short
-            price = self.token_prices.get(token, 0)
-
-            print(f"{token:<10} {binance_long:<13.2f} {binance_short:<13.2f} {bybit_long:<13.2f} {bybit_short:<13.2f} {bitget_long:<13.2f} {bitget_short:<13.2f} {total_long:<15.2f} {total_short:<14.2f} {net_position:<15.2f} {price:<12.6f}")
+        # # 打印标题
+        # print("\n" + "="*120)
+        # print(f"GateIO理财与合约套利分析 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        # print("="*120)
+        #
+        # # 先打印持仓汇总表头
+        # print("\n【合约持仓汇总】")
+        # print(f"{'代币':<8} {'Binance多':<12} {'Binance空':<12} {'Bybit多':<12} {'Bybit空':<12} {'Bitget多':<12} {'Bitget空':<12} {'总多仓':<12} {'总空仓':<12} {'净仓位':<12} {'当前价格':<12}")
+        # print("-"*150)
+        #
+        # # 合约持仓汇总
+        # for token, positions in self.aggregated_positions.items():
+        #     binance_long = sum(p['contracts'] for p in self.positions['binance'] if p['token'] == token and p['side'] == 'long')
+        #     binance_short = sum(p['contracts'] for p in self.positions['binance'] if p['token'] == token and p['side'] == 'short')
+        #     bybit_long = sum(p['contracts'] for p in self.positions['bybit'] if p['token'] == token and p['side'] == 'long')
+        #     bybit_short = sum(p['contracts'] for p in self.positions['bybit'] if p['token'] == token and p['side'] == 'short')
+        #     bitget_long = sum(p['contracts'] for p in self.positions['bitget'] if p['token'] == token and p['side'] == 'long')
+        #     bitget_short = sum(p['contracts'] for p in self.positions['bitget'] if p['token'] == token and p['side'] == 'short')
+        #
+        #     total_long = positions['long']
+        #     total_short = positions['short']
+        #     net_position = total_long - total_short
+        #     price = self.token_prices.get(token, 0)
+        #
+        #     print(f"{token:<10} {binance_long:<13.2f} {binance_short:<13.2f} {bybit_long:<13.2f} {bybit_short:<13.2f} {bitget_long:<13.2f} {bitget_short:<13.2f} {total_long:<15.2f} {total_short:<14.2f} {net_position:<15.2f} {price:<12.6f}")
 
         # 打印GateIO理财与套利情况
         print("\n【GateIO理财与套利情况】")
