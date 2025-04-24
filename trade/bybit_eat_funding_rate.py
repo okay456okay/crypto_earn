@@ -306,6 +306,8 @@ class BybitScanner:
             logger.info(f"在结算时间前{self.open_position_time}秒开多单: {position_size} {symbol}")
             open_time = time.time()  # 记录开仓时间
             try:
+                # 记录开仓请求发出时间（毫秒级时间戳）
+                open_request_time = int(time.time() * 1000)
                 buy_order = await self.exchange.create_market_buy_order(
                     symbol=symbol,
                     amount=position_size,
@@ -331,6 +333,8 @@ class BybitScanner:
             # 平多单（使用市价卖单平仓）
             logger.info(f"在结算时间提前{self.advance_time*1000:.0f}ms平多单: {position_size} {symbol}")
             try:
+                # 记录平仓请求发出时间（毫秒级时间戳）
+                close_request_time = int(time.time() * 1000)
                 sell_order = await self.exchange.create_market_sell_order(
                     symbol=symbol,
                     amount=position_size,
@@ -373,6 +377,15 @@ class BybitScanner:
                 # 获取开仓和平仓手续费
                 open_fee = float(buy_order_details['fee']['cost'])
                 close_fee = float(sell_order_details['fee']['cost'])
+                
+                # 获取订单时间戳信息
+                open_success_time = int(buy_order_details['timestamp'])  # 交易所确认开仓时间
+                close_success_time = int(sell_order_details['timestamp'])  # 交易所确认平仓时间
+                
+                # 计算开仓和平仓延迟（毫秒）
+                open_latency = open_success_time - open_request_time
+                close_latency = close_success_time - close_request_time
+                
             except (KeyError, TypeError) as e:
                 logger.warning(f"获取订单价格信息失败: {str(e)}")
                 # 如果无法获取详细信息，使用订单创建时的信息
@@ -381,6 +394,12 @@ class BybitScanner:
                 filled_amount = float(buy_order['amount'])
                 open_fee = 0.0
                 close_fee = 0.0
+                
+                # 设置默认延迟值
+                open_latency = 0
+                close_latency = 0
+                open_success_time = 0
+                close_success_time = 0
             
             # 计算交易结果
             price_diff = close_price - open_price  # 多单盈亏 = (平仓价格 - 开仓价格) * 数量
@@ -406,6 +425,15 @@ class BybitScanner:
             logger.info(f"总手续费: {total_fee:.8f} USDT")
             logger.info(f"毛利润: {gross_profit:.8f} USDT")
             logger.info(f"净利润: {net_profit:.8f} USDT")
+            
+            # 添加订单执行时间统计
+            logger.info(f"\n=== 订单执行时间统计 ===")
+            logger.info(f"开仓请求发出时间: {datetime.fromtimestamp(open_request_time/1000, tz=utc).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+            logger.info(f"开仓成功时间: {datetime.fromtimestamp(open_success_time/1000, tz=utc).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+            logger.info(f"开仓延迟: {open_latency} 毫秒")
+            logger.info(f"平仓请求发出时间: {datetime.fromtimestamp(close_request_time/1000, tz=utc).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+            logger.info(f"平仓成功时间: {datetime.fromtimestamp(close_success_time/1000, tz=utc).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+            logger.info(f"平仓延迟: {close_latency} 毫秒")
             
             return buy_order, sell_order
             
