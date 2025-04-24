@@ -286,7 +286,7 @@ class BinanceScanner:
             
             # 平仓参数准备
             close_params = {
-                'reduceOnly': True,  # 确保是平仓操作
+                # 'reduceOnly': True,  # 确保是平仓操作
                 'positionSide': 'LONG'  # Binance的双向持仓模式
             }
             
