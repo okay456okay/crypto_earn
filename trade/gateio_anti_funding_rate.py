@@ -378,7 +378,7 @@ class GateioScanner:
 
             # 获取开仓订单详情
             try:
-                sell_order_details = await self.exchange.fetch_closed_order(sell_order['id'], contract_symbol)
+                sell_order_details = await self.exchange.fetch_order(sell_order['id'], contract_symbol)
                 logger.info(f"开仓订单详情: {sell_order_details}")
             except Exception as e:
                 logger.warning(f"获取开仓订单详情失败: {str(e)}")
@@ -386,7 +386,7 @@ class GateioScanner:
 
             # 获取平仓订单详情
             try:
-                buy_order_details = await self.exchange.fetch_closed_order(buy_order['id'], contract_symbol)
+                buy_order_details = await self.exchange.fetch_order(buy_order['id'], contract_symbol)
                 logger.info(f"平仓订单详情: {buy_order_details}")
             except Exception as e:
                 logger.warning(f"获取平仓订单详情失败: {str(e)}")
