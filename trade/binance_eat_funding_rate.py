@@ -509,7 +509,7 @@ class BinanceScanner:
         # 将时间字符串转换为datetime对象
         for result in results:
             result['next_funding_datetime'] = datetime.fromisoformat(
-                result['next_funding_time'].replace('Z', '+00:00')
+                result['next_time'].replace('Z', '+00:00')
             )
 
         # 先按结算时间升序排序
@@ -549,7 +549,7 @@ def print_results(results):
         logger.info("{:<15} {:<15.4f} {:<25} {:<15.2f}".format(
             result['symbol'],
             result['funding_rate'],
-            result['next_funding_time'],
+            result['next_time'],
             result['volume_24h']
         ))
 
@@ -562,7 +562,7 @@ def print_best_opportunity(best_opportunity):
     logger.info("\n=== 最佳交易机会 ===")
     logger.info("交易对: {}".format(best_opportunity['symbol']))
     logger.info("资金费率: {:.4f}%".format(best_opportunity['funding_rate']))
-    logger.info("下次结算时间: {}".format(best_opportunity['next_funding_time']))
+    logger.info("下次结算时间: {}".format(best_opportunity['next_time']))
     logger.info("24小时交易量: {:.2f} USDT".format(best_opportunity['volume_24h']))
 
 
