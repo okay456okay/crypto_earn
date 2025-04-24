@@ -26,6 +26,7 @@ import ntplib
 from pytz import timezone, utc
 import argparse
 import requests
+import json
 
 # 添加项目根目录到系统路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -34,7 +35,7 @@ from config import gateio_api_key, gateio_api_secret, proxies
 
 
 class GateioScanner:
-    def __init__(self, advance_time=0.055, open_position_time=1.0, funding_rate_threshold=-1.0, trade_amount_limit=1000.0):
+    def __init__(self, advance_time=0.055, open_position_time=1.0, funding_rate_threshold=-1.0, trade_amount_limit=1000.0, debug=False):
         """初始化Gate.io扫描器
         
         Args:
@@ -42,7 +43,18 @@ class GateioScanner:
             open_position_time (float): 开仓提前时间（秒）
             funding_rate_threshold (float): 资金费率筛选阈值（百分比）
             trade_amount_limit (float): 单笔交易限额（USDT）
+            debug (bool): 是否启用调试日志
         """
+        # 设置日志级别
+        if debug:
+            logger.setLevel(logging.DEBUG)
+            logger.debug("调试模式已启用")
+        else:
+            logger.setLevel(logging.INFO)
+            
+        logger.debug(f"初始化参数: advance_time={advance_time}, open_position_time={open_position_time}, "
+                   f"funding_rate_threshold={funding_rate_threshold}, trade_amount_limit={trade_amount_limit}")
+                   
         self.exchange = ccxt.gateio({
             'apiKey': gateio_api_key,
             'secret': gateio_api_secret,
@@ -58,6 +70,7 @@ class GateioScanner:
         self.funding_rate_threshold = funding_rate_threshold  # 资金费率筛选阈值（百分比）
         self.trade_amount_limit = trade_amount_limit  # 单笔交易限额（USDT）
         self.gateio_futures_volumes = {}  # 缓存合约交易量数据
+        self.contract_specs = {}  # 缓存合约规格信息
 
     async def sync_time(self):
         """同步服务器时间，确保毫秒级精度"""
@@ -134,6 +147,47 @@ class GateioScanner:
         """获取当前时间（考虑时间偏移）"""
         return time.time() + self.time_offset
 
+    async def get_contract_specs(self, symbol):
+        """获取合约规格信息"""
+        try:
+            if symbol in self.contract_specs:
+                logger.debug(f"使用缓存的合约规格信息: {symbol}")
+                return self.contract_specs[symbol]
+            
+            # 处理交易对格式
+            base, quote = symbol.split('/')
+            quote = quote.split(':')[0]  # 去掉:USDT后缀
+            contract_symbol = f"{base}_{quote}"  # Gate.io的合约格式
+            
+            logger.debug(f"获取合约规格 - 原始交易对: {symbol}, 合约交易对: {contract_symbol}")
+            
+            markets = await self.exchange.fetch_markets()
+            
+            # 寻找匹配的合约
+            contract_spec = None
+            for market in markets:
+                if market['id'] == contract_symbol and market['type'] == 'swap':
+                    contract_spec = market
+                    break
+            
+            if not contract_spec:
+                logger.warning(f"未找到合约 {contract_symbol} 的市场信息")
+                return None
+            
+            logger.debug(f"合约规格详情 - {symbol}:")
+            logger.debug(f"- 合约乘数(contractSize): {contract_spec.get('contractSize')}")
+            logger.debug(f"- 最小下单量(minAmount): {contract_spec.get('limits', {}).get('amount', {}).get('min')}")
+            logger.debug(f"- 价格精度(precision): {contract_spec.get('precision')}")
+            logger.debug(f"- 合约类型(type): {contract_spec.get('type')}")
+            
+            # 缓存合约规格
+            self.contract_specs[symbol] = contract_spec
+            return contract_spec
+            
+        except Exception as e:
+            logger.error(f"获取合约规格信息失败: {str(e)}")
+            return None
+
     async def get_all_symbols(self):
         """获取所有合约交易对"""
         try:
@@ -141,6 +195,11 @@ class GateioScanner:
             # 只保留USDT永续合约
             symbols = [symbol for symbol in markets.keys()
                        if symbol.endswith('/USDT:USDT') and 'swap' in markets[symbol]['type']]
+            logger.debug(f"获取到 {len(symbols)} 个合约交易对")
+            
+            if logger.level == logging.DEBUG and len(symbols) > 0:
+                logger.debug(f"合约交易对示例: {symbols[:5]}")
+                
             return symbols
         except Exception as e:
             logger.error(f"获取交易对列表失败: {str(e)}")
@@ -150,22 +209,38 @@ class GateioScanner:
         """获取GateIO合约24小时交易量"""
         try:
             url = "https://api.gateio.ws/api/v4/futures/usdt/tickers"
+            logger.debug(f"请求Gate.io合约交易量数据: {url}")
+            
             response = requests.get(url, proxies=proxies)
             if response.status_code == 200:
                 data = response.json()
+                logger.debug(f"获取到 {len(data)} 条合约交易量数据")
+                
                 for item in data:
                     contract = item['contract']
                     if contract.endswith('_USDT'):
                         symbol = contract.replace('_USDT', 'USDT')
                         self.gateio_futures_volumes[symbol] = float(item['volume_24h_settle'])
+                
+                logger.debug(f"解析后的合约交易量数据条目数: {len(self.gateio_futures_volumes)}")
+                if logger.level == logging.DEBUG and len(self.gateio_futures_volumes) > 0:
+                    # 显示部分数据示例
+                    sample_data = dict(list(self.gateio_futures_volumes.items())[:3])
+                    logger.debug(f"交易量数据示例: {sample_data}")
+            else:
+                logger.error(f"请求Gate.io合约交易量数据失败: HTTP {response.status_code}")
+                
         except Exception as e:
             logger.error(f"获取GateIO合约交易量数据失败: {str(e)}")
 
     async def get_funding_rate(self, symbol):
         """获取指定交易对的资金费率"""
         try:
+            logger.debug(f"获取 {symbol} 的资金费率")
+            
             # 获取资金费率
             funding_rate = await self.exchange.fetch_funding_rate(symbol)
+            logger.debug(f"原始资金费率数据: {funding_rate}")
 
             # 从缓存中获取24小时交易量
             # 将标准格式转换为Gate.io格式，例如：BTC/USDT:USDT -> BTCUSDT
@@ -173,12 +248,18 @@ class GateioScanner:
             quote = quote.split(':')[0]
             gateio_symbol = f"{base}{quote}"
             volume_24h = self.gateio_futures_volumes.get(gateio_symbol, 0.0)
+            
+            logger.debug(f"{symbol} 转换为 {gateio_symbol} 用于查询交易量, 24h交易量: {volume_24h}")
 
-            return {
+            result = {
                 'rate': funding_rate['fundingRate'] * 100,  # 转换为百分比
                 'next_funding_time': funding_rate['fundingDatetime'],  # 下次结算时间
                 'volume_24h': volume_24h  # 24小时交易量
             }
+            
+            logger.debug(f"{symbol} 资金费率: {result['rate']:.4f}%, 下次结算: {result['next_funding_time']}, 交易量: {result['volume_24h']}")
+            
+            return result
         except Exception as e:
             logger.error(f"获取{symbol}资金费率失败: {str(e)}")
             return None
@@ -191,13 +272,14 @@ class GateioScanner:
             quote = quote.split(':')[0]  # 去掉:USDT后缀
             contract_symbol = f"{base}_{quote}"  # Gate.io的合约格式
 
-            logger.info(f"获取最大杠杆倍数 - 原始交易对: {symbol}")
-            logger.info(f"获取最大杠杆倍数 - 基础币: {base}")
-            logger.info(f"获取最大杠杆倍数 - 计价币: {quote}")
-            logger.info(f"获取最大杠杆倍数 - 合约交易对: {contract_symbol}")
+            logger.debug(f"获取最大杠杆倍数 - 原始交易对: {symbol}")
+            logger.debug(f"获取最大杠杆倍数 - 基础币: {base}")
+            logger.debug(f"获取最大杠杆倍数 - 计价币: {quote}")
+            logger.debug(f"获取最大杠杆倍数 - 合约交易对: {contract_symbol}")
 
             # Gate.io的API调用方式
             response = await self.exchange.fetch_market_leverage_tiers(contract_symbol)
+            logger.debug(f"杠杆层级响应: {response}")
 
             if response and len(response) > 0:
                 max_leverage = int(response[0]['maxLeverage'])
@@ -219,13 +301,15 @@ class GateioScanner:
             quote = quote.split(':')[0]  # 去掉:USDT后缀
             contract_symbol = f"{base}_{quote}"  # Gate.io的合约格式
 
-            logger.info(f"设置杠杆倍数 - 原始交易对: {symbol}")
-            logger.info(f"设置杠杆倍数 - 基础币: {base}")
-            logger.info(f"设置杠杆倍数 - 计价币: {quote}")
-            logger.info(f"设置杠杆倍数 - 合约交易对: {contract_symbol}")
+            logger.debug(f"设置杠杆倍数 - 原始交易对: {symbol}")
+            logger.debug(f"设置杠杆倍数 - 基础币: {base}")
+            logger.debug(f"设置杠杆倍数 - 计价币: {quote}")
+            logger.debug(f"设置杠杆倍数 - 合约交易对: {contract_symbol}")
+            logger.debug(f"设置杠杆倍数 - 目标杠杆: {leverage}倍")
 
             # Gate.io的API调用方式
-            await self.exchange.set_leverage(leverage, contract_symbol)
+            response = await self.exchange.set_leverage(leverage, contract_symbol)
+            logger.debug(f"设置杠杆响应: {response}")
             logger.info(f"设置{symbol}杠杆倍数为: {leverage}倍")
 
         except Exception as e:
@@ -243,16 +327,45 @@ class GateioScanner:
             quote = quote.split(':')[0]  # 去掉:USDT后缀
             contract_symbol = f"{base}_{quote}"  # Gate.io的合约格式
             
-            order = await self.exchange.create_market_buy_order(
-                symbol=contract_symbol,
-                amount=amount,
-                params={
+            logger.debug(f"创建市价多单 - 原始交易对: {symbol}")
+            logger.debug(f"创建市价多单 - 合约交易对: {contract_symbol}")
+            logger.debug(f"创建市价多单 - 数量: {amount}")
+            
+            # 获取合约规格信息
+            contract_spec = await self.get_contract_specs(symbol)
+            if contract_spec:
+                # 根据合约规格调整数量
+                contract_size = float(contract_spec.get('contractSize', 1))
+                precision = contract_spec.get('precision', {}).get('amount', 8)
+                
+                # 计算实际合约数量
+                contracts_amount = amount
+                if contract_size != 1:
+                    contracts_amount = round(float(amount) / contract_size, precision)
+                
+                logger.debug(f"合约乘数: {contract_size}, 精度: {precision}")
+                logger.debug(f"调整后的合约数量: {contracts_amount}")
+                
+                # 订单参数
+                params = {
                     "type": "swap",
-                    "reduceOnly": False
+                    "reduceOnly": False,
+                    "crossLeverageLimit": 0,  # 使用账户设置的杠杆
+                    "account": "cross_margin"  # 使用全仓模式
                 }
-            )
-            logger.info(f"创建多单成功: {order}")
-            return order
+                
+                logger.debug(f"开仓订单参数: {params}")
+                
+                order = await self.exchange.create_market_buy_order(
+                    symbol=contract_symbol,
+                    amount=contracts_amount,
+                    params=params
+                )
+                logger.info(f"创建多单成功: {order}")
+                return order
+            else:
+                raise Exception(f"无法获取合约 {symbol} 的规格信息")
+                
         except Exception as e:
             logger.error(f"创建多单失败: {str(e)}")
             raise
@@ -265,16 +378,44 @@ class GateioScanner:
             quote = quote.split(':')[0]  # 去掉:USDT后缀
             contract_symbol = f"{base}_{quote}"  # Gate.io的合约格式
             
-            order = await self.exchange.create_market_sell_order(
-                symbol=contract_symbol,
-                amount=amount,
-                params={
+            logger.debug(f"创建市价卖单(平仓) - 原始交易对: {symbol}")
+            logger.debug(f"创建市价卖单(平仓) - 合约交易对: {contract_symbol}")
+            logger.debug(f"创建市价卖单(平仓) - 数量: {amount}")
+            
+            # 获取合约规格信息
+            contract_spec = await self.get_contract_specs(symbol)
+            if contract_spec:
+                # 根据合约规格调整数量
+                contract_size = float(contract_spec.get('contractSize', 1))
+                precision = contract_spec.get('precision', {}).get('amount', 8)
+                
+                # 计算实际合约数量
+                contracts_amount = amount
+                if contract_size != 1:
+                    contracts_amount = round(float(amount) / contract_size, precision)
+                
+                logger.debug(f"合约乘数: {contract_size}, 精度: {precision}")
+                logger.debug(f"调整后的合约数量: {contracts_amount}")
+                
+                # 订单参数
+                params = {
                     "type": "swap",
-                    "reduceOnly": True  # 确保是平仓操作
+                    "reduceOnly": True,  # 确保是平仓操作
+                    "account": "cross_margin"  # 使用全仓模式
                 }
-            )
-            logger.info(f"创建平仓单成功: {order}")
-            return order
+                
+                logger.debug(f"平仓订单参数: {params}")
+                
+                order = await self.exchange.create_market_sell_order(
+                    symbol=contract_symbol,
+                    amount=contracts_amount,
+                    params=params
+                )
+                logger.info(f"创建平仓单成功: {order}")
+                return order
+            else:
+                raise Exception(f"无法获取合约 {symbol} 的规格信息")
+                
         except Exception as e:
             logger.error(f"创建平仓单失败: {str(e)}")
             raise
@@ -288,6 +429,7 @@ class GateioScanner:
             quote = quote.split(':')[0]  # 去掉:USDT后缀
             contract_symbol = f"{base}_{quote}"  # Gate.io的合约格式
             
+            logger.debug(f"执行交易 - 机会详情: {json.dumps(opportunity, default=str)}")
             logger.info(f"执行交易 - 原始交易对: {symbol}")
             logger.info(f"执行交易 - 基础币: {base}")
             logger.info(f"执行交易 - 计价币: {quote}")
@@ -314,6 +456,8 @@ class GateioScanner:
             # 计算等待时间（考虑时间偏移）
             now = datetime.fromtimestamp(self.get_current_time(), tz=utc)
             wait_seconds = (next_funding_time - now).total_seconds()
+            logger.debug(f"当前时间: {now}, 结算时间: {next_funding_time}")
+            logger.debug(f"等待时间计算: {wait_seconds:.3f} 秒")
             
             if wait_seconds > 120:  # 如果还有超过2分钟
                 logger.info(f"距离结算时间还有 {wait_seconds:.3f} 秒，等待中...")
@@ -323,6 +467,7 @@ class GateioScanner:
                 ticker = await self.exchange.fetch_ticker(symbol)
                 current_price = ticker['last']
                 logger.info(f"重新获取价格: {current_price} USDT")
+                logger.debug(f"价格详情: {ticker}")
                 
                 # 重新计算开仓数量
                 position_size = trade_amount / current_price
@@ -339,29 +484,58 @@ class GateioScanner:
                 # 等待到距离结算时间1秒（开仓时间）
                 open_position_time = self.open_position_time  # 在结算前指定秒数开仓
                 if wait_seconds > open_position_time:
+                    logger.debug(f"等待 {wait_seconds - open_position_time:.3f} 秒后开仓")
                     await asyncio.sleep(wait_seconds - open_position_time)
             elif wait_seconds > self.open_position_time:  # 如果还有超过开仓时间
                 logger.info(f"距离结算时间还有 {wait_seconds:.3f} 秒 ({wait_seconds*1000:.1f}毫秒)，等待中...")
                 # 使用更精确的等待时间
                 wait_ms = int((wait_seconds - self.open_position_time) * 1000)
+                logger.debug(f"等待 {wait_ms} 毫秒后开仓")
                 await asyncio.sleep(wait_ms / 1000)  # 使用毫秒级等待
             else:
                 logger.warning(f"已经不足开仓提前时间 {abs(wait_seconds):.3f} 秒，立即开仓")
             
+            # 获取合约规格信息，确保合约乘数正确
+            contract_spec = await self.get_contract_specs(symbol)
+            if not contract_spec:
+                logger.error(f"无法获取合约 {symbol} 的规格信息，无法执行交易")
+                return None, None
+                
             # 开多单
-            logger.info(f"在结算时间前{self.open_position_time}秒开多单: {position_size} {symbol}")
+            logger.info(f"在结算时间前{self.open_position_time}秒开多单: {position_size} {base}")
             open_time = time.time()  # 记录开仓时间
+            
+            # 记录开仓前状态
+            try:
+                positions_before = await self.exchange.fetch_positions([contract_symbol])
+                logger.debug(f"开仓前持仓: {positions_before}")
+                balance_before = await self.exchange.fetch_balance()
+                logger.debug(f"开仓前余额: USDT={balance_before.get('USDT', {}).get('free', 0)}")
+            except Exception as e:
+                logger.warning(f"获取开仓前状态失败: {str(e)}")
+            
+            # 创建订单
             buy_order = await self.create_market_buy_order_open(
                 symbol=symbol,
                 amount=position_size
             )
-            logger.info(f"执行交易 - 开多单结果: {buy_order}")
+            logger.debug(f"执行交易 - 开多单详细结果: {json.dumps(buy_order, default=str)}")
             
             # 计算需要等待的时间，确保在结算时间提前advance_time秒平仓
             now = time.time()
             settlement_time = datetime.fromisoformat(opportunity['next_funding_time'].replace('Z', '+00:00')).timestamp()
             wait_until_close = max(0, settlement_time - now - self.advance_time)  # 在结算时间提前advance_time秒平仓
             logger.info(f"开仓耗时 {now - open_time:.3f} 秒，等待 {wait_until_close:.3f} 秒后平仓")
+            
+            # 开仓后检查持仓
+            try:
+                positions_after = await self.exchange.fetch_positions([contract_symbol])
+                logger.debug(f"开仓后持仓: {positions_after}")
+                balance_after = await self.exchange.fetch_balance()
+                logger.debug(f"开仓后余额: USDT={balance_after.get('USDT', {}).get('free', 0)}")
+            except Exception as e:
+                logger.warning(f"获取开仓后状态失败: {str(e)}")
+            
             await asyncio.sleep(wait_until_close)
             
             # 平多单
@@ -370,7 +544,7 @@ class GateioScanner:
                 symbol=symbol,
                 amount=position_size
             )
-            logger.info(f"执行交易 - 平多单结果: {sell_order}")
+            logger.debug(f"执行交易 - 平多单详细结果: {json.dumps(sell_order, default=str)}")
             
             # 等待一段时间确保订单完成
             await asyncio.sleep(3)
@@ -378,7 +552,7 @@ class GateioScanner:
             # 获取开仓订单详情
             try:
                 buy_order_details = await self.exchange.fetch_closed_order(buy_order['id'], contract_symbol)
-                logger.info(f"开仓订单详情: {buy_order_details}")
+                logger.debug(f"开仓订单详情: {json.dumps(buy_order_details, default=str)}")
             except Exception as e:
                 logger.warning(f"获取开仓订单详情失败: {str(e)}")
                 buy_order_details = buy_order  # 使用原始订单信息作为备选
@@ -386,7 +560,7 @@ class GateioScanner:
             # 获取平仓订单详情
             try:
                 sell_order_details = await self.exchange.fetch_closed_order(sell_order['id'], contract_symbol)
-                logger.info(f"平仓订单详情: {sell_order_details}")
+                logger.debug(f"平仓订单详情: {json.dumps(sell_order_details, default=str)}")
             except Exception as e:
                 logger.warning(f"获取平仓订单详情失败: {str(e)}")
                 sell_order_details = sell_order  # 使用原始订单信息作为备选
@@ -397,14 +571,14 @@ class GateioScanner:
                 close_price = float(sell_order_details['average'])
                 filled_amount = float(buy_order_details['filled'])
                 # 获取开仓和平仓手续费
-                open_fee = float(buy_order_details['fee']['cost'])
-                close_fee = float(sell_order_details['fee']['cost'])
+                open_fee = float(buy_order_details['fee']['cost']) if buy_order_details.get('fee', {}).get('cost') is not None else 0.0
+                close_fee = float(sell_order_details['fee']['cost']) if sell_order_details.get('fee', {}).get('cost') is not None else 0.0
             except (KeyError, TypeError) as e:
                 logger.warning(f"获取订单价格信息失败: {str(e)}")
                 # 如果无法获取详细信息，使用订单创建时的信息
-                open_price = float(buy_order['price']) if buy_order['price'] else float(buy_order['average'])
-                close_price = float(sell_order['price']) if sell_order['price'] else float(sell_order['average'])
-                filled_amount = float(buy_order['amount'])
+                open_price = float(buy_order.get('price', 0)) if buy_order.get('price') else float(buy_order.get('average', 0))
+                close_price = float(sell_order.get('price', 0)) if sell_order.get('price') else float(sell_order.get('average', 0))
+                filled_amount = float(buy_order.get('amount', 0))
                 open_fee = 0.0
                 close_fee = 0.0
             
@@ -413,16 +587,20 @@ class GateioScanner:
             gross_profit = filled_amount * price_diff
             total_fee = open_fee + close_fee
             net_profit = gross_profit - total_fee
-            profit_percent = (price_diff / open_price) * 100
+            profit_percent = (price_diff / open_price) * 100 if open_price != 0 else 0
             
             logger.info(f"\n=== 交易结果统计 ===")
             logger.info(f"交易对: {symbol}")
-            logger.info(f"开仓时间: {buy_order_details['datetime']}")
+            logger.info(f"开仓时间: {buy_order_details.get('datetime', '')}")
             # 判断开仓时间是否早于结算时间
-            open_time = datetime.fromisoformat(buy_order_details['datetime'].replace('Z', '+00:00'))
-            settlement_time = datetime.fromisoformat(opportunity['next_funding_time'].replace('Z', '+00:00'))
-            time_diff = (settlement_time - open_time).total_seconds()
-            logger.info(f"开仓时间距离结算时间: {time_diff:.3f} 秒")
+            try:
+                open_time = datetime.fromisoformat(buy_order_details.get('datetime', '').replace('Z', '+00:00'))
+                settlement_time = datetime.fromisoformat(opportunity['next_funding_time'].replace('Z', '+00:00'))
+                time_diff = (settlement_time - open_time).total_seconds()
+                logger.info(f"开仓时间距离结算时间: {time_diff:.3f} 秒")
+            except Exception as e:
+                logger.warning(f"计算时间差异失败: {str(e)}")
+            
             logger.info(f"开仓价格: {open_price:.8f} USDT")
             logger.info(f"平仓价格: {close_price:.8f} USDT")
             logger.info(f"持仓数量: {filled_amount:.8f} {base}")
@@ -433,11 +611,20 @@ class GateioScanner:
             logger.info(f"毛利润: {gross_profit:.8f} USDT")
             logger.info(f"净利润: {net_profit:.8f} USDT")
             
+            # 检查平仓后持仓
+            try:
+                positions_final = await self.exchange.fetch_positions([contract_symbol])
+                logger.debug(f"平仓后持仓: {positions_final}")
+                balance_final = await self.exchange.fetch_balance()
+                logger.debug(f"平仓后余额: USDT={balance_final.get('USDT', {}).get('free', 0)}")
+            except Exception as e:
+                logger.warning(f"获取平仓后状态失败: {str(e)}")
+            
             return buy_order, sell_order
             
         except Exception as e:
             logger.error(f"执行交易时出错: {str(e)}")
-            raise 
+            raise
 
     async def scan_markets(self):
         """扫描所有市场"""
@@ -449,7 +636,12 @@ class GateioScanner:
             logger.info(f"开始扫描 {len(symbols)} 个交易对...")
 
             results = []
+            count = 0
             for symbol in symbols:
+                count += 1
+                if count % 10 == 0:
+                    logger.debug(f"已扫描 {count}/{len(symbols)} 个交易对...")
+                
                 # 获取资金费率信息
                 funding_info = await self.get_funding_rate(symbol)
                 
@@ -458,6 +650,7 @@ class GateioScanner:
 
                 # 检查是否满足条件：资金费率小于阈值且24小时交易量大于200万
                 if (funding_info['rate'] <= self.funding_rate_threshold and funding_info['volume_24h'] >= 2000000):
+                    logger.debug(f"找到符合条件的交易对: {symbol}, 资金费率: {funding_info['rate']}%, 交易量: {funding_info['volume_24h']}")
                     results.append({
                         'symbol': symbol,
                         'funding_rate': funding_info['rate'],
@@ -484,6 +677,7 @@ class GateioScanner:
 
         # 先按结算时间升序排序
         sorted_by_time = sorted(results, key=lambda x: x['next_funding_datetime'])
+        logger.debug(f"按结算时间排序后的第一个机会: {sorted_by_time[0] if sorted_by_time else None}")
         
         # 获取最近的结算时间
         nearest_time = sorted_by_time[0]['next_funding_datetime']
@@ -491,15 +685,21 @@ class GateioScanner:
         # 筛选出所有结算时间等于最近时间的交易对
         nearest_opportunities = [result for result in sorted_by_time 
                                if result['next_funding_datetime'] == nearest_time]
+        logger.debug(f"找到 {len(nearest_opportunities)} 个最近结算时间的机会")
         
         # 在最近时间的交易对中，按资金费率升序排序
         nearest_opportunities.sort(key=lambda x: x['funding_rate'])
         
         # 返回资金费率最小的交易对
-        return nearest_opportunities[0] if nearest_opportunities else None
+        best_opportunity = nearest_opportunities[0] if nearest_opportunities else None
+        if best_opportunity:
+            logger.debug(f"最佳机会: {best_opportunity['symbol']}, 资金费率: {best_opportunity['funding_rate']}%, 结算时间: {best_opportunity['next_funding_time']}")
+        
+        return best_opportunity
 
     async def close(self):
         """关闭交易所连接"""
+        logger.debug("关闭交易所连接")
         await self.exchange.close()
 
 
@@ -548,16 +748,22 @@ async def main():
                       help='资金费率筛选阈值（百分比），默认-1.0%%')
     parser.add_argument('-l', '--trade-limit', type=float, default=1000.0,
                       help='单笔交易限额（USDT），默认1000.0 USDT')
+    parser.add_argument('-d', '--debug', action='store_true',
+                      help='启用调试日志模式')
     
     # 解析命令行参数
     args = parser.parse_args()
+    
+    logger.info("Gate.io资金费率吃费套利工具启动")
+    logger.info(f"参数: advance_time={args.advance_time}, open_time={args.open_time}, threshold={args.threshold}, trade_limit={args.trade_limit}, debug={args.debug}")
     
     # 创建扫描器实例，传入参数
     scanner = GateioScanner(
         advance_time=args.advance_time,
         open_position_time=args.open_time,
         funding_rate_threshold=args.threshold,
-        trade_amount_limit=args.trade_limit
+        trade_amount_limit=args.trade_limit,
+        debug=args.debug
     )
     
     try:
@@ -576,14 +782,15 @@ async def main():
         
     except Exception as e:
         logger.error(f"程序执行出错: {str(e)}")
+        # 在调试模式下打印详细错误堆栈
+        if args.debug:
+            import traceback
+            logger.error(traceback.format_exc())
     finally:
         await scanner.close()
 
 
 if __name__ == "__main__":
-    # 设置日志级别
-    logger.setLevel(logging.INFO)
-
     # 运行主函数
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
