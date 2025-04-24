@@ -233,42 +233,6 @@ class BybitScanner:
                 logger.error(f"设置杠杆倍数失败: {str(e)}")
                 raise
 
-    async def create_market_buy_order_open(self, symbol, amount):
-        """创建市价多单（开仓）"""
-        try:
-            order = await self.exchange.create_market_buy_order(
-                symbol=symbol,
-                amount=amount,
-                params={
-                    "category": "linear",
-                    "positionIdx": 0,  # 单向持仓
-                    "reduceOnly": False
-                }
-            )
-            logger.info(f"创建多单成功: {order}")
-            return order
-        except Exception as e:
-            logger.error(f"创建多单失败: {str(e)}")
-            raise
-
-    async def create_market_sell_order_close(self, symbol, amount):
-        """创建市价卖单（平仓）"""
-        try:
-            order = await self.exchange.create_market_sell_order(
-                symbol=symbol,
-                amount=amount,
-                params={
-                    "category": "linear",
-                    "positionIdx": 0,  # 单向持仓
-                    "reduceOnly": True  # 确保是平仓操作
-                }
-            )
-            logger.info(f"创建平仓单成功: {order}")
-            return order
-        except Exception as e:
-            logger.error(f"创建平仓单失败: {str(e)}")
-            raise
-
     async def execute_trade(self, opportunity):
         """执行交易"""
         try:
@@ -338,14 +302,24 @@ class BybitScanner:
             else:
                 logger.warning(f"已经不足开仓提前时间 {abs(wait_seconds):.3f} 秒，立即开仓")
             
-            # 开多单（使用buy而不是sell）
+            # 开多单（使用市价买单开仓）
             logger.info(f"在结算时间前{self.open_position_time}秒开多单: {position_size} {symbol}")
             open_time = time.time()  # 记录开仓时间
-            buy_order = await self.create_market_buy_order_open(
-                symbol=symbol,
-                amount=position_size
-            )
-            logger.info(f"执行交易 - 开多单结果: {buy_order}")
+            try:
+                buy_order = await self.exchange.create_market_buy_order(
+                    symbol=symbol,
+                    amount=position_size,
+                    params={
+                        "category": "linear",
+                        "positionIdx": 0,  # 单向持仓
+                        "reduceOnly": False
+                    }
+                )
+                logger.info(f"创建多单成功: {buy_order}")
+                logger.info(f"执行交易 - 开多单结果: {buy_order}")
+            except Exception as e:
+                logger.error(f"创建多单失败: {str(e)}")
+                raise
             
             # 计算需要等待的时间，确保在结算时间提前advance_time秒平仓
             now = time.time()
@@ -354,13 +328,23 @@ class BybitScanner:
             logger.info(f"开仓耗时 {now - open_time:.3f} 秒，等待 {wait_until_close:.3f} 秒后平仓")
             await asyncio.sleep(wait_until_close)
             
-            # 平多单（使用sell而不是buy）
+            # 平多单（使用市价卖单平仓）
             logger.info(f"在结算时间提前{self.advance_time*1000:.0f}ms平多单: {position_size} {symbol}")
-            sell_order = await self.create_market_sell_order_close(
-                symbol=symbol,
-                amount=position_size
-            )
-            logger.info(f"执行交易 - 平多单结果: {sell_order}")
+            try:
+                sell_order = await self.exchange.create_market_sell_order(
+                    symbol=symbol,
+                    amount=position_size,
+                    params={
+                        "category": "linear",
+                        "positionIdx": 0,  # 单向持仓
+                        "reduceOnly": True  # 确保是平仓操作
+                    }
+                )
+                logger.info(f"创建平仓单成功: {sell_order}")
+                logger.info(f"执行交易 - 平多单结果: {sell_order}")
+            except Exception as e:
+                logger.error(f"创建平仓单失败: {str(e)}")
+                raise
             
             # 等待一段时间确保订单完成
             await asyncio.sleep(3)
