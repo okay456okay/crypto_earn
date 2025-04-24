@@ -304,7 +304,6 @@ class BybitScanner:
             
             # 开多单（使用市价买单开仓）
             logger.info(f"在结算时间前{self.open_position_time}秒开多单: {position_size} {symbol}")
-            open_time = time.time()  # 记录开仓时间
             try:
                 # 记录开仓请求发出时间（毫秒级时间戳）
                 open_request_time = int(time.time() * 1000)
@@ -327,7 +326,7 @@ class BybitScanner:
             now = time.time()
             settlement_time = datetime.fromisoformat(opportunity['next_funding_time'].replace('Z', '+00:00')).timestamp()
             wait_until_close = max(0, settlement_time - now - self.advance_time)  # 在结算时间提前advance_time秒平仓
-            logger.info(f"开仓耗时 {now - open_time:.3f} 秒，等待 {wait_until_close:.3f} 秒后平仓")
+            logger.info(f"等待 {wait_until_close:.3f} 秒后平仓")
             await asyncio.sleep(wait_until_close)
             
             # 平多单（使用市价卖单平仓）
@@ -411,11 +410,6 @@ class BybitScanner:
             logger.info(f"\n=== 交易结果统计 ===")
             logger.info(f"交易对: {symbol}")
             logger.info(f"开仓时间: {buy_order_details['datetime']}")
-            # 判断开仓时间是否早于结算时间
-            open_time = datetime.fromisoformat(buy_order_details['datetime'].replace('Z', '+00:00'))
-            settlement_time = datetime.fromisoformat(opportunity['next_funding_time'].replace('Z', '+00:00'))
-            time_diff = (settlement_time - open_time).total_seconds()
-            logger.info(f"开仓时间距离结算时间: {time_diff:.3f} 秒")
             logger.info(f"开仓价格: {open_price:.8f} USDT")
             logger.info(f"平仓价格: {close_price:.8f} USDT")
             logger.info(f"持仓数量: {filled_amount:.8f} {base}")
