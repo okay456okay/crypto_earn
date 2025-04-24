@@ -336,14 +336,17 @@ class GateioScanner:
             if contract_spec:
                 # 根据合约规格调整数量
                 contract_size = float(contract_spec.get('contractSize', 1))
-                precision = contract_spec.get('precision', {}).get('amount', 8)
+                # 确保精度参数是整数
+                precision_data = contract_spec.get('precision', {}).get('amount', 8)
+                precision = int(precision_data) if isinstance(precision_data, (int, float)) else 8
+                
+                logger.debug(f"合约乘数: {contract_size}, 原始精度值: {precision_data}, 使用精度: {precision}")
                 
                 # 计算实际合约数量
                 contracts_amount = amount
                 if contract_size != 1:
                     contracts_amount = round(float(amount) / contract_size, precision)
                 
-                logger.debug(f"合约乘数: {contract_size}, 精度: {precision}")
                 logger.debug(f"调整后的合约数量: {contracts_amount}")
                 
                 # 订单参数
@@ -387,14 +390,17 @@ class GateioScanner:
             if contract_spec:
                 # 根据合约规格调整数量
                 contract_size = float(contract_spec.get('contractSize', 1))
-                precision = contract_spec.get('precision', {}).get('amount', 8)
+                # 确保精度参数是整数
+                precision_data = contract_spec.get('precision', {}).get('amount', 8)
+                precision = int(precision_data) if isinstance(precision_data, (int, float)) else 8
+                
+                logger.debug(f"合约乘数: {contract_size}, 原始精度值: {precision_data}, 使用精度: {precision}")
                 
                 # 计算实际合约数量
                 contracts_amount = amount
                 if contract_size != 1:
                     contracts_amount = round(float(amount) / contract_size, precision)
                 
-                logger.debug(f"合约乘数: {contract_size}, 精度: {precision}")
                 logger.debug(f"调整后的合约数量: {contracts_amount}")
                 
                 # 订单参数
