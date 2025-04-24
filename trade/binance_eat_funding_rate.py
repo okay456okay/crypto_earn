@@ -417,6 +417,34 @@ class BinanceScanner:
                 open_latency = open_success_time - open_request_time
                 close_latency = close_success_time - close_request_time
                 
+                # 获取开仓和平仓价格及手续费时，添加以下代码获取实际手续费
+                if open_fee == 0 or close_fee == 0:
+                    try:
+                        # 获取从开仓时间到现在的所有收入记录(包括手续费)
+                        income_records = await self.exchange.fapiPrivateGetIncome({
+                            'symbol': contract_symbol,
+                            'incomeType': 'COMMISSION',  # 仅查询手续费
+                            'startTime': open_success_time - 5000,  # 开仓时间前5秒
+                            'endTime': close_success_time + 5000,   # 平仓时间后5秒
+                            'limit': 50
+                        })
+                        
+                        logger.debug(f"获取到的手续费记录: {income_records}")
+                        
+                        # 遍历收入记录，找到与当前交易相关的手续费记录
+                        for record in income_records:
+                            # 时间戳比较，确定是开仓还是平仓手续费
+                            record_time = int(record.get('time', 0))
+                            if abs(record_time - open_success_time) < 2000:  # 在开仓时间2秒内的记录视为开仓手续费
+                                open_fee += abs(float(record.get('income', 0)))
+                                logger.debug(f"找到开仓手续费: {open_fee} USDT")
+                            elif abs(record_time - close_success_time) < 2000:  # 在平仓时间2秒内的记录视为平仓手续费
+                                close_fee += abs(float(record.get('income', 0)))
+                                logger.debug(f"找到平仓手续费: {close_fee} USDT")
+                    
+                    except Exception as e:
+                        logger.warning(f"获取交易手续费记录失败: {str(e)}")
+            
             except (KeyError, TypeError, ValueError) as e:
                 logger.warning(f"获取订单价格信息失败: {str(e)}")
                 logger.warning(f"错误位置: {e.__traceback__.tb_frame.f_code.co_filename}:{e.__traceback__.tb_lineno}")
