@@ -95,7 +95,7 @@ class BybitPositionFetcher:
                 leverage = position.get('leverage', 0)
                 entry_price = float(position.get('entryPrice', 0))
                 mark_price = float(position.get('markPrice', 0))
-                liquidation_price = float(position.get('liquidationPrice', 0))
+                liquidation_price = float(position.get('liquidationPrice', 0)) if position.get('liquidationPrice') is not None else 0
                 unrealized_pnl = float(position.get('unrealizedPnl', 0))
 
                 # 获取资金费率信息
