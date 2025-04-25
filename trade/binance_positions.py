@@ -200,7 +200,7 @@ class BinancePositionFetcher:
                     # 检查资金费率是否为负
                     if funding_rate < 0:
                         token = symbol.replace('USDT', '')
-                        self.run_funding_script(token)
+                        # self.run_funding_script(token)
 
                     # 格式化输出一行
                     position_line = (
