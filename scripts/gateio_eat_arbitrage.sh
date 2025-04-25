@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # 脚本名称: gateio_eat_arbitrage.sh
+# 延时波动太大了，没法操作
 
 
 script_dir=$(dirname $0)
