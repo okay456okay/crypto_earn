@@ -38,7 +38,7 @@ class UnhedgeTrader:
     现货-合约对冲平仓类，实现Gate.io现货卖出与Bybit合约平空单
     """
 
-    def __init__(self, symbol, spot_amount=None, min_spread=0.001):
+    def __init__(self, symbol, spot_amount=None, min_spread=0.001, depth_multiplier=2.0):
         """
         初始化基本属性
         
@@ -46,10 +46,12 @@ class UnhedgeTrader:
             symbol (str): 交易对，如 'ETH/USDT'
             spot_amount (float): 要卖出的现货数量
             min_spread (float): 最小价差要求，默认0.001 (0.1%)
+            depth_multiplier (float): 订单簿中买一/卖一量至少是交易量的倍数，默认2倍
         """
         self.symbol = symbol
         self.spot_amount = spot_amount
         self.min_spread = min_spread
+        self.depth_multiplier = depth_multiplier
 
         # 设置合约交易对
         base, quote = symbol.split('/')
@@ -90,12 +92,17 @@ class UnhedgeTrader:
 
         # 用于控制WebSocket订阅
         self.ws_running = False
-        self.price_updates = asyncio.Queue()
         
         # 交易统计
         self.trades_completed = 0
         self.initial_contract_position = 0
         self.current_contract_position = 0
+        
+        # 交易滑点统计
+        self.slippage_stats = {
+            'gateio': [],
+            'bybit': []
+        }
 
     async def initialize(self):
         """
@@ -168,22 +175,39 @@ class UnhedgeTrader:
             logger.error(f"检查持仓时出错: {str(e)}")
             raise
 
-    async def subscribe_orderbooks(self):
-        """订阅交易对的订单簿数据"""
+    async def execute_unhedge_trade_optimized(self):
+        """
+        优化版本：合并订单簿监控和交易执行，减少延迟以降低滑点
+        """
+        subscription_task = None
         try:
+            logger.info(f"开始监控{self.symbol}订单簿并等待最佳交易时机")
+            
+            # 准备要交易的数量
+            trade_amount = self.spot_amount
+            contract_amount = self.bybit.amount_to_precision(self.contract_symbol, trade_amount)
+            base_currency = self.symbol.split('/')[0]
+            
+            # 记录开始等待的时间，用于计算总等待时间
+            start_wait_time = time.time()
+            
+            # 订阅订单簿直到找到符合条件的价格
             self.ws_running = True
             while self.ws_running:
                 try:
+                    # 创建并发任务获取两个交易所的订单簿
                     tasks = [
                         asyncio.create_task(self.gateio.watch_order_book(self.symbol)),
                         asyncio.create_task(self.bybit.watch_order_book(self.contract_symbol))
                     ]
 
+                    # 等待任一任务完成
                     done, pending = await asyncio.wait(
                         tasks,
                         return_when=asyncio.FIRST_COMPLETED
                     )
 
+                    # 处理完成的任务
                     for task in done:
                         try:
                             ob = task.result()
@@ -194,152 +218,134 @@ class UnhedgeTrader:
                                 self.orderbooks['bybit'] = ob
                                 logger.debug(f"收到Bybit订单簿更新")
 
+                            # 取消其他待处理的任务
+                            for p in pending:
+                                p.cancel()
+                                
+                            # 只有当两边订单簿都有数据时才检查价差
                             if self.orderbooks['gateio'] and self.orderbooks['bybit']:
-                                await self.check_spread_from_orderbooks()
+                                # 检查价差和数量是否满足交易条件
+                                gateio_ob = self.orderbooks['gateio']
+                                bybit_ob = self.orderbooks['bybit']
+                                
+                                # 获取价格和数量
+                                gateio_bid = Decimal(str(gateio_ob['bids'][0][0]))  # 现货卖出价(买1)
+                                gateio_bid_volume = Decimal(str(gateio_ob['bids'][0][1]))  # 现货买1量
+                                
+                                bybit_ask = Decimal(str(bybit_ob['asks'][0][0]))  # 合约买入价(卖1)
+                                bybit_ask_volume = Decimal(str(bybit_ob['asks'][0][1]))  # 合约卖1量
+                                
+                                # 计算价差
+                                spread = gateio_bid - bybit_ask
+                                spread_percent = spread / bybit_ask
+                                
+                                # 判断价格和数量是否满足条件
+                                price_ok = spread_percent >= self.min_spread
+                                gateio_volume_ok = gateio_bid_volume >= (Decimal(str(trade_amount)) * Decimal(str(self.depth_multiplier)))
+                                bybit_volume_ok = bybit_ask_volume >= (Decimal(str(contract_amount)) * Decimal(str(self.depth_multiplier)))
+                                
+                                # 记录价格检查信息
+                                logger.debug(
+                                    f"{self.symbol} 价格检查 - "
+                                    f"Gate.io买1: {float(gateio_bid):.6f} (量: {float(gateio_bid_volume):.6f}), "
+                                    f"Bybit卖1: {float(bybit_ask):.6f} (量: {float(bybit_ask_volume):.6f}), "
+                                    f"价差: {float(spread_percent) * 100:.4f}%, "
+                                    f"价格条件: {'满足' if price_ok else '不满足'}, "
+                                    f"Gate.io量条件: {'满足' if gateio_volume_ok else '不满足'}, "
+                                    f"Bybit量条件: {'满足' if bybit_volume_ok else '不满足'}"
+                                )
+                                
+                                # 如果所有条件都满足，立即执行交易
+                                if price_ok and gateio_volume_ok and bybit_volume_ok:
+                                    # 记录找到交易时机的时间点
+                                    pre_execute_time = time.time()
+                                    wait_duration = pre_execute_time - start_wait_time
+                                    logger.info(f"{self.symbol}交易条件满足："
+                                               f"价差 {float(spread_percent) * 100:.4f}% >= {self.min_spread * 100:.4f}%, "
+                                               f"Gate.io买1量 {float(gateio_bid_volume):.6f} >= {float(trade_amount * self.depth_multiplier):.6f}, "
+                                               f"Bybit卖1量 {float(bybit_ask_volume):.6f} >= {float(float(contract_amount) * self.depth_multiplier):.6f}, "
+                                               f"等待耗时: {wait_duration:.3f}秒")
+                                    
+                                    # 保存交易前的价格用于计算滑点
+                                    pre_trade_prices = {
+                                        'gateio_bid': float(gateio_bid),
+                                        'bybit_ask': float(bybit_ask),
+                                        'spread_percent': float(spread_percent)
+                                    }
+                                    
+                                    # 停止订阅，准备执行交易
+                                    self.ws_running = False
+                                    
+                                    # 执行交易 - 必须尽快，减少时间延迟
+                                    execution_start_time = time.time()
+                                    spot_order, contract_order = await asyncio.gather(
+                                        self.gateio.create_market_sell_order(
+                                            symbol=self.symbol,
+                                            amount=trade_amount
+                                        ),
+                                        self.bybit.create_market_buy_order(
+                                            symbol=self.contract_symbol,
+                                            amount=contract_amount,
+                                            params={"reduceOnly": True}  # 确保是平仓操作
+                                        )
+                                    )
+                                    execution_duration = time.time() - execution_start_time
+                                    
+                                    # 记录下单耗时
+                                    logger.info(f"下单执行耗时: {execution_duration:.3f}秒")
+                                    logger.info(f"在Gate.io市价卖出 {trade_amount} {base_currency}")
+                                    logger.info(f"在Bybit市价平空单 {contract_amount} {base_currency}")
+                                    
+                                    # 等待订单状态更新
+                                    await asyncio.sleep(1)
+                                    
+                                    # 验证交易结果并计算滑点
+                                    await self.verify_trade_result(spot_order, contract_order, pre_trade_prices)
+                                    
+                                    # 检查平仓后的持仓情况
+                                    await self.check_positions()
+                                    
+                                    # 更新交易统计
+                                    self.trades_completed += 1
+                                    
+                                    return spot_order, contract_order
 
                         except Exception as e:
                             logger.error(f"处理订单簿数据时出错: {str(e)}")
 
-                    for task in pending:
-                        task.cancel()
-
+                except asyncio.CancelledError:
+                    logger.info(f"{self.symbol}订单簿监控任务被取消")
+                    break
                 except Exception as e:
                     logger.error(f"订阅订单簿时出错: {str(e)}")
                     await asyncio.sleep(1)
 
         except Exception as e:
-            logger.error(f"订单簿订阅循环出错: {str(e)}")
-        finally:
-            self.ws_running = False
-            await asyncio.gather(
-                self.gateio.close(),
-                self.bybit.close()
-            )
-
-    async def check_spread_from_orderbooks(self):
-        """从订单簿数据中检查价差"""
-        try:
-            gateio_ob = self.orderbooks['gateio']
-            bybit_ob = self.orderbooks['bybit']
-
-            if not gateio_ob or not bybit_ob:
-                return
-
-            gateio_bid = Decimal(str(gateio_ob['bids'][0][0]))  # 现货卖出价(买1)
-            gateio_bid_volume = Decimal(str(gateio_ob['bids'][0][1]))
-
-            bybit_ask = Decimal(str(bybit_ob['asks'][0][0]))  # 合约买入价(卖1)
-            bybit_ask_volume = Decimal(str(bybit_ob['asks'][0][1]))
-
-            spread = gateio_bid - bybit_ask
-            spread_percent = spread / bybit_ask
-
-            spread_data = {
-                'spread_percent': float(spread_percent),
-                'gateio_bid': float(gateio_bid),
-                'bybit_ask': float(bybit_ask),
-                'gateio_bid_volume': float(gateio_bid_volume),
-                'bybit_ask_volume': float(bybit_ask_volume)
-            }
-            await self.price_updates.put(spread_data)
-
-        except Exception as e:
-            logger.error(f"{self.symbol}检查订单簿价差时出错: {str(e)}")
-
-    async def wait_for_spread(self):
-        """等待价差达到要求"""
-        subscription_task = None
-        try:
-            subscription_task = asyncio.create_task(self.subscribe_orderbooks())
-
-            while True:
-                try:
-                    spread_data = await asyncio.wait_for(
-                        self.price_updates.get(),
-                        timeout=10
-                    )
-
-                    spread_percent = spread_data['spread_percent']
-
-                    logger.debug(
-                        f"{self.symbol}"
-                        f"价格检查 - Gate.io买1: {spread_data['gateio_bid']} (量: {spread_data['gateio_bid_volume']}), "
-                        f"Bybit卖1: {spread_data['bybit_ask']} (量: {spread_data['bybit_ask_volume']}), "
-                        f"价差: {spread_percent * 100:.4f}%")
-
-                    if spread_percent >= self.min_spread:
-                        logger.info(f"{self.symbol}价差条件满足: {spread_percent * 100:.4f}% >= {self.min_spread * 100:.4f}%")
-                        return spread_data
-
-                    logger.debug(f"{self.symbol}价差条件不满足: {spread_percent * 100:.4f}% < {self.min_spread * 100:.4f}%")
-
-                except asyncio.TimeoutError:
-                    logger.warning(f"{self.symbol}等待价差数据超时，重新订阅订单簿")
-                    if subscription_task:
-                        subscription_task.cancel()
-                    subscription_task = asyncio.create_task(self.subscribe_orderbooks())
-
-        except Exception as e:
-            logger.error(f"{self.symbol}等待价差时出错: {str(e)}")
+            logger.error(f"执行优化版平仓交易时出错: {str(e)}")
             raise
         finally:
             self.ws_running = False
-            if subscription_task:
+            # 确保取消所有可能运行的任务
+            if subscription_task and not subscription_task.done():
                 subscription_task.cancel()
-
-    async def execute_unhedge_trade(self):
-        """执行平仓交易"""
-        try:
-            # 等待价差满足条件
-            spread_data = await self.wait_for_spread()
-
-            # 准备下单参数
-            trade_amount = self.spot_amount
-            contract_amount = self.bybit.amount_to_precision(self.contract_symbol, trade_amount)
-
-            # 执行交易
-            spot_order, contract_order = await asyncio.gather(
-                self.gateio.create_market_sell_order(
-                    symbol=self.symbol,
-                    amount=trade_amount
-                ),
-                self.bybit.create_market_buy_order(
-                    symbol=self.contract_symbol,
-                    amount=contract_amount,
-                    params={"reduceOnly": True}  # 确保是平仓操作
+            
+            # 关闭WebSocket连接
+            try:
+                await asyncio.gather(
+                    self.gateio.close(),
+                    self.bybit.close()
                 )
-            )
+            except:
+                pass
 
-            base_currency = self.symbol.split('/')[0]
-            logger.info(f"计划平仓数量: {trade_amount} {base_currency}")
-            logger.info(f"在Gate.io市价卖出 {trade_amount} {base_currency}")
-            logger.info(f"在Bybit市价平空单 {contract_amount} {base_currency}")
-
-            # 等待一小段时间确保订单状态更新
-            await asyncio.sleep(1)
-
-            # 验证交易结果 - 这将获取并验证最新的订单状态
-            await self.verify_trade_result(spot_order, contract_order)
-            
-            # 检查平仓后的持仓情况
-            await self.check_positions()
-            
-            # 更新交易统计
-            self.trades_completed += 1
-
-            return spot_order, contract_order
-
-        except Exception as e:
-            logger.error(f"执行平仓交易时出错: {str(e)}")
-            raise
-
-    async def verify_trade_result(self, spot_order, contract_order):
+    async def verify_trade_result(self, spot_order, contract_order, pre_trade_prices=None):
         """
-        验证交易结果是否符合预期
+        验证交易结果是否符合预期，并计算交易滑点
         
         Args:
             spot_order: Gate.io现货订单结果
             contract_order: Bybit合约订单结果
+            pre_trade_prices: 交易前的价格数据，用于计算滑点
         
         Raises:
             Exception: 如果订单状态异常或交易数量不一致
@@ -430,9 +436,11 @@ class UnhedgeTrader:
                 else:
                     raise Exception(f"Bybit合约订单未完成，当前状态: {contract_status}")
             
-            # 获取成交数量 - 必须有成交
+            # 获取成交数量和价格 - 必须有成交
             spot_filled = float(updated_spot_order.get('filled', 0))
+            spot_price = float(updated_spot_order.get('average', 0))
             contract_filled = float(updated_contract_order.get('filled', 0))
+            contract_price = float(updated_contract_order.get('average', 0))
             
             # 如果订单状态显示完成但成交量为0，尝试其他方式获取成交量
             if spot_filled <= 0:
@@ -480,11 +488,39 @@ class UnhedgeTrader:
             # 打印成交信息
             spot_fees = updated_spot_order.get('fees', [])
             spot_quote_fee = sum(float(fee.get('cost', 0)) for fee in spot_fees if fee.get('currency') == 'USDT')
-            logger.info(f"Gate.io实际成交数量: {spot_filled} {base_currency}, 手续费: {spot_quote_fee} USDT")
+            logger.info(f"Gate.io实际成交数量: {spot_filled} {base_currency}, 平均价格: {spot_price}, 手续费: {spot_quote_fee} USDT")
             
             contract_fees = updated_contract_order.get('fees', [])
             contract_quote_fee = sum(float(fee.get('cost', 0)) for fee in contract_fees if fee.get('currency') == 'USDT')
-            logger.info(f"Bybit实际成交数量: {contract_filled} {base_currency}, 手续费: {contract_quote_fee} USDT")
+            logger.info(f"Bybit实际成交数量: {contract_filled} {base_currency}, 平均价格: {contract_price}, 手续费: {contract_quote_fee} USDT")
+            
+            # 计算交易滑点 - 如果有预期价格数据
+            if pre_trade_prices:
+                # Gate.io卖出滑点 - 实际成交价比预期价格低的比例
+                gateio_expected_price = pre_trade_prices['gateio_bid']
+                if spot_price > 0 and gateio_expected_price > 0:
+                    gateio_slippage = (gateio_expected_price - spot_price) / gateio_expected_price
+                    self.slippage_stats['gateio'].append(gateio_slippage)
+                    logger.info(f"Gate.io滑点: 预期价格 {gateio_expected_price:.6f}, 实际成交价 {spot_price:.6f}, "
+                               f"滑点率 {gateio_slippage * 100:.4f}%")
+                
+                # Bybit买入滑点 - 实际成交价比预期价格高的比例
+                bybit_expected_price = pre_trade_prices['bybit_ask']
+                if contract_price > 0 and bybit_expected_price > 0:
+                    bybit_slippage = (contract_price - bybit_expected_price) / bybit_expected_price
+                    self.slippage_stats['bybit'].append(bybit_slippage)
+                    logger.info(f"Bybit滑点: 预期价格 {bybit_expected_price:.6f}, 实际成交价 {contract_price:.6f}, "
+                               f"滑点率 {bybit_slippage * 100:.4f}%")
+                
+                # 总滑点 - 原始价差与实际价差的差异
+                expected_spread = pre_trade_prices['spread_percent']
+                actual_spread = 0
+                if contract_price > 0:
+                    actual_spread = (spot_price - contract_price) / contract_price
+                    
+                spread_diff = expected_spread - actual_spread
+                logger.info(f"价差滑点: 预期价差 {expected_spread * 100:.4f}%, 实际价差 {actual_spread * 100:.4f}%, "
+                           f"价差损失 {spread_diff * 100:.4f}%")
             
             # 严格检查成交数量是否一致（允许5%的误差）
             difference_percent = abs(spot_filled - contract_filled) / max(spot_filled, contract_filled)
@@ -517,6 +553,22 @@ class UnhedgeTrader:
         logger.info(f"- 初始合约持仓: {self.initial_contract_position} {base_currency}")
         logger.info(f"- 当前合约持仓: {self.current_contract_position} {base_currency}")
         logger.info(f"- 减少合约持仓: {self.initial_contract_position - self.current_contract_position} {base_currency}")
+        
+        # 添加滑点统计信息
+        if self.slippage_stats['gateio']:
+            avg_gateio_slippage = sum(self.slippage_stats['gateio']) / len(self.slippage_stats['gateio'])
+            max_gateio_slippage = max(self.slippage_stats['gateio'])
+            min_gateio_slippage = min(self.slippage_stats['gateio'])
+            logger.info(f"- Gate.io滑点统计: 平均 {avg_gateio_slippage * 100:.4f}%, "
+                       f"最大 {max_gateio_slippage * 100:.4f}%, 最小 {min_gateio_slippage * 100:.4f}%")
+        
+        if self.slippage_stats['bybit']:
+            avg_bybit_slippage = sum(self.slippage_stats['bybit']) / len(self.slippage_stats['bybit'])
+            max_bybit_slippage = max(self.slippage_stats['bybit'])
+            min_bybit_slippage = min(self.slippage_stats['bybit'])
+            logger.info(f"- Bybit滑点统计: 平均 {avg_bybit_slippage * 100:.4f}%, "
+                       f"最大 {max_bybit_slippage * 100:.4f}%, 最小 {min_bybit_slippage * 100:.4f}%")
+        
         logger.info("=" * 50)
 
 
@@ -525,7 +577,8 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description='Gate.io现货卖出与Bybit合约平空单交易')
     parser.add_argument('-s', '--symbol', type=str, required=True, help='交易对符号，例如 ETH/USDT')
     parser.add_argument('-a', '--amount', type=float, required=True, help='卖出的现货数量')
-    parser.add_argument('-p', '--min-spread', type=float, default=0.0005, help='最小价差要求，默认0.001 (0.1%%)')
+    parser.add_argument('-p', '--min-spread', type=float, default=0.0005, help='最小价差要求，默认0.0005 (0.05%%)')
+    parser.add_argument('-m', '--depth-multiplier', type=float, default=2.0, help='订单簿中买一/卖一量至少是交易量的倍数，默认2倍')
     parser.add_argument('-d', '--debug', action='store_true', help='启用调试日志模式')
     parser.add_argument('-c', '--count', type=int, help='重复执行交易的次数')
     return parser.parse_args()
@@ -550,7 +603,8 @@ async def main():
         trader = UnhedgeTrader(
             symbol=args.symbol,
             spot_amount=args.amount,
-            min_spread=args.min_spread
+            min_spread=args.min_spread,
+            depth_multiplier=args.depth_multiplier
         )
         
         # 初始化并检查持仓
@@ -564,6 +618,10 @@ async def main():
         else:
             total_count = args.count
             logger.info(f"计划执行交易次数: {total_count}")
+            
+        # 输出交易参数
+        logger.info(f"交易参数 - 交易对: {args.symbol}, 数量: {args.amount}, 最小价差: {args.min_spread * 100:.4f}%, "
+                   f"订单簿深度要求: 交易量的{args.depth_multiplier}倍")
         
         # 循环执行交易
         while execution_count < total_count:
@@ -593,9 +651,9 @@ async def main():
                 if trader.current_contract_position < args.amount:
                     raise Exception(f"Bybit合约空单持仓不足，需要 {args.amount}，当前持仓 {trader.current_contract_position}")
                 
-                # 执行交易
-                logger.info(f"执行第 {execution_count + 1}/{total_count} 次交易，等待价差满足条件...")
-                spot_order, contract_order = await trader.execute_unhedge_trade()
+                # 执行交易 - 使用优化版本的交易方法
+                logger.info(f"执行第 {execution_count + 1}/{total_count} 次交易，等待最佳交易时机...")
+                spot_order, contract_order = await trader.execute_unhedge_trade_optimized()
                 if not (spot_order and contract_order):
                     raise Exception("交易执行失败，未能成功下单")
                 
@@ -605,12 +663,6 @@ async def main():
                 # 每次交易后简单汇报
                 trader.print_trading_summary(total_count)
                 
-                # 在成功执行后等待一段时间，避免API请求过于频繁
-                # if execution_count < total_count:
-                #     wait_time = 3
-                #     logger.info(f"等待 {wait_time} 秒后开始下一次交易...")
-                #     await asyncio.sleep(wait_time)
-            
             except Exception as e:
                 logger.error(f"第 {execution_count + 1}/{total_count} 次交易失败: {str(e)}")
                 
@@ -629,10 +681,13 @@ async def main():
         # 打印交易汇总
         if trader:
             trader.print_trading_summary(total_count)
-            await asyncio.gather(
-                trader.gateio.close(),
-                trader.bybit.close()
-            )
+            try:
+                await asyncio.gather(
+                    trader.gateio.close(),
+                    trader.bybit.close()
+                )
+            except:
+                pass
 
     return 0
 
