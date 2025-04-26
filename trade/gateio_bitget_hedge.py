@@ -762,44 +762,52 @@ async def main():
                 
                 # 执行交易
                 logger.info(f"开始执行第 {completed_trades + 1}/{target_count} 次交易...")
-                spot_order, contract_order = await trader.execute_hedge_trade_optimized()
-                
-                # 检查交易结果，任何失败都立即退出
-                if spot_order is None or contract_order is None:
-                    total_errors += 1
-                    consecutive_errors += 1
-                    logger.error(f"第 {completed_trades + 1} 次交易执行失败，可能原因: 订单执行异常或持仓不匹配")
+                try:
+                    spot_order, contract_order = await trader.execute_hedge_trade_optimized()
                     
-                    # 如果连续3次失败，终止程序
-                    if consecutive_errors >= 3:
-                        logger.error(f"连续 {consecutive_errors} 次交易执行失败，终止后续交易")
-                        break
-                    
-                    logger.warning(f"交易失败，但将继续尝试下一次交易 (已连续失败 {consecutive_errors} 次)")
-                    # 等待一段时间再尝试下一次
-                    logger.info(f"等待10秒后继续尝试下一次交易...")
-                    await asyncio.sleep(10)
-                    continue
+                    # 基本验证：只检查是否有订单返回，不做详细验证（详细验证在函数内已完成）
+                    if isinstance(spot_order, dict) and isinstance(contract_order, dict) and 'id' in spot_order and 'id' in contract_order:
+                        # 订单有效，交易成功
+                        completed_trades += 1
+                        consecutive_errors = 0  # 重置连续失败计数
+                        logger.info(f"第 {completed_trades}/{target_count} 次对冲交易成功完成!")
+                        
+                        # 输出当前累计差额信息
+                        if hasattr(trader, 'cumulative_position_diff') and hasattr(trader, 'cumulative_position_diff_usdt'):
+                            logger.info(f"当前累计差额: {trader.cumulative_position_diff:.8f} {trader.symbol.split('/')[0]} "
+                                      f"({trader.cumulative_position_diff_usdt:.2f} USDT)")
+                        
+                        # 如果不是最后一次交易，等待一小段时间再继续
+                        if completed_trades < target_count:
+                            logger.info(f"等待5秒后继续下一次交易...")
+                            await asyncio.sleep(5)
+                        continue
+                    else:
+                        logger.error(f"订单结构无效 - spot_order: {spot_order and spot_order.get('id')}, contract_order: {contract_order and contract_order.get('id')}")
+                except Exception as e:
+                    logger.error(f"执行交易过程中出错: {str(e)}")
                 
-                # 交易成功
-                completed_trades += 1
-                consecutive_errors = 0  # 重置连续失败计数
-                logger.info(f"第 {completed_trades}/{target_count} 次对冲交易成功完成!")
+                # 如果执行到这里，说明交易失败
+                total_errors += 1
+                consecutive_errors += 1
+                logger.error(f"第 {completed_trades + 1} 次交易执行失败，可能原因: 订单执行异常或持仓不匹配")
                 
-                # 输出当前累计差额信息
-                if hasattr(trader, 'cumulative_position_diff') and hasattr(trader, 'cumulative_position_diff_usdt'):
-                    logger.info(f"当前累计差额: {trader.cumulative_position_diff:.8f} {trader.symbol.split('/')[0]} "
-                              f"({trader.cumulative_position_diff_usdt:.2f} USDT)")
+                # 如果连续3次失败，终止程序
+                if consecutive_errors >= 3:
+                    logger.error(f"连续 {consecutive_errors} 次交易执行失败，终止后续交易")
+                    break
                 
-                # 如果不是最后一次交易，等待一小段时间再继续
-                if completed_trades < target_count:
-                    logger.info(f"等待5秒后继续下一次交易...")
-                    await asyncio.sleep(5)
+                logger.warning(f"交易失败，但将继续尝试下一次交易 (已连续失败 {consecutive_errors} 次)")
+                # 等待一段时间再尝试下一次
+                logger.info(f"等待10秒后继续尝试下一次交易...")
+                await asyncio.sleep(10)
                     
             except Exception as e:
                 total_errors += 1
                 consecutive_errors += 1
                 logger.error(f"执行第 {completed_trades + 1} 次交易时出错: {str(e)}")
+                import traceback
+                logger.debug(f"错误堆栈: {traceback.format_exc()}")
                 
                 # 如果连续3次失败，终止程序
                 if consecutive_errors >= 3:
@@ -829,6 +837,8 @@ async def main():
 
     except Exception as e:
         logger.error(f"程序执行过程中发生错误: {str(e)}")
+        import traceback
+        logger.debug(f"错误堆栈: {traceback.format_exc()}")
         if 'completed_trades' in locals() and 'target_count' in locals():
             logger.info(f"已完成 {completed_trades}/{target_count} 次交易")
         return 1
