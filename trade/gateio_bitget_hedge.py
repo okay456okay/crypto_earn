@@ -210,6 +210,9 @@ class HedgeTrader:
         优化版对冲交易执行函数 - 直接订阅订单簿，检查价差，满足条件立即执行交易
         不使用队列传递数据，减少延迟
         """
+        spot_order = None
+        contract_order = None
+        
         try:
             logger.debug("开始执行优化版对冲交易流程")
             
@@ -485,6 +488,7 @@ class HedgeTrader:
                         if self.cumulative_position_diff_usdt >= 6:
                             await self.execute_balance_operation(base_currency, float(gateio_ask))
 
+                        # 直接返回订单信息，避免走finally语句块的None返回
                         return spot_order, contract_order
                     
                 except asyncio.CancelledError:
@@ -499,7 +503,6 @@ class HedgeTrader:
             logger.error(f"执行对冲交易时出错: {str(e)}")
             import traceback
             logger.debug(f"错误堆栈: {traceback.format_exc()}")
-            raise
         finally:
             # 确保所有WebSocket连接都被关闭
             try:
@@ -510,7 +513,14 @@ class HedgeTrader:
             except Exception as e:
                 logger.error(f"关闭WebSocket连接时出错: {str(e)}")
             
-            return None, None  # 如果走到这里，表示没有成功执行交易
+            # 只有在没有成功返回订单时才返回None, None
+            if spot_order is None or contract_order is None:
+                logger.debug("交易未执行成功，返回None, None")
+                return None, None
+            
+            # 如果已经有有效的订单，返回这些订单而不是None
+            logger.debug(f"交易执行成功，返回订单 - Gate.io: {spot_order.get('id')}, Bitget: {contract_order.get('id')}")
+            return spot_order, contract_order
 
     async def execute_balance_operation(self, base_currency, current_price):
         """执行平衡操作"""
@@ -766,8 +776,10 @@ async def main():
                     spot_order, contract_order = await trader.execute_hedge_trade_optimized()
                     
                     # 基本验证：只检查是否有订单返回，不做详细验证（详细验证在函数内已完成）
-                    if isinstance(spot_order, dict) and isinstance(contract_order, dict) and 'id' in spot_order and 'id' in contract_order:
-                        # 订单有效，交易成功
+                    if (isinstance(spot_order, dict) and isinstance(contract_order, dict) and 
+                        'id' in spot_order and 'id' in contract_order and
+                        float(spot_order.get('filled', 0)) > 0 and float(contract_order.get('filled', 0)) > 0):
+                        # 订单有效且有成交量，交易成功
                         completed_trades += 1
                         consecutive_errors = 0  # 重置连续失败计数
                         logger.info(f"第 {completed_trades}/{target_count} 次对冲交易成功完成!")
