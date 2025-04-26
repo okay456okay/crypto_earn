@@ -302,15 +302,37 @@ class HedgeTrader:
             spread = bybit_bid - gateio_ask
             spread_percent = spread / gateio_ask
             
+            # 添加详细的调试日志输出
+            logger.debug(f"\n【价格更新】{self.symbol}")
+            logger.debug(f"Gate.io卖一: {gateio_ask:.8f} USDT (数量: {gateio_ask_volume:.8f})")
+            logger.debug(f"Bybit买一: {bybit_bid:.8f} USDT (数量: {bybit_bid_volume:.8f})")
+            logger.debug(f"当前价差: {spread:.8f} USDT ({spread_percent*100:.4f}%)")
+            logger.debug(f"最小价差要求: {self.min_spread*100:.4f}%")
+            
+            # 计算交易所需的数量条件
+            depth_requirement = self.spot_amount * self.depth_multiplier
+            logger.debug(f"数量要求: 最小需 {depth_requirement:.8f} {self.base_currency}")
+            
+            # 记录价差条件是否满足
+            is_spread_met = spread_percent >= self.min_spread
+            is_gateio_volume_met = gateio_ask_volume >= depth_requirement
+            is_bybit_volume_met = bybit_bid_volume >= depth_requirement
+            
+            logger.debug(f"条件检查:")
+            logger.debug(f"  - 价差条件: {'满足' if is_spread_met else '不满足'} ({spread_percent*100:.4f}% >= {self.min_spread*100:.4f}%)")
+            logger.debug(f"  - Gate.io数量条件: {'满足' if is_gateio_volume_met else '不满足'} ({gateio_ask_volume:.8f} >= {depth_requirement:.8f})")
+            logger.debug(f"  - Bybit数量条件: {'满足' if is_bybit_volume_met else '不满足'} ({bybit_bid_volume:.8f} >= {depth_requirement:.8f})")
+            
             # 快速预检查，避免不必要的计算
-            if spread_percent < self.min_spread:
+            if not is_spread_met:
+                logger.debug(f"价差不满足, 跳过本次检查")
                 return None, None
                 
             # 存储重复使用的计算结果
             depth_requirement = self.spot_amount * self.depth_multiplier
 
             # 检查价差和数量条件
-            if gateio_ask_volume >= depth_requirement and bybit_bid_volume >= depth_requirement:
+            if is_gateio_volume_met and is_bybit_volume_met:
                 
                 # 记录获取到满足条件的订单簿到准备交易的时间
                 order_prep_time = time.time()
@@ -497,12 +519,12 @@ class HedgeTrader:
             else:
                 # 价差或数量不满足条件，记录日志（调试级别）
                 if logger.isEnabledFor(logging.DEBUG):
-                    if spread_percent < self.min_spread:
+                    if not is_spread_met:
                         logger.debug(f"价差不足: {spread_percent * 100:.4f}% < {self.min_spread * 100:.4f}%")
-                    if gateio_ask_volume < self.spot_amount * self.depth_multiplier:
-                        logger.debug(f"Gate.io卖一数量不足: {gateio_ask_volume:.8f} < {self.spot_amount * self.depth_multiplier:.8f}")
-                    if bybit_bid_volume < self.spot_amount * self.depth_multiplier:
-                        logger.debug(f"Bybit买一数量不足: {bybit_bid_volume:.8f} < {self.spot_amount * self.depth_multiplier:.8f}")
+                    if not is_gateio_volume_met:
+                        logger.debug(f"Gate.io卖一数量不足: {gateio_ask_volume:.8f} < {depth_requirement:.8f}")
+                    if not is_bybit_volume_met:
+                        logger.debug(f"Bybit买一数量不足: {bybit_bid_volume:.8f} < {depth_requirement:.8f}")
                 
                 return None, None
 
