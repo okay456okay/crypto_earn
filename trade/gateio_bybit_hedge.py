@@ -216,6 +216,10 @@ class HedgeTrader:
             max_retry_delay = 10  # 最大重试延迟（秒）
             base_delay = 0.1  # 初始重试延迟（秒）
             
+            # 用于存储成功执行的订单
+            successful_spot_order = None
+            successful_contract_order = None
+            
             while self.ws_running:
                 try:
                     # 创建两个任务来订阅订单簿
@@ -245,7 +249,13 @@ class HedgeTrader:
                                 logger.debug(f"{self.symbol} 收到Bybit订单簿更新")
 
                             # 检查是否可以执行交易
-                            await self.check_and_execute_trade()
+                            spot_order, contract_order = await self.check_and_execute_trade()
+                            if spot_order and contract_order:
+                                successful_spot_order = spot_order
+                                successful_contract_order = contract_order
+                                # 交易成功后停止WebSocket监听，但不立即返回
+                                self.ws_running = False
+                                break
 
                         except Exception as e:
                             logger.error(f"处理订单簿数据时出错: {str(e)}")
@@ -257,6 +267,10 @@ class HedgeTrader:
                             await task
                         except asyncio.CancelledError:
                             pass
+                    
+                    # 如果已经获取到成功的订单，跳出循环
+                    if successful_spot_order and successful_contract_order:
+                        break
 
                 except Exception as e:
                     retry_count += 1
@@ -265,9 +279,18 @@ class HedgeTrader:
                     logger.error(f"订阅订单簿时出错: {str(e)}，{delay:.2f}秒后重试 (重试 #{retry_count})")
                     await asyncio.sleep(delay)  # 使用指数退避延迟
 
+            # 如果成功执行了交易，返回订单信息
+            if successful_spot_order and successful_contract_order:
+                return successful_spot_order, successful_contract_order
+            else:
+                logger.warning("没有成功执行交易，返回None")
+                return None, None
+
         except Exception as e:
             logger.error(f"执行对冲交易时出错: {str(e)}")
-            raise
+            import traceback
+            logger.debug(f"错误堆栈:\n{traceback.format_exc()}")
+            return None, None
         finally:
             self.ws_running = False
             # 确保所有WebSocket连接都被关闭
@@ -278,6 +301,8 @@ class HedgeTrader:
                 )
             except Exception as e:
                 logger.error(f"关闭WebSocket连接时出错: {str(e)}")
+                
+            # 不在finally块中返回None，让主函数返回
 
     async def check_and_execute_trade(self):
         """检查当前价差并在满足条件时执行交易"""
@@ -506,8 +531,7 @@ class HedgeTrader:
                 except Exception as e:
                     logger.error(f"余币宝申购失败: {str(e)}")
 
-                # 停止WebSocket订阅，交易已完成
-                self.ws_running = False
+                # 交易成功，返回订单信息（不再设置ws_running=False，由外层函数控制）
                 return spot_order, contract_order
             else:
                 # 价差或数量不满足条件，记录日志（调试级别）
