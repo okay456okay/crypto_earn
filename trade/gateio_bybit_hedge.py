@@ -303,7 +303,7 @@ class HedgeTrader:
             spread_percent = spread / gateio_ask
             
             # 添加详细的调试日志输出
-            logger.debug(f"\n【价格更新】{self.symbol}")
+            logger.debug(f"【价格更新】{self.symbol}")
             logger.debug(f"Gate.io卖一: {gateio_ask:.8f} USDT (数量: {gateio_ask_volume:.8f})")
             logger.debug(f"Bybit买一: {bybit_bid:.8f} USDT (数量: {bybit_bid_volume:.8f})")
             logger.debug(f"当前价差: {spread:.8f} USDT ({spread_percent*100:.4f}%)")
@@ -339,23 +339,26 @@ class HedgeTrader:
                 prep_delay = (order_prep_time - check_start_time) * 1000  # 毫秒
                 
                 # 记录交易前的市场状态
-                logger.info("\n【交易前市场状态】")
-                logger.info(f"Gate.io - 卖一: {gateio_ask:.8f} (数量: {gateio_ask_volume:.8f}), "
-                          f"买一: {gateio_ob['bids'][0][0]:.8f} (数量: {gateio_ob['bids'][0][1]:.8f})")
-                logger.info(f"Bybit  - 买一: {bybit_bid:.8f} (数量: {bybit_bid_volume:.8f}), "
-                          f"卖一: {bybit_ob['asks'][0][0]:.8f} (数量: {bybit_ob['asks'][0][1]:.8f})")
+                logger.info(f"【交易前市场状态】Gate.io - 卖一: {gateio_ask:.8f} (数量: {gateio_ask_volume:.8f}), 买一: {gateio_ob['bids'][0][0]:.8f} (数量: {gateio_ob['bids'][0][1]:.8f})")
+                logger.info(f"Bybit  - 买一: {bybit_bid:.8f} (数量: {bybit_bid_volume:.8f}), 卖一: {bybit_ob['asks'][0][0]:.8f} (数量: {bybit_ob['asks'][0][1]:.8f})")
                 logger.info(f"当前价差: {spread_percent * 100:.4f}% (满足条件到准备交易耗时: {prep_delay:.2f}ms)")
 
                 # 记录预期成交价格
                 spot_expected_price = gateio_ask
                 contract_expected_price = bybit_bid
-                logger.info(f"\n【预期成交价格】")
-                logger.info(f"Gate.io预期成交价: {spot_expected_price:.8f}")
-                logger.info(f"Bybit预期成交价: {contract_expected_price:.8f}")
+                logger.info(f"【预期成交价格】Gate.io预期成交价: {spot_expected_price:.8f}, Bybit预期成交价: {contract_expected_price:.8f}")
 
                 # 准备交易参数
                 trade_amount = self.spot_amount
                 contract_amount = self.spot_amount
+                
+                # 计算买入所需的USDT金额（修复现货买入数量不准确的问题）
+                # 使用quoteOrderQty参数指定USDT金额而非数量，解决现货买入数量与预期不符的问题
+                cost = trade_amount * gateio_ask
+                
+                # 记录实际下单参数
+                logger.debug(f"下单参数 - Gate.io：花费 {cost:.4f} USDT 购买 {trade_amount} {self.base_currency}，使用quoteOrderQty模式")
+                logger.debug(f"下单参数 - Bybit：卖出 {contract_amount} {self.base_currency} 合约")
                 
                 # 立即执行交易
                 spot_order = None
@@ -367,8 +370,8 @@ class HedgeTrader:
                     spot_order, contract_order = await asyncio.gather(
                         self.gateio.create_market_buy_order(
                             symbol=self.symbol,
-                            amount=trade_amount,
-                            params={'createMarketBuyOrderRequiresPrice': False}
+                            amount=cost,
+                            params={'createMarketBuyOrderRequiresPrice': False, 'quoteOrderQty': True}  # 使用quoteOrderQty指定USDT金额
                         ),
                         self.bybit.create_market_sell_order(
                             symbol=self.contract_symbol,
@@ -449,11 +452,7 @@ class HedgeTrader:
                     spot_price_diff = spot_avg_price - spot_expected_price
                     spot_slippage = (spot_price_diff / spot_expected_price) * 100
                     
-                    logger.info(f"\n【现货成交结果】")
-                    logger.info(f"成交数量: {filled_amount:.8f} {self.base_currency}")
-                    logger.info(f"预期价格: {spot_expected_price:.8f}")
-                    logger.info(f"成交均价: {spot_avg_price:.8f}")
-                    logger.info(f"价格差异: {spot_price_diff:+.8f} ({spot_slippage:+.4f}%)")
+                    logger.info(f"【现货成交结果】成交数量: {filled_amount:.8f} {self.base_currency}, 预期价格: {spot_expected_price:.8f}, 成交均价: {spot_avg_price:.8f}, 价格差异: {spot_price_diff:+.8f} ({spot_slippage:+.4f}%)")
                 
                 # 获取合约订单的实际成交结果
                 contract_filled = float(contract_order.get('filled', 0))
@@ -482,11 +481,7 @@ class HedgeTrader:
                     contract_price_diff = contract_avg_price - contract_expected_price
                     contract_slippage = (contract_price_diff / contract_expected_price) * 100
                     
-                    logger.info(f"\n【合约成交结果】")
-                    logger.info(f"成交数量: {contract_filled:.8f} {self.base_currency}")
-                    logger.info(f"预期价格: {contract_expected_price:.8f}")
-                    logger.info(f"成交均价: {contract_avg_price:.8f}")
-                    logger.info(f"价格差异: {contract_price_diff:+.8f} ({contract_slippage:+.4f}%)")
+                    logger.info(f"【合约成交结果】成交数量: {contract_filled:.8f} {self.base_currency}, 预期价格: {contract_expected_price:.8f}, 成交均价: {contract_avg_price:.8f}, 价格差异: {contract_price_diff:+.8f} ({contract_slippage:+.4f}%)")
                 
                 # 记录本次交易的实际数量
                 self.last_trade_spot_amount = max(actual_position, 0)
@@ -498,9 +493,7 @@ class HedgeTrader:
                     final_spread_percent = (final_spread / spot_avg_price) * 100
                     profit_estimate = final_spread * min(actual_position, contract_filled)
                     
-                    logger.info(f"\n【交易结果】")
-                    logger.info(f"最终价差: {final_spread:.8f} USDT ({final_spread_percent:.4f}%)")
-                    logger.info(f"预估利润: {profit_estimate:.4f} USDT")
+                    logger.info(f"【交易结果】最终价差: {final_spread:.8f} USDT ({final_spread_percent:.4f}%), 预估利润: {profit_estimate:.4f} USDT")
                 
                 # 检查持仓是否平衡
                 await self.check_trade_balance()
@@ -560,24 +553,20 @@ class HedgeTrader:
                         position_leverage = position.get('leverage', self.leverage)
                         position_notional = position.get('notional', 0)
 
-                        logger.info(f"Bybit合约持仓: {position_side} {contract_position} 合约, "
-                                    f"杠杆: {position_leverage}倍, 名义价值: {position_notional}")
+                        logger.info(f"Bybit合约持仓: {position_side} {contract_position} 合约, 杠杆: {position_leverage}倍, 名义价值: {position_notional}")
             else:
                 logger.warning("未获取到Bybit合约持仓信息")
 
-            logger.info(f"持仓检查 - Gate.io现货: {gateio_position} {self.base_currency}, "
-                        f"Bybit合约: {contract_position} {self.base_currency}")
+            logger.info(f"持仓检查 - Gate.io现货: {gateio_position} {self.base_currency}, Bybit合约: {contract_position} {self.base_currency}")
 
             # 检查是否平衡（允许0.5%的误差）
             position_diff = abs(float(gateio_position) - float(contract_position))
-            position_diff_percent = position_diff / float(gateio_position) * 100
+            position_diff_percent = position_diff / float(gateio_position) * 100 if float(gateio_position) > 0 else 0
 
             if position_diff_percent > 0.5:  # 允许0.5%的误差
-                logger.warning(
-                    f"现货和合约持仓不平衡! 差异: {position_diff} {self.base_currency} ({position_diff_percent:.2f}%)")
+                logger.warning(f"现货和合约持仓不平衡! 差异: {position_diff} {self.base_currency} ({position_diff_percent:.2f}%)")
             else:
-                logger.info(
-                    f"现货和合约持仓基本平衡，差异在允许范围内: {position_diff} {self.base_currency} ({position_diff_percent:.2f}%)")
+                logger.info(f"现货和合约持仓基本平衡，差异在允许范围内: {position_diff} {self.base_currency} ({position_diff_percent:.2f}%)")
 
         except Exception as e:
             logger.error(f"获取Bybit合约持仓信息失败: {str(e)}")
@@ -695,13 +684,10 @@ class HedgeTrader:
             }
             self.trade_records.append(trade_record)
             
-            logger.info(f"本次交易持仓对比 - 现货: {self.last_trade_spot_amount} {self.base_currency}, "
-                      f"合约: {self.last_trade_contract_amount} {self.base_currency}, "
-                      f"差异: {position_diff_abs} {self.base_currency} ({position_diff_percent:.2f}%)")
+            logger.info(f"本次交易持仓对比 - 现货: {self.last_trade_spot_amount} {self.base_currency}, 合约: {self.last_trade_contract_amount} {self.base_currency}, 差异: {position_diff_abs} {self.base_currency} ({position_diff_percent:.2f}%)")
             
             # 打印累计差额信息
-            logger.info(f"【累计差额】- 数量: {self.cumulative_position_diff:.8f} {self.base_currency}, "
-                      f"价值: {self.cumulative_position_diff_usdt:.2f} USDT")
+            logger.info(f"【累计差额】- 数量: {self.cumulative_position_diff:.8f} {self.base_currency}, 价值: {self.cumulative_position_diff_usdt:.2f} USDT")
             
             # 检查是否平衡（允许0.5%的误差）
             if position_diff_percent > 0.5:  # 允许0.5%的误差
@@ -786,8 +772,13 @@ async def main():
             depth_multiplier=args.depth_multiplier
         )
         
-        logger.debug(f"初始化交易器参数: 交易对={args.symbol}, 数量={args.amount}, "
-                    f"最小价差={args.min_spread}, 杠杆={args.leverage}")
+        logger.debug(f"初始化交易器参数: 交易对={args.symbol}, 数量={args.amount}, 最小价差={args.min_spread}, 杠杆={args.leverage}")
+        
+        # 优化说明
+        logger.info(f"使用优化后的交易方式：")
+        logger.info(f"1. 现货交易使用quoteOrderQty参数，指定USDT金额而非币数量，确保交易数量更精确")
+        logger.info(f"2. 合并多行日志为单行，减少日志输出量")
+        logger.info(f"3. 添加更详细的调试日志，便于排查问题")
         
         await trader.initialize()
 
@@ -807,8 +798,7 @@ async def main():
                 required_usdt = float(trader.spot_amount) * current_price * 1.02
                 required_margin = float(trader.spot_amount) * current_price / trader.leverage * 1.05
                 
-                logger.debug(f"当前市场价格: {current_price} USDT，需要Gate.io: {required_usdt:.2f} USDT，"
-                           f"需要Bybit保证金: {required_margin:.2f} USDT")
+                logger.debug(f"当前市场价格: {current_price} USDT，需要Gate.io: {required_usdt:.2f} USDT，需要Bybit保证金: {required_margin:.2f} USDT")
                 
                 # 检查余额是否足够
                 if required_usdt > trader.gateio_usdt or trader.gateio_usdt < 50:
@@ -820,8 +810,7 @@ async def main():
                         # 重新获取并保存账户余额
                         trader.gateio_usdt, trader.bybit_usdt = await trader.check_balances()
                         if required_usdt > trader.gateio_usdt:
-                            logger.error(f"Gate.io USDT余额仍不足，需要约 {required_usdt:.2f} USDT，"
-                                        f"当前余额 {trader.gateio_usdt:.2f} USDT，无法继续执行")
+                            logger.error(f"Gate.io USDT余额仍不足，需要约 {required_usdt:.2f} USDT，当前余额 {trader.gateio_usdt:.2f} USDT，无法继续执行")
                             break
                         else:
                             logger.info(f"赎回USDT成功，当前Gate.io余额: {trader.gateio_usdt:.2f} USDT")
@@ -830,8 +819,7 @@ async def main():
                         break
                 
                 if required_margin > trader.bybit_usdt:
-                    logger.error(f"Bybit USDT保证金不足，需要约 {required_margin:.2f} USDT，"
-                               f"当前余额 {trader.bybit_usdt:.2f} USDT，无法继续执行")
+                    logger.error(f"Bybit USDT保证金不足，需要约 {required_margin:.2f} USDT，当前余额 {trader.bybit_usdt:.2f} USDT，无法继续执行")
                     break
                 
                 # 执行对冲交易
@@ -958,8 +946,7 @@ async def main():
                     if record.get('is_rebalance', False):
                         # 平衡操作记录
                         op_side = "买入现货" if record.get('side') == 'spot' else "开空合约"
-                        logger.info(f"【平衡操作】{record.get('trade_id')} - {op_side}: {record.get('amount'):.8f} {trader.base_currency}, "
-                                   f"价值: {record.get('cost', 0):.2f} USDT")
+                        logger.info(f"【平衡操作】{record.get('trade_id')} - {op_side}: {record.get('amount'):.8f} {trader.base_currency}, 价值: {record.get('cost', 0):.2f} USDT")
                         if record.get('avg_price', 0) > 0:
                             logger.info(f"  成交均价: {record.get('avg_price'):.8f} USDT/{trader.base_currency}")
                     else:
@@ -974,8 +961,7 @@ async def main():
                         else:
                             time_str = "未知时间"
                             
-                        logger.info(f"【常规交易】#{record.get('trade_id')} ({time_str}) - 现货: {spot:.8f}, 合约: {contract:.8f}, "
-                                   f"差额: {diff:.8f} {trader.base_currency} ({record.get('position_diff_usdt', 0):.2f} USDT)")
+                        logger.info(f"【常规交易】#{record.get('trade_id')} ({time_str}) - 现货: {spot:.8f}, 合约: {contract:.8f}, 差额: {diff:.8f} {trader.base_currency} ({record.get('position_diff_usdt', 0):.2f} USDT)")
                         
                         # 显示市场状态
                         if record.get('gateio_asks') and record.get('bybit_bids'):
@@ -984,8 +970,7 @@ async def main():
                             if gateio_ask > 0 and bybit_bid > 0:
                                 price_diff = bybit_bid - gateio_ask
                                 price_diff_percent = price_diff / gateio_ask * 100
-                                logger.info(f"  执行时价差: Gate.io卖1 {gateio_ask:.8f} vs Bybit买1 {bybit_bid:.8f}, "
-                                          f"差值: {price_diff:.8f} ({price_diff_percent:.4f}%)")
+                                logger.info(f"  执行时价差: Gate.io卖1 {gateio_ask:.8f} vs Bybit买1 {bybit_bid:.8f}, 差值: {price_diff:.8f} ({price_diff_percent:.4f}%)")
             
             # 显示是否需要平衡
             if abs(trader.cumulative_position_diff_usdt) >= 6:
