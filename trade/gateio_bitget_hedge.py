@@ -437,6 +437,10 @@ class HedgeTrader:
                         # 记录差异，但不因为差异终止交易（因为现货会立即申购余币宝）
                         if amount_diff_percent > 5:  # 差异超过5%时记录警告
                             logger.warning(f"现货和合约成交量差异较大: {amount_diff_percent:.2f}%, 现货: {actual_position} {base_currency}, 合约: {contract_filled} {base_currency}")
+                        elif amount_diff_percent > 2:  # 差异在2%-5%之间记录提示
+                            logger.info(f"现货和合约成交量差异在可接受范围: {amount_diff_percent:.2f}%, 现货: {actual_position} {base_currency}, 合约: {contract_filled} {base_currency}")
+                        else:  # 差异在2%以内，认为是匹配的
+                            logger.info(f"现货和合约成交量匹配良好: {amount_diff_percent:.2f}%, 现货: {actual_position} {base_currency}, 合约: {contract_filled} {base_currency}")
                         
                         # 记录交易执行成功
                         logger.info(f"交易执行成功 - 现货: {actual_position} {base_currency}（将申购余币宝）, 合约: {contract_filled} {base_currency}")
