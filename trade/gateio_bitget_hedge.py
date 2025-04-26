@@ -402,13 +402,7 @@ class HedgeTrader:
                             except Exception as e:
                                 logger.warning(f"获取Bitget订单更新失败: {str(e)}")
                         
-                        # 检查订单执行状态
-                        order_verification = self.verify_order_execution(spot_order, contract_order)
-                        
-                        if not order_verification:
-                            logger.error("订单执行异常，终止交易！")
-                            return None, None
-
+                        # 提取订单执行结果
                         # 获取现货订单的实际成交结果
                         filled_amount = float(spot_order.get('filled', 0))
                         fees = spot_order.get('fees', [])
@@ -422,26 +416,30 @@ class HedgeTrader:
                         spot_avg_price = float(spot_order.get('average', 0)) or float(spot_order.get('price', 0))
                         contract_avg_price = float(contract_order.get('average', 0)) or float(contract_order.get('price', 0))
                         
-                        # 计算成交价差
-                        exec_price_diff = contract_avg_price - spot_avg_price
-                        exec_price_diff_percent = (exec_price_diff / spot_avg_price * 100) if spot_avg_price > 0 else 0
-
                         # 记录详细的成交信息
                         logger.info("=" * 50)
                         logger.info(f"【成交详情】订单执行情况:")
                         logger.info(f"【成交详情】Gate.io卖1价格: {float(gateio_ask):.8f}, 实际成交价格: {spot_avg_price:.8f}, 价差: {(spot_avg_price - float(gateio_ask)):.8f} ({(spot_avg_price - float(gateio_ask)) / float(gateio_ask) * 100:.4f}%)")
                         logger.info(f"【成交详情】Bitget买1价格: {float(bitget_bid):.8f}, 实际成交价格: {contract_avg_price:.8f}, 价差: {(contract_avg_price - float(bitget_bid)):.8f} ({(contract_avg_price - float(bitget_bid)) / float(bitget_bid) * 100:.4f}%)")
-                        logger.info(f"【成交详情】执行价差: {exec_price_diff:.8f} ({exec_price_diff_percent:.4f}%)")
                         logger.info(f"【成交详情】Gate.io实际成交: {filled_amount} {base_currency}, 手续费: {base_fee} {base_currency}, 实际持仓: {actual_position} {base_currency}")
                         logger.info(f"【成交详情】Bitget合约实际成交: {contract_filled} {base_currency}")
                         logger.info("=" * 50)
 
-                        # 检查持仓情况
-                        position_balance = await self.check_positions(actual_position, contract_filled)
-                        
-                        if not position_balance:
-                            logger.error("持仓检查不通过，确认交易执行有问题！终止交易！")
+                        # 检查现货和合约成交量是否接近
+                        if contract_filled <= 0:
+                            logger.error("合约订单未成交，终止交易！")
                             return None, None
+
+                        # 计算现货和合约成交量的差异百分比
+                        amount_diff = abs(actual_position - contract_filled)
+                        amount_diff_percent = (amount_diff / actual_position * 100) if actual_position > 0 else 0
+                        
+                        # 记录差异，但不因为差异终止交易（因为现货会立即申购余币宝）
+                        if amount_diff_percent > 5:  # 差异超过5%时记录警告
+                            logger.warning(f"现货和合约成交量差异较大: {amount_diff_percent:.2f}%, 现货: {actual_position} {base_currency}, 合约: {contract_filled} {base_currency}")
+                        
+                        # 记录交易执行成功
+                        logger.info(f"交易执行成功 - 现货: {actual_position} {base_currency}（将申购余币宝）, 合约: {contract_filled} {base_currency}")
 
                         # 计算并记录本次交易的差额
                         position_diff = contract_filled - actual_position  # 正值表示合约多，负值表示现货多
@@ -458,10 +456,10 @@ class HedgeTrader:
                             'position_diff': position_diff,
                             'position_diff_usdt': position_diff * float(gateio_ask),
                             'price': float(gateio_ask),
-                            'spot_price': spot_avg_price,
-                            'contract_price': contract_avg_price,
-                            'price_diff': exec_price_diff,
-                            'price_diff_percent': exec_price_diff_percent,
+                            'spot_price': float(spot_order.get('average', 0)) or float(spot_order.get('price', 0)),
+                            'contract_price': float(contract_order.get('average', 0)) or float(contract_order.get('price', 0)),
+                            'price_diff': float(contract_order.get('average', 0)) - float(spot_order.get('average', 0)),
+                            'price_diff_percent': (float(contract_order.get('average', 0)) - float(spot_order.get('average', 0))) / float(spot_order.get('average', 0)) * 100 if float(spot_order.get('average', 0)) > 0 else 0,
                             'cumulative_diff': self.cumulative_position_diff,
                             'cumulative_diff_usdt': self.cumulative_position_diff_usdt
                         }
@@ -615,320 +613,6 @@ class HedgeTrader:
         except Exception as e:
             logger.error(f"执行平衡操作时出错: {str(e)}")
             raise
-
-    def verify_order_execution(self, spot_order, contract_order):
-        """
-        验证订单执行状态
-        
-        Args:
-            spot_order: Gate.io现货订单
-            contract_order: Bitget合约订单
-            
-        Returns:
-            bool: 订单执行是否正常
-        """
-        try:
-            logger.debug(f"开始验证订单执行状态... - 时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
-            logger.debug(f"原始订单数据 - Gate.io订单ID: {spot_order.get('id')}, Bitget订单ID: {contract_order.get('id')}")
-            
-            # 详细分析Gate.io现货订单
-            spot_status = spot_order.get('status')
-            spot_filled = float(spot_order.get('filled', 0))
-            spot_amount = float(spot_order.get('amount', 0))
-            spot_cost = float(spot_order.get('cost', 0))
-            spot_price = float(spot_order.get('price', 0))
-            spot_average = float(spot_order.get('average', 0))
-            spot_fill_percent = (spot_filled / spot_amount * 100) if spot_amount > 0 else 0
-            spot_fees = spot_order.get('fees', [])
-            spot_fee_details = {fee.get('currency'): fee.get('cost') for fee in spot_fees} if spot_fees else {}
-            
-            # 输出完整的Gate.io订单结构以进行更深入的调试
-            logger.debug(f"Gate.io订单完整结构: {spot_order}")
-            logger.debug(f"Gate.io订单手续费详情: {spot_fee_details}")
-            
-            logger.debug(f"Gate.io订单详细分析:")
-            logger.debug(f" - 订单ID: {spot_order.get('id')}")
-            logger.debug(f" - 状态: {spot_status}")
-            logger.debug(f" - 委托量: {spot_amount}")
-            logger.debug(f" - 成交量: {spot_filled}")
-            logger.debug(f" - 成交率: {spot_fill_percent:.2f}%")
-            logger.debug(f" - 委托价格: {spot_price}")
-            logger.debug(f" - 平均成交价格: {spot_average}")
-            logger.debug(f" - 成交金额: {spot_cost}")
-            logger.debug(f" - 订单类型: {spot_order.get('type')}")
-            logger.debug(f" - 订单方向: {spot_order.get('side')}")
-            logger.debug(f" - 创建时间: {spot_order.get('datetime')}")
-            logger.debug(f" - 最后更新时间: {spot_order.get('lastTradeTimestamp')}")
-            
-            # 详细分析Bitget合约订单
-            contract_status = contract_order.get('status')
-            contract_filled = float(contract_order.get('filled', 0))
-            contract_amount = float(contract_order.get('amount', 0))
-            contract_price = float(contract_order.get('price', 0))
-            contract_average = float(contract_order.get('average', 0))
-            contract_cost = float(contract_order.get('cost', 0))
-            contract_fill_percent = (contract_filled / contract_amount * 100) if contract_amount > 0 else 0
-            contract_fees = contract_order.get('fees', [])
-            contract_fee_details = {fee.get('currency'): fee.get('cost') for fee in contract_fees} if contract_fees else {}
-            
-            # 输出完整的Bitget订单结构以进行更深入的调试
-            logger.debug(f"Bitget订单完整结构: {contract_order}")
-            logger.debug(f"Bitget订单手续费详情: {contract_fee_details}")
-            
-            logger.debug(f"Bitget订单详细分析:")
-            logger.debug(f" - 订单ID: {contract_order.get('id')}")
-            logger.debug(f" - 状态: {contract_status}")
-            logger.debug(f" - 委托量: {contract_amount}")
-            logger.debug(f" - 成交量: {contract_filled}")
-            logger.debug(f" - 成交率: {contract_fill_percent:.2f}%")
-            logger.debug(f" - 委托价格: {contract_price}")
-            logger.debug(f" - 平均成交价格: {contract_average}")
-            logger.debug(f" - 成交金额: {contract_cost}")
-            logger.debug(f" - 订单类型: {contract_order.get('type')}")
-            logger.debug(f" - 订单方向: {contract_order.get('side')}")
-            logger.debug(f" - 创建时间: {contract_order.get('datetime')}")
-            logger.debug(f" - 最后更新时间: {contract_order.get('lastTradeTimestamp')}")
-            
-            # Gate.io订单验证标准：
-            # 1. 状态应该是已完成或已成交
-            # 2. 或者成交率应该达到95%以上（对于市价单，可能API反馈的状态不准确）
-            gate_verification_passed = (
-                spot_status in ['closed', 'filled'] or 
-                spot_fill_percent >= 95 or
-                spot_filled > 0  # 只要有成交量就算通过
-            )
-            
-            logger.debug(f"Gate.io订单验证标准检查:")
-            logger.debug(f" - 状态为closed或filled: {spot_status in ['closed', 'filled']}")
-            logger.debug(f" - 成交率>=95%: {spot_fill_percent >= 95}")
-            logger.debug(f" - 有成交量: {spot_filled > 0}")
-            logger.debug(f" - 最终验证结果: {gate_verification_passed}")
-            
-            # Bitget订单验证标准：
-            # 由于Bitget API返回的状态可能不准确，我们主要检查成交量
-            bitget_verification_passed = True  # 默认通过，因为在check_positions中会再次验证
-            logger.debug(f"Bitget默认验证通过，详细验证将在check_positions中进行")
-            
-            # 如果Gate.io订单成交但Bitget合约订单成交量为0，这可能有两种情况：
-            # 1. Bitget API返回的信息不准确（常见情况）
-            # 2. 确实只有一边成交（罕见但可能）
-            if gate_verification_passed and contract_filled <= 0:
-                logger.warning("Gate.io订单已成交，但Bitget订单成交量为0，将通过持仓检查确认")
-                logger.debug("这可能是Bitget API返回不准确导致的，也可能是真的只有一边成交")
-                # 不直接返回失败，而是让check_positions检查验证
-            
-            if not gate_verification_passed:
-                logger.error(f"Gate.io订单验证失败: 状态={spot_status}, 成交量={spot_filled}, 成交率={spot_fill_percent:.2f}%")
-                return False
-            
-            # 根据情况记录验证结果
-            logger.info(f"订单执行验证结果 - Gate.io: {'通过' if gate_verification_passed else '失败'}, "
-                        f"Bitget: {'需要通过持仓确认' if contract_filled <= 0 else '通过'}")
-            
-            return True
-        except Exception as e:
-            logger.error(f"验证订单执行状态时出错: {str(e)}")
-            import traceback
-            logger.debug(f"验证订单执行状态错误堆栈:\n{traceback.format_exc()}")
-            logger.debug(f"验证时的数据 - spot_order: {spot_order}, contract_order: {contract_order}")
-            return False
-
-    async def check_positions(self, actual_position=None, contract_amount=None):
-        """
-        异步检查交易后的持仓情况
-        
-        Args:
-            actual_position: 本次交易的现货实际持仓量（已扣除手续费）
-            contract_amount: 本次交易的合约数量
-        """
-        try:
-            # 给交易所API一点时间更新持仓数据
-            await asyncio.sleep(2)  # 增加等待时间，确保API数据已更新
-            logger.debug(f"开始检查持仓, 预期现货: {actual_position}, 预期合约: {contract_amount}")
-            logger.debug(f"持仓检查时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
-
-            # 并行获取两个交易所的持仓信息
-            logger.debug("正在获取Gate.io和Bitget持仓信息...")
-            fetch_start_time = asyncio.get_event_loop().time()
-            
-            gateio_balance_task = self.gateio.fetch_balance()
-            positions_task = self.bitget.fetch_positions([self.contract_symbol])
-            
-            # 添加重试机制，防止API偶发性错误
-            retry_count = 0
-            max_retries = 3
-            
-            while retry_count < max_retries:
-                try:
-                    logger.debug(f"发起第 {retry_count + 1} 次持仓查询请求...")
-                    gateio_balance, positions = await asyncio.gather(
-                        gateio_balance_task,
-                        positions_task
-                    )
-                    fetch_end_time = asyncio.get_event_loop().time()
-                    logger.debug(f"获取持仓信息成功, 耗时: {fetch_end_time - fetch_start_time:.2f}秒")
-                    break
-                except Exception as e:
-                    retry_count += 1
-                    logger.warning(f"获取持仓信息失败 (尝试 {retry_count}/{max_retries}): {str(e)}")
-                    logger.debug(f"持仓查询错误详情: {e}")
-                    if retry_count >= max_retries:
-                        logger.error(f"持仓查询重试次数已达上限 ({max_retries}次), 放弃查询")
-                        raise
-                    logger.debug(f"等待1秒后进行第 {retry_count + 1} 次重试...")
-                    await asyncio.sleep(1)  # 等待1秒后重试
-                    gateio_balance_task = self.gateio.fetch_balance()
-                    positions_task = self.bitget.fetch_positions([self.contract_symbol])
-
-            # 获取现货最新成交订单的信息
-            base_currency = self.symbol.split('/')[0]
-            
-            # 记录Gate.io的所有相关资产余额
-            logger.debug(f"Gate.io所有资产余额:")
-            for currency, details in gateio_balance.items():
-                if isinstance(details, dict) and ('free' in details or 'total' in details):
-                    free = details.get('free', 0)
-                    used = details.get('used', 0)
-                    total = details.get('total', 0)
-                    # 只记录有余额或与当前交易相关的货币
-                    if total > 0 or currency in [base_currency, 'USDT']:
-                        logger.debug(f" - {currency}: 可用={free}, 冻结={used}, 总计={total}")
-            
-            gateio_position = gateio_balance.get(base_currency, {}).get('total', 0)
-            logger.debug(f"Gate.io {base_currency} 余额详情: {gateio_balance.get(base_currency, {})}")
-
-            # 检查Bitget合约持仓
-            contract_position = 0
-            position_detail = None
-            
-            # 记录返回的所有持仓信息，便于调试
-            logger.debug(f"Bitget返回的所有持仓详情: {positions}")
-
-            if positions:
-                logger.debug(f"Bitget返回持仓数量: {len(positions)}")
-                for idx, position in enumerate(positions):
-                    logger.debug(f"持仓 #{idx+1} - 交易对: {position.get('symbol')}, 方向: {position.get('side')}, "
-                                f"数量: {position.get('contracts')}, 名义价值: {position.get('notional')}")
-                    logger.debug(f"检查持仓: {position.get('symbol')} vs {self.contract_symbol}")
-                    if position['symbol'] == self.contract_symbol:
-                        contract_position = abs(float(position.get('contracts', 0)))
-                        position_side = position.get('side', 'unknown')
-                        position_leverage = position.get('leverage', self.leverage)
-                        position_notional = position.get('notional', 0)
-                        position_entry_price = position.get('entryPrice', 0)
-                        position_detail = position  # 保存持仓详情以便后续分析
-
-                        logger.info(f"Bitget合约持仓: {position_side} {contract_position} 合约, "
-                                    f"杠杆: {position_leverage}倍, 名义价值: {position_notional}, "
-                                    f"开仓均价: {position_entry_price}")
-                        
-                        # 记录更多持仓详情，帮助调试
-                        logger.debug(f"Bitget持仓详情:")
-                        for key, value in position.items():
-                            if key not in ['info']:  # 排除过长的原始info字段
-                                logger.debug(f"  - {key}: {value}")
-                        
-                        # 如果info字段中包含重要信息，也记录下来
-                        if 'info' in position:
-                            info = position.get('info', {})
-                            if isinstance(info, dict):
-                                logger.debug(f"  - info中的关键字段:")
-                                for key in ['positionId', 'marginMode', 'holdSide', 'availableCloseSize']:
-                                    if key in info:
-                                        logger.debug(f"    * {key}: {info.get(key)}")
-            else:
-                logger.warning("未获取到Bitget合约持仓信息")
-                # 尝试其他方法获取持仓信息
-                logger.debug("尝试使用替代方法获取Bitget持仓信息...")
-                
-                try:
-                    # 获取所有持仓
-                    logger.debug("尝试获取Bitget所有持仓...")
-                    all_positions = await self.bitget.fetch_positions()
-                    logger.debug(f"Bitget所有持仓数量: {len(all_positions)}")
-                    
-                    # 记录所有持仓的简要信息
-                    for idx, pos in enumerate(all_positions):
-                        logger.debug(f"持仓 #{idx+1}: {pos.get('symbol')} - {pos.get('side')} {pos.get('contracts')} 合约")
-                        if pos['symbol'] == self.contract_symbol:
-                            contract_position = abs(float(pos.get('contracts', 0)))
-                            position_detail = pos
-                            logger.info(f"在所有持仓中找到目标合约: {contract_position} {base_currency}")
-                            # 输出详细信息
-                            logger.debug(f"找到的合约详情:")
-                            for key, value in pos.items():
-                                if key not in ['info']:
-                                    logger.debug(f"  - {key}: {value}")
-                except Exception as e:
-                    logger.error(f"尝试替代方法获取Bitget持仓失败: {str(e)}")
-                    logger.debug(f"替代方法错误详情: {e}")
-                    import traceback
-                    logger.debug(f"替代方法错误堆栈:\n{traceback.format_exc()}")
-
-            logger.info(f"持仓检查 - Gate.io现货: {gateio_position} {base_currency}, "
-                        f"Bitget合约: {contract_position} {base_currency}")
-            
-            # 如果提供了本次交易的具体数值，则检查本次交易是否成功执行
-            if actual_position is not None and contract_amount is not None:
-                # 检查现货交易结果 - 放宽要求，仅检查是否有现货余额（因为可能已经申购到余币宝）
-                # 实际上现货买入后直接申购余币宝，所以现货余额可能很小
-                if gateio_position < 0.01:  # 仅检查是否有最小值
-                    # 尝试查询余币宝余额（如果可用）
-                    try:
-                        # 这里需要实现查询余币宝余额的函数
-                        # 目前暂不实现，仅记录警告
-                        logger.warning(f"Gate.io现货余额极低: {gateio_position} {base_currency} (可能已申购余币宝)")
-                        logger.debug(f"应检查余币宝中的 {base_currency} 余额")
-                    except Exception as e:
-                        logger.debug(f"尝试检查余币宝失败: {str(e)}")
-                        pass
-                
-                # 记录现货余额与预期的比较
-                logger.debug(f"现货余额检查: 当前余额={gateio_position}, 预期约={actual_position}, "
-                           f"差异={abs(gateio_position - actual_position):.8f} "
-                           f"({abs(gateio_position - actual_position) / actual_position * 100 if actual_position > 0 else 0:.2f}%)")
-                
-                # 检查合约交易结果 - 必须确认合约确实开立
-                if contract_position <= 0:
-                    logger.error(f"Bitget合约持仓为0! 交易可能未执行")
-                    return False
-                
-                # 记录合约持仓与预期的比较
-                logger.debug(f"合约持仓检查: 当前持仓={contract_position}, 预期约={contract_amount}, "
-                           f"差异={abs(contract_position - float(contract_amount)):.8f} "
-                           f"({abs(contract_position - float(contract_amount)) / float(contract_amount) * 100:.2f}%)")
-                
-                # 如果合约持仓远低于预期，也视为可能有问题
-                if contract_position < float(contract_amount) * 0.5:  # 放宽到50%
-                    logger.warning(f"Bitget合约持仓量显著低于预期: 预期约 {contract_amount} {base_currency}, 实际 {contract_position} {base_currency}")
-                    logger.debug("可能是部分成交或API返回的数据不准确")
-                    # 此处不返回失败，但记录警告
-                
-                # 计算差额和百分比
-                position_diff = abs(float(actual_position) - float(contract_amount))
-                position_diff_percent = (position_diff / float(actual_position) * 100) if float(actual_position) > 0 else 0
-                
-                # 将交易后的现货和合约差额打印到日志里
-                logger.info(f"【持仓检查】- 现货: {actual_position} {base_currency}, 合约: {contract_amount} {base_currency}, "
-                           f"差额: {position_diff:.8f} {base_currency} ({position_diff_percent:.2f}%)")
-                
-                logger.info(f"交易执行检查通过 - 本次交易: 现货约 {actual_position} {base_currency} (可能已申购余币宝), 合约约 {contract_amount} {base_currency}")
-                return True
-            
-            # 若不检查具体交易，则检查总体持仓
-            # 对于运行多次的情况，不再检查持仓平衡，因为合约会不断累积
-            if contract_position > 0:
-                logger.info(f"合约持仓确认: {contract_position} {base_currency}")
-                return True
-            else:
-                logger.error(f"未检测到合约持仓!")
-                return False
-
-        except Exception as e:
-            logger.error(f"获取持仓信息失败: {str(e)}")
-            import traceback
-            logger.debug(f"获取持仓出错的堆栈:\n{traceback.format_exc()}")
-            return False
 
     async def check_trade_requirements(self):
         """
