@@ -4,9 +4,11 @@ from datetime import datetime
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 from high_yield.exchange import ExchangeAPI
-from gateio_api import get_earn_positions, get_earn_interest
+from gateio_api import get_earn_positions, get_earn_interest, subscrible_earn
+from config import gateio_api_key, gateio_api_secret, proxies
 
 import logging
+import ccxt
 from tools.logger import logger
 logger.setLevel(logging.ERROR)
 
@@ -87,5 +89,86 @@ def print_earn_info():
 
     print("="*80)
 
+def auto_subscribe_earn():
+    """
+    自动查询所有现货代币并将满足条件的代币申购理财
+    
+    筛选条件:
+    1. 排除GT2、USDT
+    2. 现货余额大于1USDT
+    3. 该token开启了自动赚币(auto_invest_status=1)
+    """
+    # 设置日志级别
+    logger.setLevel(logging.INFO)
+    logger.info(f"开始扫描 GateIO 现货资产，寻找符合条件的代币进行理财申购")
+    logger.info(f"排除列表: GT2, USDT")
+    logger.info("="*50)
+    
+    # 获取当前持仓信息，用于检查auto_invest_status
+    earn_positions = get_earn_positions()
+    
+    # 构建已开启自动赚币的Token字典
+    auto_invest_tokens = {p['asset']: p for p in earn_positions if int(p.get('auto_invest_status', 0)) == 1}
+    logger.info(f"找到 {len(auto_invest_tokens)} 个已开启自动赚币的代币")
+    
+    # 初始化CCXT交易所对象获取余额
+    exchange = ccxt.gateio({
+        'apiKey': gateio_api_key,
+        'secret': gateio_api_secret,
+        'enableRateLimit': True,
+        'proxies': proxies
+    })
+    
+    # 获取现货账户余额
+    try:
+        spot_balances = exchange.fetch_balance()
+        logger.info(f"成功获取 GateIO 现货账户余额")
+    except Exception as e:
+        logger.error(f"获取 GateIO 现货账户余额失败: {str(e)}")
+        logger.setLevel(logging.ERROR)
+        return 0
+    
+    # 处理所有非零余额的代币
+    for token, balance in spot_balances.items():
+        if not isinstance(balance, dict) or token in ['GT2', 'USDT', 'total', 'used', 'free', 'info']:
+            continue
+        
+        # 获取余额
+        token_balance = balance.get('total', 0)
+        token_free = balance.get('free', 0)
+        
+        if float(token_balance) <= 0:
+            continue
+            
+        # 判断是否达到1USDT的价值
+        usdt_value = 0
+        if usdt_value == 0 and token_balance > 0:
+            try:
+                # 尝试获取最新价格
+                ticker = exchange.fetch_ticker(f"{token}/USDT")
+                price = ticker['last']
+                usdt_value = float(token_balance) * price
+                logger.debug(f"代币 {token} 当前价格: {price} USDT, 持有数量: {token_balance}, 估值: {usdt_value:.2f} USDT")
+            except Exception as e:
+                logger.debug(f"无法获取代币 {token} 的价格: {str(e)}")
+                continue
+        
+        # 检查自动赚币状态和余额要求
+        is_auto_invest = token in auto_invest_tokens
+
+        # 判断是否满足条件
+        if usdt_value >= 1 and is_auto_invest and token_free > 0:
+            logger.info(f"尝试为代币 {token} 申购理财")
+            try:
+                # 申购全部可用余额
+                subscrible_earn(token, token_free)
+                logger.info(f"成功为代币 {token} 申购理财并开启自动赚币, 数量: {token_free}")
+            except Exception as e:
+                logger.error(f"申购代币 {token} 理财失败: {str(e)}")
+    
+    logger.info("="*50)
+    logger.setLevel(logging.ERROR)  # 恢复日志级别
+
 if __name__ == '__main__':
+    auto_subscribe_earn()
     print_earn_info()
