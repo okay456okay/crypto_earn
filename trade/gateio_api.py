@@ -12,7 +12,7 @@ from config import proxies, gateio_login_token
 from tools.logger import logger
 
 
-def subscrible_earn(token, amount, rate="0.0010", login_token=gateio_login_token):
+def subscrible_earn(token, amount, rate=0.050, login_token=gateio_login_token):
     """
     curl 'https://www.gate.io/apiw/v2/uni-loan/earn/subscribe' \
       -H 'accept: application/json, text/plain, */*' \
@@ -46,7 +46,7 @@ def subscrible_earn(token, amount, rate="0.0010", login_token=gateio_login_token
     data = {
         "asset": token,
         "amount": str(amount),
-        "rateYear": rate,
+        "rateYear": str(rate),
     }
     try:
         r = requests.post(
@@ -55,12 +55,12 @@ def subscrible_earn(token, amount, rate="0.0010", login_token=gateio_login_token
             proxies=proxies,
             cookies=cookies,
         )
-        if r.status_code == 200:
+        if r.status_code == 200 and r.json().get('code') == 0:
             logger.info(f"subscribe {token} {amount} success, response: {r.text}")
         else:
             logger.error(f"subscribe {token} {amount} failed, code: {r.status_code}, response: {r.text}")
     except Exception as e:
-        print(f"subscribe {token} {amount} failed, code:{r.status_code}, error: {r.text}")
+        logger.error(f"subscribe {token} {amount} failed, code:{r.status_code}, error: {r.text}")
     # 开启自动赚币
     switch_autoinvest(token, 1)
 
@@ -91,12 +91,13 @@ def redeem_earn(token, amount, login_token=gateio_login_token):
             proxies=proxies,
             cookies=cookies,
         )
-        if r.status_code == 200:
+        if r.status_code == 200 and r.json().get('code') == 0:
             logger.info(f"redeem {token} {amount} success, response: {r.text}")
         else:
             logger.error(f"redeem {token} {amount} failed, code: {r.status_code}, response: {r.text}")
     except Exception as e:
-        print(f"subscribe {token} {amount} failed, code:{r.status_code}, error: {r.text}")
+        logger.error(f"subscribe {token} {amount} failed, code:{r.status_code}, error: {r.text}")
+    return False
 
 
 def get_earn_positions(login_token=gateio_login_token, limit=50, page=1):
@@ -121,13 +122,13 @@ def get_earn_positions(login_token=gateio_login_token, limit=50, page=1):
     }
     try:
         r = requests.get(url, params=params, proxies=proxies, cookies=cookies)
-        if r.status_code == 200:
+        if r.status_code == 200 and r.json().get('code') == 0:
             # logger.info(f"get gateio earn positions success, response: {r.text}")
             positions = r.json().get('data').get('list')
         else:
             logger.error(f"get gateio earn positions failed, code:{r.status_code}, response: {r.text}")
     except Exception as e:
-        print(f"get gateio earn positions failed, code:{r.status_code}, error: {r.text}")
+        logger.error(f"get gateio earn positions failed, code:{r.status_code}, error: {r.text}")
     return positions
 
 def get_earn_interest(token, limit=24, page=1, login_token=gateio_login_token):
@@ -156,13 +157,13 @@ def get_earn_interest(token, limit=24, page=1, login_token=gateio_login_token):
     }
     try:
         r = requests.get(url, params=params, proxies=proxies, cookies=cookies)
-        if r.status_code == 200:
+        if r.status_code == 200 and r.json().get('code') == 0:
             # logger.info(f"get gateio earn positions success, response: {r.text}")
             interests = r.json().get('data')
         else:
             logger.error(f"get gateio earn positions failed, code:{r.status_code}, response: {r.text}")
     except Exception as e:
-        print(f"get {token} gateio earn interests failed, code:{r.status_code}, error: {r.text}")
+        logger.error(f"get {token} gateio earn interests failed, code:{r.status_code}, error: {r.text}")
     sleep(2)
     return interests
 
@@ -182,25 +183,30 @@ def switch_autoinvest(token, status, login_token=gateio_login_token):
     }
     try:
         r = requests.post(url, json=data, proxies=proxies, cookies=cookies)
-        if r.status_code != 200:
+        if r.status_code == 200 and r.json().get('code') == 0:
             # logger.info(f"get gateio earn positions success, response: {r.text}")
-            logger.error(f"gateio set {token} autoinvest failed, code:{r.status_code}, response: {r.text}")
-        else:
             logger.debug(f"gateio set {token} autoinvest succeed, response: {r.text}")
+        else:
+            logger.error(f"gateio set {token} autoinvest failed, code:{r.status_code}, response: {r.text}")
     except Exception as e:
         logger.exception(f"gateio set {token} autoinvest failed, error: {e}")
 
 
 
 if __name__ == '__main__':
-    # token = 'KAVA'
+    token = 'BR'
+    # redeem_earn(token, 500)
+    # subscrible_earn(token, 500)
+    # print(get_earn_positions())
+    # print(get_earn_interest('AVL'))
+    pass
     # positions = get_earn_positions()
     # print(positions)
     # for p in positions:
     #     if float(p['curr_amount_usdt']) >= 1:
     #         print(f"{p['asset']}: 持仓金额:{p['curr_amount_usdt']:.2f} USDT,数量: {p['curr_amount']}, 价格:{p['price']:.5f}")
     # print(len(get_earn_interest('B3')))
-    switch_autoinvest('PROS', 1)
+    # switch_autoinvest('PROS', 1)
     # print([i for i in positions if i["asset"] == token])
 
     # redeem_earn(token, 10)
