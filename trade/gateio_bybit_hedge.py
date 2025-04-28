@@ -106,6 +106,9 @@ class HedgeTrader:
         self.trade_records = []  # 交易记录列表
         self.trade_count = 0  # 交易计数
         self.rebalance_count = 0  # 平衡操作计数
+        
+        # 添加一个标志，表示是否尝试过执行交易
+        self._trading_attempted = False
 
     async def initialize(self):
         """
@@ -274,9 +277,13 @@ class HedgeTrader:
                                 else:
                                     logger.warning(f"订单状态异常 - Gate.io: {spot_status}, Bybit: {contract_status}")
                             else:
-                                logger.error(f"订单执行失败,Gate.io订单: {spot_order}，Bybit订单: {contract_order}")
-                                self.ws_running = False
-                                break
+                                # 只在满足价差条件尝试执行交易但失败时才终止循环
+                                # 检查是否因为价差不满足条件导致的返回None,None
+                                if self._trading_attempted:
+                                    logger.error(f"订单执行失败,Gate.io订单: {spot_order}，Bybit订单: {contract_order}")
+                                    self.ws_running = False
+                                    break
+                                # 如果是因为价差不满足条件而未执行交易，继续等待下一次订单簿更新
 
                         except Exception as e:
                             logger.error(f"处理订单簿数据时出错: {str(e)}")
@@ -379,6 +386,9 @@ class HedgeTrader:
 
             # 检查价差和数量条件
             if is_gateio_volume_met and is_bybit_volume_met:
+                
+                # 设置尝试执行交易的标志
+                self._trading_attempted = True
                 
                 # 记录获取到满足条件的订单簿到准备交易的时间
                 order_prep_time = time.time()
