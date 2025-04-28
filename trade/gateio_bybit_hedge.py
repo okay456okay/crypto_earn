@@ -250,10 +250,35 @@ class HedgeTrader:
 
                             # 检查是否可以执行交易
                             spot_order, contract_order = await self.check_and_execute_trade()
+                            
+                            # 验证订单提交是否成功
                             if spot_order and contract_order:
-                                successful_spot_order = spot_order
-                                successful_contract_order = contract_order
-                                # 交易成功后停止WebSocket监听，但不立即返回
+                                # 进一步验证订单状态
+                                spot_status = spot_order.get('status', 'unknown')
+                                contract_status = contract_order.get('status', 'unknown')
+                                
+                                if spot_status in ['closed', 'filled'] and contract_status in ['closed', 'filled']:
+                                    logger.info(f"两个交易所订单都已成功提交并成交")
+                                    successful_spot_order = spot_order
+                                    successful_contract_order = contract_order
+                                    # 交易成功后停止WebSocket监听
+                                    self.ws_running = False
+                                    break
+                                elif spot_status in ['open', 'closed', 'filled'] and contract_status in ['open', 'closed', 'filled']:
+                                    logger.info(f"两个交易所订单都已成功提交，等待成交确认")
+                                    successful_spot_order = spot_order
+                                    successful_contract_order = contract_order
+                                    # 交易已提交，停止WebSocket监听，等待成交确认
+                                    self.ws_running = False
+                                    break
+                                else:
+                                    logger.warning(f"订单状态异常 - Gate.io: {spot_status}, Bybit: {contract_status}")
+                            elif spot_order and not contract_order:
+                                logger.error("只有Gate.io订单提交成功，Bybit订单提交失败")
+                                self.ws_running = False
+                                break
+                            elif contract_order and not spot_order:
+                                logger.error("只有Bybit订单提交成功，Gate.io订单提交失败")
                                 self.ws_running = False
                                 break
 
@@ -416,13 +441,47 @@ class HedgeTrader:
                     logger.info(f"订单执行延迟: 下单耗时 {order_delay:.2f}ms, 总延迟 {total_delay:.2f}ms")
                     logger.debug(f"订单提交结果 - Gate.io现货订单: {spot_order}")
                     logger.debug(f"订单提交结果 - Bybit合约订单: {contract_order}")
+                    
+                    # 立即验证订单是否成功提交
+                    if not spot_order or not contract_order:
+                        logger.error("订单提交失败: 无法获取订单信息")
+                        return None, None
+                    
+                    # 检查订单ID是否存在且有效，确认订单提交成功
+                    spot_order_id = spot_order.get('id')
+                    contract_order_id = contract_order.get('id')
+                    
+                    if not spot_order_id or spot_order_id == '':
+                        logger.error("Gate.io订单ID无效或为空，订单提交失败")
+                        return None, None
+                        
+                    if not contract_order_id or contract_order_id == '':
+                        logger.error("Bybit订单ID无效或为空，订单提交失败")
+                        return None, None
+                    
+                    # 检查订单状态
+                    spot_status = spot_order.get('status', 'unknown')
+                    contract_status = contract_order.get('status', 'unknown')
+                    
+                    # 检查Gate.io订单
+                    if spot_status not in ['open', 'closed', 'filled']:
+                        logger.error(f"Gate.io订单提交状态异常: {spot_status}")
+                        return None, None
+                        
+                    # 检查Bybit订单
+                    if contract_status not in ['open', 'closed', 'filled'] and contract_status == 'unknown':
+                        # Bybit可能返回的订单对象不完整，但只要有有效ID就认为提交成功
+                        logger.warning(f"Bybit订单状态不完整，但ID有效: {contract_order_id}，尝试继续执行")
+                    
+                    logger.info(f"订单提交检查通过 - Gate.io: {spot_status}, Bybit: {contract_status}")
+                    
                 except Exception as e:
                     logger.error(f"下单过程中出错: {str(e)}")
                     if spot_order and not contract_order:
                         logger.error("Gate.io现货订单已提交，但Bybit合约订单失败")
                     elif contract_order and not spot_order:
                         logger.error("Bybit合约订单已提交，但Gate.io现货订单失败")
-                    raise
+                    return None, None
 
                 # 等待一小段时间，确保订单状态更新
                 await asyncio.sleep(2)
@@ -728,6 +787,122 @@ class HedgeTrader:
             # 出错时，我们认为交易是成功的，错误主要来自检查逻辑
             return True
 
+    async def print_trade_results(self):
+        """
+        打印交易执行结果的详细信息
+        """
+        try:
+            logger.info("=" * 50)
+            logger.info("【交易执行结果汇总】")
+            
+            # 打印累计差额信息，如果有交易记录
+            if not self.trade_records:
+                logger.info("没有成功的交易记录")
+                return
+            
+            # 获取当前价格更新差额的价值
+            current_price = 0
+            try:
+                orderbook = await self.gateio.fetch_order_book(self.symbol)
+                current_price = float(orderbook['asks'][0][0])
+                # 更新最新的USDT价值
+                self.cumulative_position_diff_usdt = self.cumulative_position_diff * current_price
+            except Exception as e:
+                logger.warning(f"获取最新价格失败: {str(e)}")
+                
+            logger.info(f"累计交易次数: {self.trade_count} 次")
+            logger.info(f"累计差额数量: {self.cumulative_position_diff:.8f} {self.base_currency}")
+            logger.info(f"累计差额价值: {self.cumulative_position_diff_usdt:.2f} USDT")
+            
+            # 解释差额方向
+            if self.cumulative_position_diff > 0:
+                logger.info(f"差额方向: 合约多于现货 (正值)")
+                logger.info(f"建议: 买入 {abs(self.cumulative_position_diff):.8f} {self.base_currency} 现货补足差额")
+            elif self.cumulative_position_diff < 0:
+                logger.info(f"差额方向: 现货多于合约 (负值)")
+                logger.info(f"建议: 开空 {abs(self.cumulative_position_diff):.8f} {self.base_currency} 合约补足差额")
+            else:
+                logger.info("差额方向: 平衡 (零)")
+                
+            # 显示平衡操作次数
+            if self.rebalance_count > 0:
+                logger.info(f"执行平衡操作: {self.rebalance_count} 次")
+            
+            # 计算交易执行统计
+            if len(self.trade_records) > 0:
+                regular_trades = [r for r in self.trade_records if not r.get('is_rebalance', False)]
+                if regular_trades:
+                    # 计算平均价差和滑点
+                    spreads = []
+                    volumes = []
+                    for record in regular_trades:
+                        # 只处理有完整价格信息的记录
+                        if record.get('gateio_asks') and record.get('bybit_bids'):
+                            gateio_ask = record['gateio_asks'][0][0] if record['gateio_asks'] else 0
+                            bybit_bid = record['bybit_bids'][0][0] if record['bybit_bids'] else 0
+                            if gateio_ask > 0 and bybit_bid > 0:
+                                spread = (bybit_bid - gateio_ask) / gateio_ask * 100
+                                spreads.append(spread)
+                                volumes.append(record.get('spot_filled', 0))
+                    
+                    if spreads:
+                        avg_spread = sum(spreads) / len(spreads)
+                        if volumes:
+                            volume_weighted_spread = sum(s * v for s, v in zip(spreads, volumes)) / sum(volumes)
+                            logger.info(f"平均交易价差: {avg_spread:.4f}%")
+                            logger.info(f"加权平均价差: {volume_weighted_spread:.4f}%")
+            
+            # 显示最近交易记录
+            if len(self.trade_records) > 0:
+                logger.info("-" * 40)
+                logger.info("最近交易记录:")
+                
+                # 显示所有交易记录（如果是平衡操作或者记录较少时）
+                max_display = min(10, len(self.trade_records))
+                for record in self.trade_records[-max_display:]:
+                    if record.get('is_rebalance', False):
+                        # 平衡操作记录
+                        op_side = "买入现货" if record.get('side') == 'spot' else "开空合约"
+                        logger.info(f"【平衡操作】{record.get('trade_id')} - {op_side}: {record.get('amount'):.8f} {self.base_currency}, 价值: {record.get('cost', 0):.2f} USDT")
+                        if record.get('avg_price', 0) > 0:
+                            logger.info(f"  成交均价: {record.get('avg_price'):.8f} USDT/{self.base_currency}")
+                    else:
+                        # 常规交易记录
+                        spot = record.get('spot_filled', 0)
+                        contract = record.get('contract_filled', 0)
+                        diff = record.get('position_diff', 0)
+                        timestamp = record.get('timestamp', 0)
+                        if timestamp > 0:
+                            import datetime
+                            time_str = datetime.datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
+                        else:
+                            time_str = "未知时间"
+                            
+                        logger.info(f"【常规交易】#{record.get('trade_id')} ({time_str}) - 现货: {spot:.8f}, 合约: {contract:.8f}, 差额: {diff:.8f} {self.base_currency} ({record.get('position_diff_usdt', 0):.2f} USDT)")
+                        
+                        # 显示市场状态
+                        if record.get('gateio_asks') and record.get('bybit_bids'):
+                            gateio_ask = record['gateio_asks'][0][0] if record['gateio_asks'] else 0
+                            bybit_bid = record['bybit_bids'][0][0] if record['bybit_bids'] else 0
+                            if gateio_ask > 0 and bybit_bid > 0:
+                                price_diff = bybit_bid - gateio_ask
+                                price_diff_percent = price_diff / gateio_ask * 100
+                                logger.info(f"  执行时价差: Gate.io卖1 {gateio_ask:.8f} vs Bybit买1 {bybit_bid:.8f}, 差值: {price_diff:.8f} ({price_diff_percent:.4f}%)")
+            
+            # 显示是否需要平衡
+            if abs(self.cumulative_position_diff_usdt) >= 6:
+                logger.info("-" * 40)
+                balance_side = "买入现货" if self.cumulative_position_diff > 0 else "开空合约"
+                logger.info(f"建议: 需要{balance_side}来平衡仓位")
+                logger.info(f"平衡数量: {abs(self.cumulative_position_diff):.8f} {self.base_currency}")
+                logger.info(f"预计成本: {abs(self.cumulative_position_diff_usdt):.2f} USDT")
+            
+            logger.info("=" * 50)
+        except Exception as e:
+            logger.error(f"打印交易结果时出错: {str(e)}")
+            import traceback
+            logger.debug(f"错误堆栈:\n{traceback.format_exc()}")
+
 
 def parse_arguments():
     """
@@ -856,8 +1031,28 @@ async def main():
                     executed_count += 1
                     
                     # 验证订单成功
-                    if (spot_order and contract_order and 
-                        spot_order.get('status') in ['closed', 'filled'] and
+                    if not spot_order or not contract_order:
+                        logger.error(f"第 {current_iteration}/{total_count} 次交易失败: 订单未成功提交")
+                        # 立即打印交易执行结果并退出
+                        logger.warning(f"由于订单提交失败，停止后续交易流程")
+                        # 立即打印交易结果
+                        await trader.print_trade_results()
+                        break
+                    
+                    # 进一步检查订单ID是否有效
+                    spot_order_id = spot_order.get('id')
+                    contract_order_id = contract_order.get('id')
+                    
+                    if not spot_order_id or not contract_order_id:
+                        logger.error(f"第 {current_iteration}/{total_count} 次交易失败: 订单ID无效")
+                        logger.warning(f"Gate.io订单ID: {spot_order_id}, Bybit订单ID: {contract_order_id}")
+                        logger.warning(f"由于订单ID无效，停止后续交易流程")
+                        # 立即打印交易结果
+                        await trader.print_trade_results()
+                        break
+                    
+                    # 进一步验证订单状态
+                    if (spot_order.get('status') in ['closed', 'filled'] and
                         trader.last_trade_spot_amount > 0 and 
                         trader.last_trade_contract_amount > 0):
                         
@@ -865,8 +1060,19 @@ async def main():
                         successful_count += 1
                         hedge_success = True
                     else:
-                        logger.warning(f"第 {current_iteration}/{total_count} 次交易可能部分成功，但结果验证失败")
-                        # 当前交易出现问题，不继续后续交易
+                        # 记录具体的失败原因
+                        failure_reasons = []
+                        if spot_order.get('status') not in ['closed', 'filled']:
+                            failure_reasons.append(f"Gate.io订单状态: {spot_order.get('status')}")
+                        if trader.last_trade_spot_amount <= 0:
+                            failure_reasons.append("现货成交量为0")
+                        if trader.last_trade_contract_amount <= 0:
+                            failure_reasons.append("合约成交量为0")
+                            
+                        logger.error(f"第 {current_iteration}/{total_count} 次交易失败: {', '.join(failure_reasons)}")
+                        logger.warning(f"由于订单执行异常，停止后续交易流程")
+                        # 立即打印交易结果
+                        await trader.print_trade_results()
                         break
                         
                 except Exception as e:
@@ -878,6 +1084,8 @@ async def main():
                     
                     # 计入执行次数，但标记为失败
                     executed_count += 1
+                    # 立即打印交易结果
+                    await trader.print_trade_results()
                     # 由于交易失败，不继续后续交易
                     break
                 
@@ -893,6 +1101,8 @@ async def main():
             except Exception as e:
                 logger.error(f"第 {current_iteration}/{total_count} 次交易操作时出错: {str(e)}")
                 logger.debug(f"错误详情: {e}", exc_info=True)  # 打印完整堆栈跟踪
+                # 立即打印交易结果
+                await trader.print_trade_results()
                 # 出现异常，停止后续交易
                 break
 
@@ -907,104 +1117,8 @@ async def main():
             success_rate = (successful_count / executed_count) * 100
             logger.info(f"交易成功率: {success_rate:.2f}%")
         
-        # 打印累计差额信息，如果有交易记录
-        if 'trader' in locals() and hasattr(trader, 'trade_records') and trader.trade_records:
-            # 获取当前价格更新差额的价值
-            current_price = 0
-            try:
-                orderbook = await trader.gateio.fetch_order_book(trader.symbol)
-                current_price = float(orderbook['asks'][0][0])
-                # 更新最新的USDT价值
-                trader.cumulative_position_diff_usdt = trader.cumulative_position_diff * current_price
-            except Exception as e:
-                logger.warning(f"获取最新价格失败: {str(e)}")
-            
-            logger.info("=" * 50)
-            logger.info("【仓位差额汇总】")
-            logger.info(f"累计差额数量: {trader.cumulative_position_diff:.8f} {trader.base_currency}")
-            logger.info(f"累计差额价值: {trader.cumulative_position_diff_usdt:.2f} USDT")
-            
-            # 解释差额方向
-            if trader.cumulative_position_diff > 0:
-                logger.info(f"差额方向: 合约多于现货 (正值)")
-                logger.info(f"建议: 买入 {abs(trader.cumulative_position_diff):.8f} {trader.base_currency} 现货补足差额")
-            elif trader.cumulative_position_diff < 0:
-                logger.info(f"差额方向: 现货多于合约 (负值)")
-                logger.info(f"建议: 开空 {abs(trader.cumulative_position_diff):.8f} {trader.base_currency} 合约补足差额")
-            else:
-                logger.info("差额方向: 平衡 (零)")
-                
-            # 显示平衡操作次数
-            if trader.rebalance_count > 0:
-                logger.info(f"执行平衡操作: {trader.rebalance_count} 次")
-            
-            # 计算交易执行统计
-            if len(trader.trade_records) > 0:
-                regular_trades = [r for r in trader.trade_records if not r.get('is_rebalance', False)]
-                if regular_trades:
-                    # 计算平均价差和滑点
-                    spreads = []
-                    volumes = []
-                    for record in regular_trades:
-                        # 只处理有完整价格信息的记录
-                        if record.get('gateio_asks') and record.get('bybit_bids'):
-                            gateio_ask = record['gateio_asks'][0][0] if record['gateio_asks'] else 0
-                            bybit_bid = record['bybit_bids'][0][0] if record['bybit_bids'] else 0
-                            if gateio_ask > 0 and bybit_bid > 0:
-                                spread = (bybit_bid - gateio_ask) / gateio_ask * 100
-                                spreads.append(spread)
-                                volumes.append(record.get('spot_filled', 0))
-                    
-                    if spreads:
-                        avg_spread = sum(spreads) / len(spreads)
-                        if volumes:
-                            volume_weighted_spread = sum(s * v for s, v in zip(spreads, volumes)) / sum(volumes)
-                            logger.info(f"平均交易价差: {avg_spread:.4f}%")
-                            logger.info(f"加权平均价差: {volume_weighted_spread:.4f}%")
-                
-            # 显示最近交易记录
-            if len(trader.trade_records) > 0:
-                logger.info("-" * 40)
-                logger.info("最近交易记录:")
-                for record in trader.trade_records[-min(3, len(trader.trade_records)):]:
-                    if record.get('is_rebalance', False):
-                        # 平衡操作记录
-                        op_side = "买入现货" if record.get('side') == 'spot' else "开空合约"
-                        logger.info(f"【平衡操作】{record.get('trade_id')} - {op_side}: {record.get('amount'):.8f} {trader.base_currency}, 价值: {record.get('cost', 0):.2f} USDT")
-                        if record.get('avg_price', 0) > 0:
-                            logger.info(f"  成交均价: {record.get('avg_price'):.8f} USDT/{trader.base_currency}")
-                    else:
-                        # 常规交易记录
-                        spot = record.get('spot_filled', 0)
-                        contract = record.get('contract_filled', 0)
-                        diff = record.get('position_diff', 0)
-                        timestamp = record.get('timestamp', 0)
-                        if timestamp > 0:
-                            import datetime
-                            time_str = datetime.datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
-                        else:
-                            time_str = "未知时间"
-                            
-                        logger.info(f"【常规交易】#{record.get('trade_id')} ({time_str}) - 现货: {spot:.8f}, 合约: {contract:.8f}, 差额: {diff:.8f} {trader.base_currency} ({record.get('position_diff_usdt', 0):.2f} USDT)")
-                        
-                        # 显示市场状态
-                        if record.get('gateio_asks') and record.get('bybit_bids'):
-                            gateio_ask = record['gateio_asks'][0][0] if record['gateio_asks'] else 0
-                            bybit_bid = record['bybit_bids'][0][0] if record['bybit_bids'] else 0
-                            if gateio_ask > 0 and bybit_bid > 0:
-                                price_diff = bybit_bid - gateio_ask
-                                price_diff_percent = price_diff / gateio_ask * 100
-                                logger.info(f"  执行时价差: Gate.io卖1 {gateio_ask:.8f} vs Bybit买1 {bybit_bid:.8f}, 差值: {price_diff:.8f} ({price_diff_percent:.4f}%)")
-            
-            # 显示是否需要平衡
-            if abs(trader.cumulative_position_diff_usdt) >= 6:
-                logger.info("-" * 40)
-                balance_side = "买入现货" if trader.cumulative_position_diff > 0 else "开空合约"
-                logger.info(f"建议: 需要{balance_side}来平衡仓位")
-                logger.info(f"平衡数量: {abs(trader.cumulative_position_diff):.8f} {trader.base_currency}")
-                logger.info(f"预计成本: {abs(trader.cumulative_position_diff_usdt):.2f} USDT")
-            
-            logger.info("=" * 50)
+        # 打印交易结果
+        await trader.print_trade_results()
         
         # 确保关闭交易所连接
         if 'trader' in locals():
