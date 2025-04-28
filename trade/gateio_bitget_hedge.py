@@ -342,6 +342,22 @@ class HedgeTrader:
                         
                         # 立即执行交易
                         try:
+                            # 发送订单请求
+                            spot_order_request = {
+                                'symbol': self.symbol,
+                                'amount': cost,
+                                'params': {'createMarketBuyOrderRequiresPrice': False, 'quoteOrderQty': True}
+                            }
+                            
+                            contract_order_request = {
+                                'symbol': self.contract_symbol,
+                                'amount': contract_amount,
+                                'params': {"reduceOnly": False}
+                            }
+                            
+                            logger.debug(f"准备发送现货订单: {spot_order_request}")
+                            logger.debug(f"准备发送合约订单: {contract_order_request}")
+                            
                             spot_order, contract_order = await asyncio.gather(
                                 self.gateio.create_market_buy_order(
                                     symbol=self.symbol,
@@ -354,10 +370,30 @@ class HedgeTrader:
                                     params={"reduceOnly": False}
                                 )
                             )
-                            logger.debug(f"下单请求已发送 - Gate.io订单ID: {spot_order.get('id')}, Bitget订单ID: {contract_order.get('id')}")
+                            
+                            # 详细打印订单信息到调试日志
+                            logger.debug(f"Gate.io现货订单完整信息: {spot_order}")
+                            logger.debug(f"Bitget合约订单完整信息: {contract_order}")
+                            
+                            # 检查订单是否成功提交
+                            if not spot_order or 'id' not in spot_order:
+                                error_msg = f"Gate.io现货订单提交失败: {spot_order}"
+                                logger.error(error_msg)
+                                return None, None
+                                
+                            if not contract_order or 'id' not in contract_order:
+                                error_msg = f"Bitget合约订单提交失败: {contract_order}"
+                                logger.error(error_msg)
+                                return None, None
+                                
+                            logger.info(f"订单提交成功 - Gate.io订单ID: {spot_order.get('id')}, Bitget订单ID: {contract_order.get('id')}")
                         except Exception as e:
                             logger.error(f"下单过程出错: {str(e)}")
-                            raise
+                            # 打印完整异常跟踪信息
+                            import traceback
+                            logger.debug(f"下单异常详细信息: {traceback.format_exc()}")
+                            # 失败直接返回，不继续执行
+                            return None, None
 
                         # 交易后操作
                         base_currency = self.symbol.split('/')[0]
@@ -368,6 +404,7 @@ class HedgeTrader:
                         
                         # 获取最新的订单状态 - Gate.io
                         spot_order_id = spot_order.get('id')
+                        spot_order_filled = False
                         if spot_order_id:
                             try:
                                 # 尝试获取已完成订单
@@ -388,23 +425,60 @@ class HedgeTrader:
                                     updated_spot_order = await self.gateio.fetch_order(spot_order_id, self.symbol)
                                     
                                 if updated_spot_order:
-                                    logger.debug(f"获取到Gate.io最新订单状态: {updated_spot_order.get('status')}")
+                                    logger.debug(f"获取到Gate.io最新订单状态: {updated_spot_order}")
                                     spot_order = updated_spot_order
+                                    
+                                    # 检查订单状态和成交量
+                                    spot_status = updated_spot_order.get('status')
+                                    spot_filled = float(updated_spot_order.get('filled', 0))
+                                    
+                                    if spot_filled > 0 and spot_status in ['closed', 'fulfilled', 'filled']:
+                                        spot_order_filled = True
+                                        logger.info(f"Gate.io现货订单已成交: 状态={spot_status}, 成交量={spot_filled}")
+                                    else:
+                                        logger.error(f"Gate.io现货订单未完全成交: 状态={spot_status}, 成交量={spot_filled}, 订单详情={updated_spot_order}")
+                                        # 如果订单状态不对，立即终止交易
+                                        if spot_filled <= 0:
+                                            return None, None
                             except Exception as e:
-                                logger.warning(f"获取Gate.io订单更新失败: {str(e)}")
+                                logger.error(f"获取Gate.io订单更新失败: {str(e)}")
+                                import traceback
+                                logger.debug(f"获取订单状态异常详情: {traceback.format_exc()}")
+                        else:
+                            logger.error("Gate.io订单ID无效，无法检查订单状态")
+                            return None, None
                         
                         # 获取最新的订单状态 - Bitget
                         contract_order_id = contract_order.get('id')
+                        contract_order_filled = False
                         if contract_order_id:
                             try:
                                 updated_contract_order = await self.bitget.fetch_order(contract_order_id, self.contract_symbol)
                                 
                                 if updated_contract_order:
-                                    logger.debug(f"获取到Bitget最新订单状态: {updated_contract_order.get('status')}")
+                                    logger.debug(f"获取到Bitget最新订单状态: {updated_contract_order}")
                                     contract_order = updated_contract_order
+                                    
+                                    # 检查订单状态和成交量
+                                    contract_status = updated_contract_order.get('status')
+                                    contract_filled = float(updated_contract_order.get('filled', 0))
+                                    
+                                    if contract_filled > 0 and contract_status in ['closed', 'fulfilled', 'filled']:
+                                        contract_order_filled = True
+                                        logger.info(f"Bitget合约订单已成交: 状态={contract_status}, 成交量={contract_filled}")
+                                    else:
+                                        logger.error(f"Bitget合约订单未完全成交: 状态={contract_status}, 成交量={contract_filled}, 订单详情={updated_contract_order}")
+                                        # 如果订单状态不对，立即终止交易
+                                        if contract_filled <= 0:
+                                            return None, None
                             except Exception as e:
-                                logger.warning(f"获取Bitget订单更新失败: {str(e)}")
-                        
+                                logger.error(f"获取Bitget订单更新失败: {str(e)}")
+                                import traceback
+                                logger.debug(f"获取订单状态异常详情: {traceback.format_exc()}")
+                        else:
+                            logger.error("Bitget订单ID无效，无法检查订单状态")
+                            return None, None
+
                         # 提取订单执行结果
                         # 获取现货订单的实际成交结果
                         filled_amount = float(spot_order.get('filled', 0))
@@ -536,6 +610,9 @@ class HedgeTrader:
                     # 计算买入现货所需的USDT (加1%作为滑点和手续费的缓冲)
                     cost = float(rebalance_amount) * current_price * 1.01
                     
+                    # 记录订单请求详情
+                    logger.debug(f"【平衡操作】发送现货买入订单: 交易对={self.symbol}, 金额={cost} USDT")
+                    
                     # 执行市价买入
                     rebalance_order = await self.gateio.create_market_buy_order(
                         symbol=self.symbol,
@@ -543,11 +620,40 @@ class HedgeTrader:
                         params={'createMarketBuyOrderRequiresPrice': False, 'quoteOrderQty': True}
                     )
                     
+                    # 记录订单响应详情
+                    logger.debug(f"【平衡操作】现货买入订单响应: {rebalance_order}")
+                    
+                    # 检查订单是否成功提交
+                    if not rebalance_order or 'id' not in rebalance_order:
+                        logger.error(f"【平衡操作】现货买入订单提交失败: {rebalance_order}")
+                        return
+                    
+                    logger.info(f"【平衡操作】订单已提交 - ID: {rebalance_order.get('id')}")
+                    
+                    # 等待订单状态更新
+                    await asyncio.sleep(1.5)
+                    
+                    # 获取最新订单状态
+                    try:
+                        updated_order = await self.gateio.fetch_order(rebalance_order.get('id'), self.symbol)
+                        logger.debug(f"【平衡操作】更新后的订单状态: {updated_order}")
+                        
+                        if updated_order and updated_order.get('status') in ['closed', 'filled']:
+                            rebalance_order = updated_order
+                        else:
+                            logger.warning(f"【平衡操作】订单状态未完成: {updated_order.get('status')}")
+                    except Exception as e:
+                        logger.warning(f"【平衡操作】获取订单更新失败: {str(e)}")
+                    
                     # 获取实际成交量
                     filled_amount = float(rebalance_order.get('filled', 0))
                     fees = rebalance_order.get('fees', [])
                     base_fee = sum(float(fee.get('cost', 0)) for fee in fees if fee.get('currency') == base_currency)
                     actual_filled = filled_amount - base_fee
+                    
+                    if filled_amount <= 0:
+                        logger.error(f"【平衡操作】订单未成交，退出平衡操作")
+                        return
                     
                     # 更新累计差额
                     self.cumulative_position_diff -= actual_filled
@@ -559,10 +665,13 @@ class HedgeTrader:
                     # 申购余币宝
                     try:
                         if actual_filled > 0:
+                            logger.debug(f"【平衡操作】申购余币宝: {base_currency}, 数量={actual_filled}")
                             earn_result = gateio_subscrible_earn(base_currency, actual_filled)
-                            logger.info(f"【平衡操作】已将 {actual_filled} {base_currency} 申购到余币宝")
+                            logger.info(f"【平衡操作】已将 {actual_filled} {base_currency} 申购到余币宝, 结果: {earn_result}")
                     except Exception as e:
                         logger.error(f"【平衡操作】余币宝申购失败: {str(e)}")
+                        import traceback
+                        logger.debug(f"【平衡操作】余币宝申购错误详情: {traceback.format_exc()}")
                     
                     # 记录平衡操作结果
                     logger.info(f"【平衡操作】成功买入 {actual_filled} {base_currency} 现货，累计差额更新为 "
@@ -571,6 +680,8 @@ class HedgeTrader:
                     
                 except Exception as e:
                     logger.error(f"【平衡操作】买入现货失败: {str(e)}")
+                    import traceback
+                    logger.debug(f"【平衡操作】买入现货错误详情: {traceback.format_exc()}")
             
             elif self.cumulative_position_diff < 0:  # 现货多于合约，需要增加合约空单
                 rebalance_amount = abs(self.cumulative_position_diff)
@@ -583,6 +694,9 @@ class HedgeTrader:
                     # 精确化合约数量
                     contract_amount = self.bitget.amount_to_precision(self.contract_symbol, rebalance_amount)
                     
+                    # 记录订单请求详情
+                    logger.debug(f"【平衡操作】发送合约空单订单: 交易对={self.contract_symbol}, 数量={contract_amount}")
+                    
                     # 执行合约空单
                     rebalance_order = await self.bitget.create_market_sell_order(
                         symbol=self.contract_symbol,
@@ -590,19 +704,35 @@ class HedgeTrader:
                         params={"reduceOnly": False}
                     )
                     
+                    # 记录订单响应详情
+                    logger.debug(f"【平衡操作】合约空单订单响应: {rebalance_order}")
+                    
+                    # 检查订单是否成功提交
+                    if not rebalance_order or 'id' not in rebalance_order:
+                        logger.error(f"【平衡操作】合约空单订单提交失败: {rebalance_order}")
+                        return
+                    
+                    logger.info(f"【平衡操作】订单已提交 - ID: {rebalance_order.get('id')}")
+                    
                     # 获取实际成交量
                     filled_amount = float(rebalance_order.get('filled', 0))
                     
                     # 如果订单信息中没有成交量，尝试获取更新
                     if filled_amount <= 0:
                         try:
-                            await asyncio.sleep(0.5)
+                            await asyncio.sleep(1.5)
                             order_id = rebalance_order.get('id')
                             if order_id:
                                 updated_order = await self.bitget.fetch_order(order_id, self.contract_symbol)
-                                filled_amount = float(updated_order.get('filled', 0))
+                                logger.debug(f"【平衡操作】更新后的合约订单: {updated_order}")
+                                
+                                if updated_order:
+                                    filled_amount = float(updated_order.get('filled', 0))
+                                    rebalance_order = updated_order
                         except Exception as ex:
                             logger.warning(f"【平衡操作】获取订单详情失败: {str(ex)}")
+                            import traceback
+                            logger.debug(f"【平衡操作】获取订单详情错误堆栈: {traceback.format_exc()}")
                     
                     # 如果仍然没有成交量，使用下单量作为估计
                     if filled_amount <= 0:
@@ -623,9 +753,13 @@ class HedgeTrader:
                     
                 except Exception as e:
                     logger.error(f"【平衡操作】开立合约空单失败: {str(e)}")
+                    import traceback
+                    logger.debug(f"【平衡操作】开立合约空单错误堆栈: {traceback.format_exc()}")
                     
         except Exception as e:
             logger.error(f"执行平衡操作时出错: {str(e)}")
+            import traceback
+            logger.debug(f"平衡操作错误堆栈: {traceback.format_exc()}")
             raise
 
     async def check_trade_requirements(self):
@@ -775,7 +909,27 @@ async def main():
                 try:
                     spot_order, contract_order = await trader.execute_hedge_trade_optimized()
                     
-                    # 基本验证：只检查是否有订单返回，不做详细验证（详细验证在函数内已完成）
+                    # 增强的成功验证逻辑
+                    if not spot_order or not contract_order:
+                        logger.error(f"交易执行失败: 一个或多个订单返回为空")
+                        # 打印当前交易执行统计
+                        logger.info(f"当前交易统计 - 已完成: {completed_trades}/{target_count}, 失败: {total_errors + 1}, 连续失败: {consecutive_errors + 1}")
+                        # 增加错误计数并继续下一循环
+                        total_errors += 1
+                        consecutive_errors += 1
+                        
+                        # 检查是否达到最大连续失败次数
+                        if consecutive_errors >= 3:
+                            logger.error(f"连续 {consecutive_errors} 次交易执行失败，终止后续交易")
+                            break
+                            
+                        # 等待更长时间再尝试下一次
+                        wait_time = 10 + consecutive_errors * 5  # 错误越多，等待时间越长
+                        logger.info(f"等待 {wait_time} 秒后继续尝试下一次交易...")
+                        await asyncio.sleep(wait_time)
+                        continue
+                    
+                    # 详细检查订单状态
                     if (isinstance(spot_order, dict) and isinstance(contract_order, dict) and 
                         'id' in spot_order and 'id' in contract_order and
                         float(spot_order.get('filled', 0)) > 0 and float(contract_order.get('filled', 0)) > 0):
@@ -783,6 +937,15 @@ async def main():
                         completed_trades += 1
                         consecutive_errors = 0  # 重置连续失败计数
                         logger.info(f"第 {completed_trades}/{target_count} 次对冲交易成功完成!")
+                        
+                        # 详细打印交易执行结果
+                        spot_filled = float(spot_order.get('filled', 0))
+                        contract_filled = float(contract_order.get('filled', 0))
+                        spot_status = spot_order.get('status', 'unknown')
+                        contract_status = contract_order.get('status', 'unknown')
+                        
+                        logger.debug(f"交易执行详情 - Gate.io: ID={spot_order.get('id')}, 状态={spot_status}, 成交量={spot_filled}")
+                        logger.debug(f"交易执行详情 - Bitget: ID={contract_order.get('id')}, 状态={contract_status}, 成交量={contract_filled}")
                         
                         # 输出当前累计差额信息
                         if hasattr(trader, 'cumulative_position_diff') and hasattr(trader, 'cumulative_position_diff_usdt'):
@@ -795,25 +958,43 @@ async def main():
                             await asyncio.sleep(5)
                         continue
                     else:
-                        logger.error(f"订单结构无效 - spot_order: {spot_order and spot_order.get('id')}, contract_order: {contract_order and contract_order.get('id')}")
+                        # 详细记录订单问题
+                        spot_issues = []
+                        contract_issues = []
+                        
+                        if not isinstance(spot_order, dict):
+                            spot_issues.append(f"订单不是字典类型: {type(spot_order)}")
+                        elif 'id' not in spot_order:
+                            spot_issues.append("订单缺少ID字段")
+                        elif float(spot_order.get('filled', 0)) <= 0:
+                            spot_issues.append(f"订单未成交，成交量: {spot_order.get('filled', 0)}")
+                        
+                        if not isinstance(contract_order, dict):
+                            contract_issues.append(f"订单不是字典类型: {type(contract_order)}")
+                        elif 'id' not in contract_order:
+                            contract_issues.append("订单缺少ID字段")
+                        elif float(contract_order.get('filled', 0)) <= 0:
+                            contract_issues.append(f"订单未成交，成交量: {contract_order.get('filled', 0)}")
+                        
+                        logger.error(f"订单验证失败 - Gate.io问题: {', '.join(spot_issues) if spot_issues else '无'}")
+                        logger.error(f"订单验证失败 - Bitget问题: {', '.join(contract_issues) if contract_issues else '无'}")
+                        logger.error(f"Gate.io订单: {spot_order}")
+                        logger.error(f"Bitget订单: {contract_order}")
+                        
+                        # 打印当前交易执行统计
+                        logger.info(f"当前交易统计 - 已完成: {completed_trades}/{target_count}, 失败: {total_errors + 1}, 连续失败: {consecutive_errors + 1}")
                 except Exception as e:
                     logger.error(f"执行交易过程中出错: {str(e)}")
+                    import traceback
+                    logger.debug(f"交易执行错误堆栈: {traceback.format_exc()}")
+                    
+                    # 打印当前交易执行统计
+                    logger.info(f"当前交易统计 - 已完成: {completed_trades}/{target_count}, 失败: {total_errors + 1}, 连续失败: {consecutive_errors + 1}")
                 
                 # 如果执行到这里，说明交易失败
                 total_errors += 1
                 consecutive_errors += 1
                 logger.error(f"第 {completed_trades + 1} 次交易执行失败，可能原因: 订单执行异常或持仓不匹配")
-                
-                # 如果连续3次失败，终止程序
-                if consecutive_errors >= 3:
-                    logger.error(f"连续 {consecutive_errors} 次交易执行失败，终止后续交易")
-                    break
-                
-                logger.warning(f"交易失败，但将继续尝试下一次交易 (已连续失败 {consecutive_errors} 次)")
-                # 等待一段时间再尝试下一次
-                logger.info(f"等待10秒后继续尝试下一次交易...")
-                await asyncio.sleep(10)
-                    
             except Exception as e:
                 total_errors += 1
                 consecutive_errors += 1
