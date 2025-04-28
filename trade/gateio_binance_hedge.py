@@ -499,7 +499,7 @@ class HedgeTrader:
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
-                    logger.error(f"监控订单簿时出错: {str(e)}")
+                    logger.debug(f"监控订单簿时出错: {str(e)}")
                     # 短暂等待后重试
                     await asyncio.sleep(1)
                 

@@ -286,7 +286,7 @@ class HedgeTrader:
                                 # 如果是因为价差不满足条件而未执行交易，继续等待下一次订单簿更新
 
                         except Exception as e:
-                            logger.error(f"处理订单簿数据时出错: {str(e)}")
+                            logger.debug(f"处理订单簿数据时出错: {str(e)}")
 
                     # 取消未完成的任务
                     for task in pending:
