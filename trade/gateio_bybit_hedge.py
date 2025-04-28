@@ -273,12 +273,8 @@ class HedgeTrader:
                                     break
                                 else:
                                     logger.warning(f"订单状态异常 - Gate.io: {spot_status}, Bybit: {contract_status}")
-                            elif spot_order and not contract_order:
-                                logger.error("只有Gate.io订单提交成功，Bybit订单提交失败")
-                                self.ws_running = False
-                                break
-                            elif contract_order and not spot_order:
-                                logger.error("只有Bybit订单提交成功，Gate.io订单提交失败")
+                            else:
+                                logger.error(f"订单执行失败,Gate.io订单: {spot_order}，Bybit订单: {contract_order}")
                                 self.ws_running = False
                                 break
 
