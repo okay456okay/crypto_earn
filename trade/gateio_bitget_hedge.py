@@ -864,7 +864,6 @@ async def main():
         completed_trades = 0
         target_count = args.count
         total_errors = 0
-        consecutive_errors = 0
 
         logger.info(f"计划执行 {target_count} 次交易操作")
 
@@ -913,21 +912,13 @@ async def main():
                     if not spot_order or not contract_order:
                         logger.error(f"交易执行失败: 一个或多个订单返回为空")
                         # 打印当前交易执行统计
-                        logger.info(f"当前交易统计 - 已完成: {completed_trades}/{target_count}, 失败: {total_errors + 1}, 连续失败: {consecutive_errors + 1}")
-                        # 增加错误计数并继续下一循环
+                        logger.info(f"当前交易统计 - 已完成: {completed_trades}/{target_count}, 失败: {total_errors + 1}")
+                        # 增加错误计数
                         total_errors += 1
-                        consecutive_errors += 1
                         
-                        # 检查是否达到最大连续失败次数
-                        if consecutive_errors >= 3:
-                            logger.error(f"连续 {consecutive_errors} 次交易执行失败，终止后续交易")
-                            break
-                            
-                        # 等待更长时间再尝试下一次
-                        wait_time = 10 + consecutive_errors * 5  # 错误越多，等待时间越长
-                        logger.info(f"等待 {wait_time} 秒后继续尝试下一次交易...")
-                        await asyncio.sleep(wait_time)
-                        continue
+                        # 发生一次错误就终止交易
+                        logger.error(f"交易执行失败，终止后续交易")
+                        break
                     
                     # 详细检查订单状态
                     if (isinstance(spot_order, dict) and isinstance(contract_order, dict) and 
@@ -935,7 +926,6 @@ async def main():
                         float(spot_order.get('filled', 0)) > 0 and float(contract_order.get('filled', 0)) > 0):
                         # 订单有效且有成交量，交易成功
                         completed_trades += 1
-                        consecutive_errors = 0  # 重置连续失败计数
                         logger.info(f"第 {completed_trades}/{target_count} 次对冲交易成功完成!")
                         
                         # 详细打印交易执行结果
@@ -982,41 +972,38 @@ async def main():
                         logger.error(f"Bitget订单: {contract_order}")
                         
                         # 打印当前交易执行统计
-                        logger.info(f"当前交易统计 - 已完成: {completed_trades}/{target_count}, 失败: {total_errors + 1}, 连续失败: {consecutive_errors + 1}")
+                        logger.info(f"当前交易统计 - 已完成: {completed_trades}/{target_count}, 失败: {total_errors + 1}")
                 except Exception as e:
                     logger.error(f"执行交易过程中出错: {str(e)}")
                     import traceback
                     logger.debug(f"交易执行错误堆栈: {traceback.format_exc()}")
                     
                     # 打印当前交易执行统计
-                    logger.info(f"当前交易统计 - 已完成: {completed_trades}/{target_count}, 失败: {total_errors + 1}, 连续失败: {consecutive_errors + 1}")
+                    logger.info(f"当前交易统计 - 已完成: {completed_trades}/{target_count}, 失败: {total_errors + 1}")
                 
                 # 如果执行到这里，说明交易失败
                 total_errors += 1
-                consecutive_errors += 1
                 logger.error(f"第 {completed_trades + 1} 次交易执行失败，可能原因: 订单执行异常或持仓不匹配")
+                # 发生任何错误就终止交易
+                break
             except Exception as e:
                 total_errors += 1
-                consecutive_errors += 1
                 logger.error(f"执行第 {completed_trades + 1} 次交易时出错: {str(e)}")
                 import traceback
                 logger.debug(f"错误堆栈: {traceback.format_exc()}")
                 
-                # 如果连续3次失败，终止程序
-                if consecutive_errors >= 3:
-                    logger.error(f"连续 {consecutive_errors} 次交易执行失败，终止后续交易")
-                    break
-                    
-                logger.warning(f"交易失败，但将继续尝试下一次交易 (已连续失败 {consecutive_errors} 次)")
-                # 等待一段时间再尝试下一次
-                logger.info(f"等待10秒后继续尝试下一次交易...")
-                await asyncio.sleep(10)
+                # 发生任何错误就终止交易
+                logger.error(f"交易执行出错，终止后续交易")
+                break
                 
         # 打印最终执行结果和累计差额信息
         if completed_trades == target_count:
             logger.info(f"所有计划交易已完成! 成功执行 {completed_trades}/{target_count} 次交易")
         else:
-            logger.info(f"交易过程中止，成功执行 {completed_trades}/{target_count} 次交易")
+            if total_errors > 0:
+                logger.info(f"交易过程因错误中止，成功执行 {completed_trades}/{target_count} 次交易")
+            else:
+                logger.info(f"交易过程中止，成功执行 {completed_trades}/{target_count} 次交易")
         
         # 输出最终累计差额信息
         if hasattr(trader, 'cumulative_position_diff') and hasattr(trader, 'cumulative_position_diff_usdt'):
@@ -1026,7 +1013,7 @@ async def main():
                 logger.info(f"执行了 {trader.rebalance_count} 次平衡操作")
         
         if total_errors > 0:
-            logger.warning(f"执行过程中共发生 {total_errors} 次错误")
+            logger.warning(f"执行过程中发生错误导致交易中止")
 
     except Exception as e:
         logger.error(f"程序执行过程中发生错误: {str(e)}")
