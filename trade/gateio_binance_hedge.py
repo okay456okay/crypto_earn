@@ -332,14 +332,41 @@ class HedgeTrader:
                         t2 = time.time()
                         logger.debug(f"[时序] ===从满足条件到订单发送完成共耗时: {(t2-t0)*1000:.3f}ms===")
                         
+                        # 立即检查订单提交状态并记录订单详情到调试日志
+                        logger.debug(f"Gate.io现货订单提交详情: {spot_order}")
+                        logger.debug(f"Binance合约订单提交详情: {contract_order}")
+                        
+                        # 检查订单是否成功提交
+                        if not spot_order or not contract_order:
+                            logger.error("订单提交失败 - 未能获取到有效的订单对象")
+                            return None, None
+                        
+                        # 检查订单ID是否存在
+                        spot_order_id = spot_order.get('id')
+                        contract_order_id = contract_order.get('id')
+                        
+                        if not spot_order_id or not contract_order_id:
+                            logger.error(f"订单提交失败 - 未获取到有效订单ID: Gate.io ID: {spot_order_id}, Binance ID: {contract_order_id}")
+                            return None, None
+                        
+                        # 检查订单初始状态
+                        spot_initial_status = spot_order.get('status', '')
+                        contract_initial_status = contract_order.get('status', '')
+                        
+                        # 检查订单初始状态是否明确失败
+                        failed_statuses = ['rejected', 'canceled', 'expired']
+                        if spot_initial_status in failed_statuses or contract_initial_status in failed_statuses:
+                            logger.error(f"订单提交失败 - 初始状态显示失败: Gate.io: {spot_initial_status}, Binance: {contract_initial_status}")
+                            return None, None
+                            
+                        logger.info(f"订单提交成功 - Gate.io ID: {spot_order_id}, Binance ID: {contract_order_id}")
+                        logger.debug(f"初始订单状态 - Gate.io: {spot_initial_status}, Binance: {contract_initial_status}")
+                        
                         # 等待2秒让订单状态更新
                         await asyncio.sleep(2)
                         
                         # 尝试获取最新的订单状态
                         try:
-                            spot_order_id = spot_order.get('id')
-                            contract_order_id = contract_order.get('id')
-                            
                             if spot_order_id:
                                 updated_spot_order = await self.gateio.fetch_order(spot_order_id, self.symbol)
                                 logger.debug(f"获取到Gate.io更新后的订单状态: {updated_spot_order.get('status')}")
@@ -449,7 +476,7 @@ class HedgeTrader:
                                 return None, None
                         
                         # 检查持仓情况 (保留这个调用，但降低日志级别)
-                        await self.check_positions()
+                        # await self.check_positions()
                         
                         # 申购余币宝
                         if not self.test_mode:
@@ -632,6 +659,180 @@ async def test_earn_subscription():
         logger.error(f"余币宝测试失败: {str(e)}")
 
 
+async def print_execution_summary(trader, successful_trades, total_count):
+    """
+    打印交易执行汇总信息
+    
+    Args:
+        trader (HedgeTrader): 交易对象实例
+        successful_trades (int): 成功执行的交易次数
+        total_count (int): 计划执行的总交易次数
+    """
+    logger.info("=" * 50)
+    logger.info(f"交易执行汇总")
+    logger.info(f"总计执行: {successful_trades}/{total_count} 次交易")
+    
+    # 如果没有trader或者交易记录为空，直接返回
+    if not trader or not trader.trade_records:
+        logger.info("=" * 50)
+        return
+    
+    try:
+        base_currency = trader.symbol.split('/')[0]
+        
+        # 尝试获取当前价格，如果失败则使用最后一次交易的价格
+        try:
+            orderbook = await trader.gateio.fetch_order_book(trader.symbol)
+            current_price = float(orderbook['asks'][0][0])
+        except Exception:
+            # 如果获取当前价格失败，使用最后一次交易的价格或默认值
+            if trader.trade_records:
+                current_price = trader.trade_records[-1].get('price', 0)
+            else:
+                current_price = 0
+        
+        # 显示最终累计差额
+        logger.info("-" * 40)
+        logger.info(f"最终累计差额:")
+        logger.info(f"数量差额: {trader.cumulative_position_diff:.8f} {base_currency}")
+        logger.info(f"价值差额: {trader.cumulative_position_diff_usdt:.2f} USDT")
+        
+        # 显示最近3次交易记录
+        if len(trader.trade_records) > 0:
+            logger.info("-" * 40)
+            logger.info("最近交易记录:")
+            for record in trader.trade_records[-min(3, len(trader.trade_records)):]:
+                trade_type = "【平衡操作】" if record.get('is_rebalance', False) else "【常规交易】"
+                
+                if record.get('is_rebalance', False):
+                    if record.get('spot_filled', 0) > 0:  # 现货平衡
+                        logger.info(f"{trade_type} 交易 #{record['trade_id']}: 买入现货 {record['spot_filled']:.8f} {base_currency}, "
+                                  f"价格: {record.get('execution_price', 0):.8f} vs 市场: {record.get('market_price', 0):.8f} "
+                                  f"(滑点: {record.get('price_diff_percent', 0):.4f}%)")
+                    else:  # 合约平衡
+                        logger.info(f"{trade_type} 交易 #{record['trade_id']}: 开空合约 {record['contract_filled']:.8f} {base_currency}, "
+                                  f"价格: {record.get('execution_price', 0):.8f} vs 市场: {record.get('market_price', 0):.8f} "
+                                  f"(滑点: {record.get('price_diff_percent', 0):.4f}%)")
+                else:  # 常规交易
+                    logger.info(f"{trade_type} 交易 #{record['trade_id']}: 现货 {record['spot_filled']:.8f} @ {record.get('spot_execution_price', 0):.8f} "
+                              f"vs 合约 {record['contract_filled']:.8f} @ {record.get('contract_execution_price', 0):.8f}, "
+                              f"数量差额: {record['position_diff']:.8f} {base_currency} ({record['position_diff_usdt']:.2f} USDT)")
+                    
+                    # 如果有价格分析数据，则显示
+                    if 'spot_price_diff_percent' in record and 'contract_price_diff_percent' in record:
+                        logger.info(f"     价格分析 - 现货滑点: {record['spot_price_diff_percent']:.4f}%, "
+                                  f"合约滑点: {record['contract_price_diff_percent']:.4f}%")
+        
+        # 显示是否需要平衡
+        if abs(trader.cumulative_position_diff_usdt) >= 6:
+            balance_side = "买入现货" if trader.cumulative_position_diff > 0 else "开空合约"
+            logger.info("-" * 40)
+            logger.info(f"建议: 需要{balance_side}来平衡仓位")
+            logger.info(f"平衡数量: {abs(trader.cumulative_position_diff):.8f} {base_currency}")
+            logger.info(f"预计成本: {abs(trader.cumulative_position_diff_usdt):.2f} USDT")
+        
+        # 显示价格执行统计
+        regular_trades = [r for r in trader.trade_records if not r.get('is_rebalance', False)]
+        if regular_trades:
+            logger.info("-" * 40)
+            logger.info("价格执行统计:")
+            
+            # 计算平均滑点
+            spot_slippage = [r.get('spot_price_diff_percent', 0) for r in regular_trades if 'spot_price_diff_percent' in r]
+            contract_slippage = [r.get('contract_price_diff_percent', 0) for r in regular_trades if 'contract_price_diff_percent' in r]
+            
+            if spot_slippage:
+                avg_spot_slippage = sum(spot_slippage) / len(spot_slippage)
+                max_spot_slippage = max(spot_slippage)
+                min_spot_slippage = min(spot_slippage)
+                logger.info(f"现货平均滑点: {avg_spot_slippage:.4f}% (最小: {min_spot_slippage:.4f}%, 最大: {max_spot_slippage:.4f}%)")
+            
+            if contract_slippage:
+                avg_contract_slippage = sum(contract_slippage) / len(contract_slippage)
+                max_contract_slippage = max(contract_slippage)
+                min_contract_slippage = min(contract_slippage)
+                logger.info(f"合约平均滑点: {avg_contract_slippage:.4f}% (最小: {min_contract_slippage:.4f}%, 最大: {max_contract_slippage:.4f}%)")
+            
+            if spot_slippage and contract_slippage:
+                total_avg_slippage = (sum(spot_slippage) + sum(contract_slippage)) / (len(spot_slippage) + len(contract_slippage))
+                logger.info(f"总体平均滑点: {total_avg_slippage:.4f}%")
+                
+                # 计算平均每笔交易的滑点成本
+                total_volume = sum(r['spot_filled'] for r in regular_trades)
+                total_cost = sum(((r.get('spot_execution_price', 0) - r.get('spot_market_price', 0)) + 
+                                  (r.get('contract_market_price', 0) - r.get('contract_execution_price', 0))) * 
+                                 r['spot_filled'] for r in regular_trades if 'spot_market_price' in r and 'contract_market_price' in r)
+                
+                if total_volume > 0:
+                    avg_cost_per_unit = total_cost / total_volume
+                    logger.info(f"平均每单位滑点成本: {avg_cost_per_unit:.8f} USDT/{base_currency}")
+                    logger.info(f"总滑点成本: {total_cost:.8f} USDT")
+        
+        # 分析市场深度与滑点的关系
+        if regular_trades:
+            logger.info("-" * 40)
+            logger.info("市场深度分析:")
+            
+            # 收集深度比例数据
+            depth_ratios_spot = [r.get('market_depth_ratio_spot', 0) for r in regular_trades if 'market_depth_ratio_spot' in r]
+            depth_ratios_contract = [r.get('market_depth_ratio_contract', 0) for r in regular_trades if 'market_depth_ratio_contract' in r]
+            
+            if depth_ratios_spot:
+                avg_depth_ratio_spot = sum(depth_ratios_spot) / len(depth_ratios_spot)
+                min_depth_ratio_spot = min(depth_ratios_spot)
+                max_depth_ratio_spot = max(depth_ratios_spot)
+                logger.info(f"现货市场深度比例: 平均 {avg_depth_ratio_spot:.2f}x (最小: {min_depth_ratio_spot:.2f}x, 最大: {max_depth_ratio_spot:.2f}x)")
+            
+            if depth_ratios_contract:
+                avg_depth_ratio_contract = sum(depth_ratios_contract) / len(depth_ratios_contract)
+                min_depth_ratio_contract = min(depth_ratios_contract)
+                max_depth_ratio_contract = max(depth_ratios_contract)
+                logger.info(f"合约市场深度比例: 平均 {avg_depth_ratio_contract:.2f}x (最小: {min_depth_ratio_contract:.2f}x, 最大: {max_depth_ratio_contract:.2f}x)")
+            
+            # 尝试分析深度比例与滑点的相关性
+            if spot_slippage and depth_ratios_spot:
+                # 简单计算高深度和低深度时的平均滑点
+                high_depth_indices = [i for i, ratio in enumerate(depth_ratios_spot) if ratio >= trader.depth_multiplier]
+                low_depth_indices = [i for i, ratio in enumerate(depth_ratios_spot) if ratio < trader.depth_multiplier]
+                
+                if high_depth_indices:
+                    high_depth_slippage = [spot_slippage[i] for i in high_depth_indices]
+                    avg_high_depth_slippage = sum(high_depth_slippage) / len(high_depth_slippage)
+                    logger.info(f"高深度现货交易(>={trader.depth_multiplier}x)平均滑点: {avg_high_depth_slippage:.4f}%")
+                
+                if low_depth_indices:
+                    low_depth_slippage = [spot_slippage[i] for i in low_depth_indices]
+                    avg_low_depth_slippage = sum(low_depth_slippage) / len(low_depth_slippage)
+                    logger.info(f"低深度现货交易(<{trader.depth_multiplier}x)平均滑点: {avg_low_depth_slippage:.4f}%")
+                    
+                # 建议
+                logger.info("-" * 40)
+                logger.info("滑点优化建议:")
+                if high_depth_indices and low_depth_indices:
+                    slippage_diff = avg_low_depth_slippage - avg_high_depth_slippage
+                    if slippage_diff > 0:
+                        logger.info(f"高深度交易的滑点比低深度交易低 {slippage_diff:.4f}%，当前深度倍数({trader.depth_multiplier}x)设置有效")
+                        if avg_high_depth_slippage > 0.05:  # 如果高深度交易的滑点仍然较高
+                            logger.info(f"建议增加深度倍数至 {trader.depth_multiplier * 1.5:.0f}x 以进一步降低滑点")
+                    else:
+                        logger.info(f"当前深度倍数({trader.depth_multiplier}x)设置可能不足以有效降低滑点")
+                        logger.info(f"建议增加深度倍数至 {trader.depth_multiplier * 2:.0f}x 或调整交易大小")
+                elif high_depth_indices:
+                    if avg_high_depth_slippage > 0.05:  # 如果高深度交易的滑点较高
+                        logger.info(f"即使在高深度条件下滑点仍达到 {avg_high_depth_slippage:.4f}%")
+                        logger.info(f"建议增加深度倍数至 {trader.depth_multiplier * 1.5:.0f}x 或减小交易规模")
+                    else:
+                        logger.info(f"当前深度倍数({trader.depth_multiplier}x)设置有效，平均滑点为 {avg_high_depth_slippage:.4f}%")
+                elif low_depth_indices:
+                    logger.info(f"所有交易都在低深度(<{trader.depth_multiplier}x)条件下执行，平均滑点为 {avg_low_depth_slippage:.4f}%")
+                    logger.info(f"建议增加深度倍数至 {trader.depth_multiplier * 2:.0f}x 或减小交易规模以降低滑点")
+    
+    except Exception as e:
+        logger.error(f"打印交易执行汇总时出错: {str(e)}")
+    
+    logger.info("=" * 50)
+
+
 async def main():
     """
     异步主函数，程序入口
@@ -721,6 +922,9 @@ async def main():
                 else:
                     logger.error(f"第 {i+1}/{args.count} 次对冲交易未能完成")
                     logger.info(f"已完成 {successful_trades}/{args.count} 次交易，因交易未完成退出程序")
+                    
+                    # 打印交易执行汇总
+                    await print_execution_summary(trader, successful_trades, args.count)
                     return 0 if successful_trades > 0 else 1
             except Exception as e:
                 logger.error(f"第 {i+1}/{args.count} 次交易执行失败: {str(e)}")
@@ -728,155 +932,13 @@ async def main():
                 import traceback
                 logger.debug(f"交易执行错误的堆栈:\n{traceback.format_exc()}")
                 logger.info(f"已完成 {successful_trades}/{args.count} 次交易，因交易执行失败退出程序")
+                
+                # 打印交易执行汇总
+                await print_execution_summary(trader, successful_trades, args.count)
                 return 0 if successful_trades > 0 else 1
         
         # 报告总体执行情况
-        logger.info("=" * 50)
-        logger.info(f"交易执行汇总")
-        logger.info(f"总计执行: {successful_trades}/{args.count} 次交易")
-        
-        # 如果有交易记录，显示累计差额
-        if trader.trade_records:
-            base_currency = trader.symbol.split('/')[0]
-            orderbook = await trader.gateio.fetch_order_book(trader.symbol)
-            current_price = float(orderbook['asks'][0][0])
-            
-            # 显示最终累计差额
-            logger.info("-" * 40)
-            logger.info(f"最终累计差额:")
-            logger.info(f"数量差额: {trader.cumulative_position_diff:.8f} {base_currency}")
-            logger.info(f"价值差额: {trader.cumulative_position_diff_usdt:.2f} USDT")
-            
-            # 显示最近3次交易记录
-            if len(trader.trade_records) > 0:
-                logger.info("-" * 40)
-                logger.info("最近交易记录:")
-                for record in trader.trade_records[-min(3, len(trader.trade_records)):]:
-                    trade_type = "【平衡操作】" if record.get('is_rebalance', False) else "【常规交易】"
-                    
-                    if record.get('is_rebalance', False):
-                        if record.get('spot_filled', 0) > 0:  # 现货平衡
-                            logger.info(f"{trade_type} 交易 #{record['trade_id']}: 买入现货 {record['spot_filled']:.8f} {base_currency}, "
-                                      f"价格: {record.get('execution_price', 0):.8f} vs 市场: {record.get('market_price', 0):.8f} "
-                                      f"(滑点: {record.get('price_diff_percent', 0):.4f}%)")
-                        else:  # 合约平衡
-                            logger.info(f"{trade_type} 交易 #{record['trade_id']}: 开空合约 {record['contract_filled']:.8f} {base_currency}, "
-                                      f"价格: {record.get('execution_price', 0):.8f} vs 市场: {record.get('market_price', 0):.8f} "
-                                      f"(滑点: {record.get('price_diff_percent', 0):.4f}%)")
-                    else:  # 常规交易
-                        logger.info(f"{trade_type} 交易 #{record['trade_id']}: 现货 {record['spot_filled']:.8f} @ {record.get('spot_execution_price', 0):.8f} "
-                                  f"vs 合约 {record['contract_filled']:.8f} @ {record.get('contract_execution_price', 0):.8f}, "
-                                  f"数量差额: {record['position_diff']:.8f} {base_currency} ({record['position_diff_usdt']:.2f} USDT)")
-                        
-                        # 如果有价格分析数据，则显示
-                        if 'spot_price_diff_percent' in record and 'contract_price_diff_percent' in record:
-                            logger.info(f"     价格分析 - 现货滑点: {record['spot_price_diff_percent']:.4f}%, "
-                                      f"合约滑点: {record['contract_price_diff_percent']:.4f}%")
-            
-            # 显示是否需要平衡
-            if abs(trader.cumulative_position_diff_usdt) >= 6:
-                balance_side = "买入现货" if trader.cumulative_position_diff > 0 else "开空合约"
-                logger.info("-" * 40)
-                logger.info(f"建议: 需要{balance_side}来平衡仓位")
-                logger.info(f"平衡数量: {abs(trader.cumulative_position_diff):.8f} {base_currency}")
-                logger.info(f"预计成本: {abs(trader.cumulative_position_diff_usdt):.2f} USDT")
-            
-            # 显示价格执行统计
-            regular_trades = [r for r in trader.trade_records if not r.get('is_rebalance', False)]
-            if regular_trades:
-                logger.info("-" * 40)
-                logger.info("价格执行统计:")
-                
-                # 计算平均滑点
-                spot_slippage = [r.get('spot_price_diff_percent', 0) for r in regular_trades if 'spot_price_diff_percent' in r]
-                contract_slippage = [r.get('contract_price_diff_percent', 0) for r in regular_trades if 'contract_price_diff_percent' in r]
-                
-                if spot_slippage:
-                    avg_spot_slippage = sum(spot_slippage) / len(spot_slippage)
-                    max_spot_slippage = max(spot_slippage)
-                    min_spot_slippage = min(spot_slippage)
-                    logger.info(f"现货平均滑点: {avg_spot_slippage:.4f}% (最小: {min_spot_slippage:.4f}%, 最大: {max_spot_slippage:.4f}%)")
-                
-                if contract_slippage:
-                    avg_contract_slippage = sum(contract_slippage) / len(contract_slippage)
-                    max_contract_slippage = max(contract_slippage)
-                    min_contract_slippage = min(contract_slippage)
-                    logger.info(f"合约平均滑点: {avg_contract_slippage:.4f}% (最小: {min_contract_slippage:.4f}%, 最大: {max_contract_slippage:.4f}%)")
-                
-                if spot_slippage and contract_slippage:
-                    total_avg_slippage = (sum(spot_slippage) + sum(contract_slippage)) / (len(spot_slippage) + len(contract_slippage))
-                    logger.info(f"总体平均滑点: {total_avg_slippage:.4f}%")
-                    
-                    # 计算平均每笔交易的滑点成本
-                    total_volume = sum(r['spot_filled'] for r in regular_trades)
-                    total_cost = sum(((r.get('spot_execution_price', 0) - r.get('spot_market_price', 0)) + 
-                                      (r.get('contract_market_price', 0) - r.get('contract_execution_price', 0))) * 
-                                     r['spot_filled'] for r in regular_trades if 'spot_market_price' in r and 'contract_market_price' in r)
-                    
-                    if total_volume > 0:
-                        avg_cost_per_unit = total_cost / total_volume
-                        logger.info(f"平均每单位滑点成本: {avg_cost_per_unit:.8f} USDT/{base_currency}")
-                        logger.info(f"总滑点成本: {total_cost:.8f} USDT")
-            
-            # 分析市场深度与滑点的关系
-            logger.info("-" * 40)
-            logger.info("市场深度分析:")
-            
-            # 收集深度比例数据
-            depth_ratios_spot = [r.get('market_depth_ratio_spot', 0) for r in regular_trades if 'market_depth_ratio_spot' in r]
-            depth_ratios_contract = [r.get('market_depth_ratio_contract', 0) for r in regular_trades if 'market_depth_ratio_contract' in r]
-            
-            if depth_ratios_spot:
-                avg_depth_ratio_spot = sum(depth_ratios_spot) / len(depth_ratios_spot)
-                min_depth_ratio_spot = min(depth_ratios_spot)
-                max_depth_ratio_spot = max(depth_ratios_spot)
-                logger.info(f"现货市场深度比例: 平均 {avg_depth_ratio_spot:.2f}x (最小: {min_depth_ratio_spot:.2f}x, 最大: {max_depth_ratio_spot:.2f}x)")
-            
-            if depth_ratios_contract:
-                avg_depth_ratio_contract = sum(depth_ratios_contract) / len(depth_ratios_contract)
-                min_depth_ratio_contract = min(depth_ratios_contract)
-                max_depth_ratio_contract = max(depth_ratios_contract)
-                logger.info(f"合约市场深度比例: 平均 {avg_depth_ratio_contract:.2f}x (最小: {min_depth_ratio_contract:.2f}x, 最大: {max_depth_ratio_contract:.2f}x)")
-            
-            # 尝试分析深度比例与滑点的相关性
-            if spot_slippage and depth_ratios_spot:
-                # 简单计算高深度和低深度时的平均滑点
-                high_depth_indices = [i for i, ratio in enumerate(depth_ratios_spot) if ratio >= trader.depth_multiplier]
-                low_depth_indices = [i for i, ratio in enumerate(depth_ratios_spot) if ratio < trader.depth_multiplier]
-                
-                if high_depth_indices:
-                    high_depth_slippage = [spot_slippage[i] for i in high_depth_indices]
-                    avg_high_depth_slippage = sum(high_depth_slippage) / len(high_depth_slippage)
-                    logger.info(f"高深度现货交易(>={trader.depth_multiplier}x)平均滑点: {avg_high_depth_slippage:.4f}%")
-                
-                if low_depth_indices:
-                    low_depth_slippage = [spot_slippage[i] for i in low_depth_indices]
-                    avg_low_depth_slippage = sum(low_depth_slippage) / len(low_depth_slippage)
-                    logger.info(f"低深度现货交易(<{trader.depth_multiplier}x)平均滑点: {avg_low_depth_slippage:.4f}%")
-                    
-                # 建议
-                logger.info("-" * 40)
-                logger.info("滑点优化建议:")
-                if high_depth_indices and low_depth_indices:
-                    slippage_diff = avg_low_depth_slippage - avg_high_depth_slippage
-                    if slippage_diff > 0:
-                        logger.info(f"高深度交易的滑点比低深度交易低 {slippage_diff:.4f}%，当前深度倍数({trader.depth_multiplier}x)设置有效")
-                        if avg_high_depth_slippage > 0.05:  # 如果高深度交易的滑点仍然较高
-                            logger.info(f"建议增加深度倍数至 {trader.depth_multiplier * 1.5:.0f}x 以进一步降低滑点")
-                    else:
-                        logger.info(f"当前深度倍数({trader.depth_multiplier}x)设置可能不足以有效降低滑点")
-                        logger.info(f"建议增加深度倍数至 {trader.depth_multiplier * 2:.0f}x 或调整交易大小")
-                elif high_depth_indices:
-                    if avg_high_depth_slippage > 0.05:  # 如果高深度交易的滑点较高
-                        logger.info(f"即使在高深度条件下滑点仍达到 {avg_high_depth_slippage:.4f}%")
-                        logger.info(f"建议增加深度倍数至 {trader.depth_multiplier * 1.5:.0f}x 或减小交易规模")
-                    else:
-                        logger.info(f"当前深度倍数({trader.depth_multiplier}x)设置有效，平均滑点为 {avg_high_depth_slippage:.4f}%")
-                elif low_depth_indices:
-                    logger.info(f"所有交易都在低深度(<{trader.depth_multiplier}x)条件下执行，平均滑点为 {avg_low_depth_slippage:.4f}%")
-                    logger.info(f"建议增加深度倍数至 {trader.depth_multiplier * 2:.0f}x 或减小交易规模以降低滑点")
-            
-        logger.info("=" * 50)
+        await print_execution_summary(trader, successful_trades, args.count)
             
         if successful_trades > 0:
             return 0
