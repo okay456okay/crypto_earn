@@ -12,7 +12,7 @@ from config import proxies, gateio_login_token
 from tools.logger import logger
 
 
-def subscrible_earn(token, amount, rate=0.050, login_token=gateio_login_token):
+def subscrible_earn(token, amount, rate=0.0010, login_token=gateio_login_token):
     """
     curl 'https://www.gate.io/apiw/v2/uni-loan/earn/subscribe' \
       -H 'accept: application/json, text/plain, */*' \
