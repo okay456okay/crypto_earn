@@ -80,7 +80,7 @@ class PinReboundTrader:
         })
 
         # 用于存储价格历史数据
-        self.price_history = deque(maxlen=120)  # 存储2分钟的价格数据
+        self.price_history = deque(maxlen=1200)  # 存储2分钟的价格数据
         self.lowest_price = None
         self.lowest_price_time = None
         self.entry_price = None
@@ -249,14 +249,14 @@ class PinReboundTrader:
 
             start_price = self.price_history[0][1]
             
-            # 计算跌幅
-            price_drop = (start_price - self.lowest_price) / start_price
+            # 计算跌幅（使用负值）
+            price_drop = (self.lowest_price - start_price) / start_price
             
-            # 计算从最低点的反弹幅度
+            # 计算从最低点的反弹幅度（使用正值）
             rebound = (current_price - self.lowest_price) / self.lowest_price
             
             # 更新最大跌幅和反弹记录
-            if price_drop > self.max_drop:
+            if price_drop < self.max_drop:  # 注意：跌幅是负值，所以用小于号
                 self.max_drop = price_drop
                 self.max_drop_time = current_time
                 logger.info(f"【新最大跌幅】{price_drop*100:.4f}% (时间: {datetime.fromtimestamp(current_time).strftime('%H:%M:%S.%f')[:-3]})")
@@ -282,9 +282,9 @@ class PinReboundTrader:
             logger.debug(f"历史最大反弹: {self.max_rebound*100:.4f}% (时间: {datetime.fromtimestamp(self.max_rebound_time).strftime('%H:%M:%S.%f')[:-3] if self.max_rebound_time else 'N/A'})")
             logger.debug("=" * 50)
             
-            # 检查是否满足开仓条件
-            if price_drop >= self.min_drop and rebound >= self.min_rebound:
-                logger.info(f"满足开仓条件: 跌幅 {price_drop*100:.2f}% >= {self.min_drop*100}%, "
+            # 检查是否满足开仓条件（注意：跌幅是负值，所以用小于号）
+            if price_drop <= -self.min_drop and rebound >= self.min_rebound:
+                logger.info(f"满足开仓条件: 跌幅 {price_drop*100:.2f}% <= -{self.min_drop*100}%, "
                            f"反弹 {rebound*100:.2f}% >= {self.min_rebound*100}%")
                 
                 # 记录开始获取订单簿的时间
