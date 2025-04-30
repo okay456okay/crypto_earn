@@ -259,25 +259,28 @@ class PinReboundTrader:
             if price_drop > self.max_drop:
                 self.max_drop = price_drop
                 self.max_drop_time = current_time
-                logger.info(f"【新最大跌幅】{price_drop*100:.4f}% (时间: {datetime.fromtimestamp(current_time).strftime('%H:%M:%S')})")
+                logger.info(f"【新最大跌幅】{price_drop*100:.4f}% (时间: {datetime.fromtimestamp(current_time).strftime('%H:%M:%S.%f')[:-3]})")
             
             if rebound > self.max_rebound:
                 self.max_rebound = rebound
                 self.max_rebound_time = current_time
-                logger.info(f"【新最大反弹】{rebound*100:.4f}% (时间: {datetime.fromtimestamp(current_time).strftime('%H:%M:%S')})")
+                logger.info(f"【新最大反弹】{rebound*100:.4f}% (时间: {datetime.fromtimestamp(current_time).strftime('%H:%M:%S.%f')[:-3]})")
             
             # 记录价格检查完成时间
             check_end_time = time.time()
             check_delay = (check_end_time - check_start_time) * 1000  # 转换为毫秒
             
             # 打印详细的调试信息
-            logger.debug(f"【价格检查】耗时: {check_delay:.2f}ms")
+            logger.debug("=" * 50)
+            logger.debug("【价格检查信息】")
+            logger.debug(f"检查耗时: {check_delay:.2f}ms")
             logger.debug(f"当前价格: {current_price:.8f}")
             logger.debug(f"2分钟前价格: {start_price:.8f}")
             logger.debug(f"最低价格: {self.lowest_price:.8f} (时间: {datetime.fromtimestamp(self.lowest_price_time).strftime('%H:%M:%S.%f')[:-3]})")
             logger.debug(f"跌幅: {price_drop*100:.4f}%, 反弹: {rebound*100:.4f}%")
-            logger.debug(f"历史最大跌幅: {self.max_drop*100:.4f}% (时间: {datetime.fromtimestamp(self.max_drop_time).strftime('%H:%M:%S') if self.max_drop_time else 'N/A'})")
-            logger.debug(f"历史最大反弹: {self.max_rebound*100:.4f}% (时间: {datetime.fromtimestamp(self.max_rebound_time).strftime('%H:%M:%S') if self.max_rebound_time else 'N/A'})")
+            logger.debug(f"历史最大跌幅: {self.max_drop*100:.4f}% (时间: {datetime.fromtimestamp(self.max_drop_time).strftime('%H:%M:%S.%f')[:-3] if self.max_drop_time else 'N/A'})")
+            logger.debug(f"历史最大反弹: {self.max_rebound*100:.4f}% (时间: {datetime.fromtimestamp(self.max_rebound_time).strftime('%H:%M:%S.%f')[:-3] if self.max_rebound_time else 'N/A'})")
+            logger.debug("=" * 50)
             
             # 检查是否满足开仓条件
             if price_drop >= self.min_drop and rebound >= self.min_rebound:
@@ -298,9 +301,12 @@ class PinReboundTrader:
                 orderbook_delay = (orderbook_end_time - orderbook_start_time) * 1000
                 
                 # 打印订单簿信息
-                logger.debug(f"【订单簿信息】获取耗时: {orderbook_delay:.2f}ms")
+                logger.debug("=" * 50)
+                logger.debug("【订单簿信息】")
+                logger.debug(f"获取耗时: {orderbook_delay:.2f}ms")
                 logger.debug(f"买一价: {orderbook['bids'][0][0]:.8f}, 数量: {bid_volume:.8f}")
                 logger.debug(f"卖一价: {orderbook['asks'][0][0]:.8f}, 数量: {ask_volume:.8f}")
+                logger.debug("=" * 50)
                 
                 # 使用卖一数量或10USDT可购买的数量中的较小值
                 amount_by_volume = ask_volume
@@ -310,7 +316,10 @@ class PinReboundTrader:
                 # 记录下单前时间
                 order_start_time = time.time()
                 total_delay = (order_start_time - check_start_time) * 1000
-                logger.debug(f"【下单前】总延迟: {total_delay:.2f}ms")
+                logger.debug("=" * 50)
+                logger.debug("【下单前信息】")
+                logger.debug(f"总延迟: {total_delay:.2f}ms")
+                logger.debug("=" * 50)
                 
                 # 执行开仓
                 if not self.test_mode:
@@ -329,8 +338,12 @@ class PinReboundTrader:
                     order_delay = (order_end_time - order_start_time) * 1000
                     total_delay = (order_end_time - check_start_time) * 1000
                     
-                    logger.debug(f"【下单完成】下单耗时: {order_delay:.2f}ms, 总延迟: {total_delay:.2f}ms")
+                    logger.debug("=" * 50)
+                    logger.debug("【下单完成信息】")
+                    logger.debug(f"下单耗时: {order_delay:.2f}ms")
+                    logger.debug(f"总延迟: {total_delay:.2f}ms")
                     logger.debug(f"订单返回时间: {datetime.fromtimestamp(order_end_time).strftime('%H:%M:%S.%f')[:-3]}")
+                    logger.debug("=" * 50)
                     
                     # 记录开仓信息
                     self.position_amount = float(order['filled'])
@@ -348,7 +361,10 @@ class PinReboundTrader:
         except Exception as e:
             logger.error(f"检查开仓条件时出错: {str(e)}")
             import traceback
+            logger.debug("=" * 50)
+            logger.debug("【错误信息】")
             logger.debug(f"错误堆栈:\n{traceback.format_exc()}")
+            logger.debug("=" * 50)
 
     async def check_exit_conditions(self, current_price: float, current_time: float):
         """
@@ -448,7 +464,7 @@ class PinReboundTrader:
         打印交易统计信息
         """
         logger.info("=" * 50)
-        logger.info("交易统计:")
+        logger.info("【交易统计】")
         logger.info(f"- 总交易次数: {self.trade_count}")
         if self.trade_count > 0:
             logger.info(f"- 盈利次数: {self.win_count}")
@@ -457,13 +473,17 @@ class PinReboundTrader:
             logger.info(f"- 总盈亏: {self.total_profit:.2f} USDT")
             logger.info(f"- 总手续费: {self.total_fee:.2f} USDT")
             logger.info(f"- 净利润: {self.total_profit - self.total_fee:.2f} USDT")
+        logger.info("=" * 50)
         
-        logger.info("\n价格统计:")
-        logger.info(f"- 历史最大跌幅: {self.max_drop*100:.4f}% (时间: {datetime.fromtimestamp(self.max_drop_time).strftime('%Y-%m-%d %H:%M:%S') if self.max_drop_time else 'N/A'})")
-        logger.info(f"- 历史最大反弹: {self.max_rebound*100:.4f}% (时间: {datetime.fromtimestamp(self.max_rebound_time).strftime('%Y-%m-%d %H:%M:%S') if self.max_rebound_time else 'N/A'})")
+        logger.info("=" * 50)
+        logger.info("【价格统计】")
+        logger.info(f"- 历史最大跌幅: {self.max_drop*100:.4f}% (时间: {datetime.fromtimestamp(self.max_drop_time).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3] if self.max_drop_time else 'N/A'})")
+        logger.info(f"- 历史最大反弹: {self.max_rebound*100:.4f}% (时间: {datetime.fromtimestamp(self.max_rebound_time).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3] if self.max_rebound_time else 'N/A'})")
+        logger.info("=" * 50)
         
         if self.trade_records:
-            logger.info("\n最近交易记录:")
+            logger.info("=" * 50)
+            logger.info("【最近交易记录】")
             for record in self.trade_records[-5:]:  # 只显示最近5笔交易
                 logger.info(f"- 开仓时间: {record['entry_time']}")
                 logger.info(f"  平仓时间: {record['exit_time']}")
@@ -475,8 +495,7 @@ class PinReboundTrader:
                 logger.info(f"  手续费: {record['fees']:.2f} USDT")
                 logger.info(f"  平仓原因: {record['exit_reason']}")
                 logger.info("  " + "-" * 30)
-        
-        logger.info("=" * 50)
+            logger.info("=" * 50)
 
 
 def parse_arguments():
