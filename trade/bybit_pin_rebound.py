@@ -114,13 +114,6 @@ class PinReboundTrader:
             usdt_balance = balance.get('USDT', {}).get('free', 0)
             logger.info(f"账户USDT余额: {usdt_balance}")
 
-            # 检查当前持仓
-            positions = await self.exchange.fetch_positions([self.contract_symbol])
-            for position in positions:
-                if position['info']['symbol'] == self.contract_symbol:
-                    if float(position.get('contracts', 0)) > 0:
-                        raise Exception(f"当前已有{self.contract_symbol}持仓，请先平仓后再运行此脚本")
-
             logger.info(f"初始化完成: 交易对={self.contract_symbol}, "
                        f"最小跌幅={self.min_drop*100}%, 最小反弹={self.min_rebound*100}%, "
                        f"止盈={self.take_profit*100}%, 止损={self.stop_loss*100}%, "
@@ -182,6 +175,9 @@ class PinReboundTrader:
             current_time: 当前时间戳
         """
         try:
+            # 记录开始检查的时间
+            check_start_time = time.time()
+            
             # 确保有足够的价格历史数据
             if len(self.price_history) < 2:
                 return
@@ -202,20 +198,49 @@ class PinReboundTrader:
             # 计算从最低点的反弹幅度
             rebound = (current_price - self.lowest_price) / self.lowest_price
             
+            # 记录价格检查完成时间
+            check_end_time = time.time()
+            check_delay = (check_end_time - check_start_time) * 1000  # 转换为毫秒
+            
+            # 打印详细的调试信息
+            logger.debug(f"【价格检查】耗时: {check_delay:.2f}ms")
+            logger.debug(f"当前价格: {current_price:.8f}")
+            logger.debug(f"2分钟前价格: {start_price:.8f}")
+            logger.debug(f"最低价格: {self.lowest_price:.8f} (时间: {datetime.fromtimestamp(self.lowest_price_time).strftime('%H:%M:%S.%f')[:-3]})")
+            logger.debug(f"跌幅: {price_drop*100:.4f}%, 反弹: {rebound*100:.4f}%")
+            
             # 检查是否满足开仓条件
             if price_drop >= self.min_drop and rebound >= self.min_rebound:
                 logger.info(f"满足开仓条件: 跌幅 {price_drop*100:.2f}% >= {self.min_drop*100}%, "
                            f"反弹 {rebound*100:.2f}% >= {self.min_rebound*100}%")
                 
+                # 记录开始获取订单簿的时间
+                orderbook_start_time = time.time()
+                
                 # 计算开仓数量
                 orderbook = await self.exchange.fetch_order_book(self.contract_symbol)
                 ask_volume = float(orderbook['asks'][0][1])
+                bid_volume = float(orderbook['bids'][0][1])
                 usdt_balance = float((await self.exchange.fetch_balance())['USDT']['free'])
+                
+                # 记录获取订单簿完成时间
+                orderbook_end_time = time.time()
+                orderbook_delay = (orderbook_end_time - orderbook_start_time) * 1000
+                
+                # 打印订单簿信息
+                logger.debug(f"【订单簿信息】获取耗时: {orderbook_delay:.2f}ms")
+                logger.debug(f"买一价: {orderbook['bids'][0][0]:.8f}, 数量: {bid_volume:.8f}")
+                logger.debug(f"卖一价: {orderbook['asks'][0][0]:.8f}, 数量: {ask_volume:.8f}")
                 
                 # 使用卖一数量或10USDT可购买的数量中的较小值
                 amount_by_volume = ask_volume
                 amount_by_usdt = 10 / current_price
                 trade_amount = min(amount_by_volume, amount_by_usdt)
+                
+                # 记录下单前时间
+                order_start_time = time.time()
+                total_delay = (order_start_time - check_start_time) * 1000
+                logger.debug(f"【下单前】总延迟: {total_delay:.2f}ms")
                 
                 # 执行开仓
                 if not self.test_mode:
@@ -228,6 +253,14 @@ class PinReboundTrader:
                             "reduceOnly": False
                         }
                     )
+                    
+                    # 记录下单完成时间
+                    order_end_time = time.time()
+                    order_delay = (order_end_time - order_start_time) * 1000
+                    total_delay = (order_end_time - check_start_time) * 1000
+                    
+                    logger.debug(f"【下单完成】下单耗时: {order_delay:.2f}ms, 总延迟: {total_delay:.2f}ms")
+                    logger.debug(f"订单返回时间: {datetime.fromtimestamp(order_end_time).strftime('%H:%M:%S.%f')[:-3]}")
                     
                     # 记录开仓信息
                     self.position_amount = float(order['filled'])
@@ -244,6 +277,8 @@ class PinReboundTrader:
 
         except Exception as e:
             logger.error(f"检查开仓条件时出错: {str(e)}")
+            import traceback
+            logger.debug(f"错误堆栈:\n{traceback.format_exc()}")
 
     async def check_exit_conditions(self, current_price: float, current_time: float):
         """
