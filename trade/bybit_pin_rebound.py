@@ -99,15 +99,72 @@ class PinReboundTrader:
 
         # 用于控制WebSocket订阅
         self.ws_running = False
+        
+        # 用于记录最大跌幅和反弹
+        self.max_drop = 0
+        self.max_rebound = 0
+        self.max_drop_time = None
+        self.max_rebound_time = None
+
+    async def get_max_leverage(self):
+        """
+        获取Bybit交易所支持的最大杠杆倍数
+        
+        Returns:
+            int: 最大杠杆倍数
+        """
+        try:
+            # 获取交易对信息
+            response = await self.exchange.publicGetV5MarketInstrumentsInfo({
+                'category': 'linear',
+                'symbol': self.contract_symbol
+            })
+            
+            if response and 'result' in response and 'list' in response['result']:
+                for instrument in response['result']['list']:
+                    if instrument['symbol'] == self.contract_symbol:
+                        # 先将字符串转换为float，再转换为int
+                        max_leverage = int(float(instrument['leverageFilter']['maxLeverage']))
+                        logger.info(f"获取到{self.contract_symbol}最大杠杆倍数: {max_leverage}倍")
+                        return max_leverage
+            
+            logger.warning(f"未能获取到{self.contract_symbol}的最大杠杆倍数，使用默认值10倍")
+            return 10  # 如果获取失败，返回默认值10倍
+            
+        except Exception as e:
+            logger.error(f"获取最大杠杆倍数时出错: {str(e)}")
+            return 10  # 如果出错，返回默认值10倍
 
     async def initialize(self):
         """
         初始化交易环境，包括设置合约参数和检查账户余额
         """
         try:
-            # 设置合约参数
-            await self.exchange.set_leverage(10, self.contract_symbol)  # 设置10倍杠杆
-            logger.info(f"设置合约杠杆倍数为: 10倍")
+            # 获取最大杠杆倍数
+            max_leverage = await self.get_max_leverage()
+            
+            # 获取当前杠杆倍数
+            try:
+                positions = await self.exchange.fetch_positions([self.contract_symbol])
+                current_leverage = None
+                for position in positions:
+                    if position['info']['symbol'] == self.contract_symbol:
+                        current_leverage = int(float(position.get('leverage', 0)))
+                        break
+                
+                # 如果当前杠杆倍数不是最大杠杆倍数，则设置
+                if current_leverage != max_leverage:
+                    await self.exchange.set_leverage(max_leverage, self.contract_symbol)
+                    logger.info(f"设置合约杠杆倍数为: {max_leverage}倍")
+                else:
+                    logger.info(f"当前已经是最大杠杆倍数: {max_leverage}倍，无需调整")
+            except Exception as e:
+                if "leverage not modified" in str(e).lower():
+                    logger.info(f"杠杆倍数已经是 {max_leverage}倍，无需修改")
+                else:
+                    # 如果获取当前杠杆倍数失败，直接设置最大杠杆倍数
+                    await self.exchange.set_leverage(max_leverage, self.contract_symbol)
+                    logger.info(f"设置合约杠杆倍数为: {max_leverage}倍")
 
             # 获取账户余额
             balance = await self.exchange.fetch_balance()
@@ -198,6 +255,17 @@ class PinReboundTrader:
             # 计算从最低点的反弹幅度
             rebound = (current_price - self.lowest_price) / self.lowest_price
             
+            # 更新最大跌幅和反弹记录
+            if price_drop > self.max_drop:
+                self.max_drop = price_drop
+                self.max_drop_time = current_time
+                logger.info(f"【新最大跌幅】{price_drop*100:.4f}% (时间: {datetime.fromtimestamp(current_time).strftime('%H:%M:%S')})")
+            
+            if rebound > self.max_rebound:
+                self.max_rebound = rebound
+                self.max_rebound_time = current_time
+                logger.info(f"【新最大反弹】{rebound*100:.4f}% (时间: {datetime.fromtimestamp(current_time).strftime('%H:%M:%S')})")
+            
             # 记录价格检查完成时间
             check_end_time = time.time()
             check_delay = (check_end_time - check_start_time) * 1000  # 转换为毫秒
@@ -208,6 +276,8 @@ class PinReboundTrader:
             logger.debug(f"2分钟前价格: {start_price:.8f}")
             logger.debug(f"最低价格: {self.lowest_price:.8f} (时间: {datetime.fromtimestamp(self.lowest_price_time).strftime('%H:%M:%S.%f')[:-3]})")
             logger.debug(f"跌幅: {price_drop*100:.4f}%, 反弹: {rebound*100:.4f}%")
+            logger.debug(f"历史最大跌幅: {self.max_drop*100:.4f}% (时间: {datetime.fromtimestamp(self.max_drop_time).strftime('%H:%M:%S') if self.max_drop_time else 'N/A'})")
+            logger.debug(f"历史最大反弹: {self.max_rebound*100:.4f}% (时间: {datetime.fromtimestamp(self.max_rebound_time).strftime('%H:%M:%S') if self.max_rebound_time else 'N/A'})")
             
             # 检查是否满足开仓条件
             if price_drop >= self.min_drop and rebound >= self.min_rebound:
@@ -387,6 +457,10 @@ class PinReboundTrader:
             logger.info(f"- 总盈亏: {self.total_profit:.2f} USDT")
             logger.info(f"- 总手续费: {self.total_fee:.2f} USDT")
             logger.info(f"- 净利润: {self.total_profit - self.total_fee:.2f} USDT")
+        
+        logger.info("\n价格统计:")
+        logger.info(f"- 历史最大跌幅: {self.max_drop*100:.4f}% (时间: {datetime.fromtimestamp(self.max_drop_time).strftime('%Y-%m-%d %H:%M:%S') if self.max_drop_time else 'N/A'})")
+        logger.info(f"- 历史最大反弹: {self.max_rebound*100:.4f}% (时间: {datetime.fromtimestamp(self.max_rebound_time).strftime('%Y-%m-%d %H:%M:%S') if self.max_rebound_time else 'N/A'})")
         
         if self.trade_records:
             logger.info("\n最近交易记录:")
