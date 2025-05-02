@@ -7,6 +7,7 @@ import requests
 import sys
 import os
 
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import proxies, gateio_login_token
 from tools.logger import logger
@@ -55,8 +56,16 @@ def subscrible_earn(token, amount, rate=0.0010, login_token=gateio_login_token):
             proxies=proxies,
             cookies=cookies,
         )
-        if r.status_code == 200 and r.json().get('code') == 0:
-            logger.info(f"subscribe {token} {amount} success, response: {r.text}")
+        if r.status_code == 200:
+            code = r.json().get('code')
+            if code == 0:
+                logger.info(f"subscribe {token} {amount} success, response: {r.text}")
+            elif code == -1:
+                import re
+                rate_text = re.search(r'[0-9.]+', r.json().get('message'))
+                if rate_text:
+                    rate = float(rate_text.group())
+                    subscrible_earn(token, amount, rate)
         else:
             logger.error(f"subscribe {token} {amount} failed, code: {r.status_code}, response: {r.text}")
     except Exception as e:
@@ -199,6 +208,7 @@ if __name__ == '__main__':
     # subscrible_earn(token, 500)
     # print(get_earn_positions())
     # print(get_earn_interest('AVL'))
+    subscrible_earn(token, 20, rate=0.01)
     pass
     # positions = get_earn_positions()
     # print(positions)
