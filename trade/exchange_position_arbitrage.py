@@ -333,8 +333,11 @@ class ExchangeArbitrageCalculator:
 
                 price = self.token_prices.get(token, 0)
                 arbitrage_value = abs(net_position) * price
-
-                print(f"{token:<8} {'0':<12.2f} {net_position:<15.2f} {-net_position:<12.2f} {price:<12.6f} {arbitrage_value:<15.2f}")
+                try:
+                    print(f"{token:<8} {'0':<12.2f} {net_position:<15.2f} {-net_position:<12.2f} {price:<12.6f} {arbitrage_value:<15.2f}")
+                except Exception as e:
+                    logger.error(f"print failed, info: {token} {net_position} {price} {arbitrage_value}")
+                    continue
 
                 arbitrage_results.append({
                     'token': token,
@@ -380,7 +383,7 @@ class ExchangeArbitrageCalculator:
             self.calculate_arbitrage()
 
         except Exception as e:
-            logger.error(f"程序运行出错: {str(e)}")
+            logger.exception(f"程序运行出错: {str(e)}")
         finally:
             await self.close_exchanges()
 
