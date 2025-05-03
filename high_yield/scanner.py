@@ -145,7 +145,7 @@ class CryptoYieldMonitor:
                     d30apy_str = f"{d30apy:.2f}%"
                 message += (
                     f"**{idx + p * limit}. {notif['token']}({notif['exchange']})** 💰\n"
-                    f"   • 近24小时现货交易量: {notif['volume_24h']/10000:.2f}万USDT\n"
+                    f"   • 近24小时现货交易量: {notif['volume_24h'] / 10000:.2f}万USDT\n"
                     f"   • 最新收益率: {notif['apy']:.2f}%\n"
                     f"   • 近24小时P{yield_percentile}收益率: {notif['apy_percentile']:.2f}%\n"
                     f"   • 近7天P{yield_percentile}收益率: {d7apy_str}\n"
@@ -172,16 +172,18 @@ class CryptoYieldMonitor:
         :param leverage_ratio:
         :return:
         """
-        return 1 * leverage_ratio / (leverage_ratio + 1) * (apy + fundingRate * (24 / fundingIntervalHours) / fundingIntervalHours * 365)
+        return 1 * leverage_ratio / (leverage_ratio + 1) * (apy + fundingRate / fundingIntervalHours * 24 * 365)
 
     def product_filter(self, all_products):
         # 筛选年化利率高于阈值的产品
-        eligible_products = [p for p in all_products if p["apy"] >= stability_buy_apy_threshold and p['volume_24h'] > volume_24h_threshold]
+        eligible_products = [p for p in all_products if
+                             p["apy"] >= stability_buy_apy_threshold and p['volume_24h'] > volume_24h_threshold]
         eligible_products = sorted(eligible_products, key=lambda x: x['apy'], reverse=True)
         logger.info(f"筛选出{len(eligible_products)}个年化利率高于{stability_buy_apy_threshold}%的产品")
 
         if not eligible_products:
-            logger.info(f"未找到年化利率高于{stability_buy_apy_threshold}%且24小时交易额大于{volume_24h_threshold}USDT的产品")
+            logger.info(
+                f"未找到年化利率高于{stability_buy_apy_threshold}%且24小时交易额大于{volume_24h_threshold}USDT的产品")
             return
 
         # 检查每个高收益产品是否满足合约交易条件
@@ -207,7 +209,7 @@ class CryptoYieldMonitor:
                 i['markPrice'] > 0.0001 and  # 币值大于某个值
                 i['volume_24h'] > volume_24h_threshold  # 合约交易额大于某个值
             ]
-            illegible_funding_rate = [ i for i in futures_results if i['fundingRate'] < -0.1]
+            illegible_funding_rate = [i for i in futures_results if i['fundingRate'] < -0.1]
             # if len(eligible_funding_rate) == 0:
             if len(eligible_funding_rate) == 0 or len(illegible_funding_rate) > 0:
                 continue
@@ -216,7 +218,7 @@ class CryptoYieldMonitor:
                 apy_percentile = get_percentile([i['apy'] for i in product['apy_day']], yield_percentile)
 
             future_info_str = '\n'.join([
-                f"   • {i['exchange']}: {i['volume_24h']/10000:.2f}万USDT, {i['fundingRate']:.4f}%, {get_percentile([i['fundingRate'] for i in i['d7history']], future_percentile):.4f}%, {i['markPrice']:.5f}, {self.get_estimate_apy(product['apy'], i['fundingRate'], i['fundingIntervalHours']):.2f}%, {self.get_estimate_apy(apy_percentile, i['fundingRate'], i['fundingIntervalHours']):.2f}%, {i['fundingIntervalHoursText']}, {datetime.fromtimestamp(i['fundingTime'] / 1000)}"
+                f"   • {i['exchange']}: {i['volume_24h'] / 10000:.2f}万USDT, {i['fundingRate']:.4f}%, {get_percentile([i['fundingRate'] for i in i['d7history']], future_percentile):.4f}%, {i['markPrice']:.5f}, {self.get_estimate_apy(product['apy'], i['fundingRate'], i['fundingIntervalHours']):.2f}%, {self.get_estimate_apy(apy_percentile, i['fundingRate'], i['fundingIntervalHours']):.2f}%, {i['fundingIntervalHoursText']}, {datetime.fromtimestamp(i['fundingTime'] / 1000)}"
                 for i in
                 futures_results])
             # 生成通知内容
@@ -236,7 +238,8 @@ class CryptoYieldMonitor:
                 logger.debug(f"add {product} to stability_product_notifications, future results: {futures_results}")
                 stability_product_notifications.append(notification)
             if len([i for i in product['apy_day'][-3:] if
-                    i['apy'] >= highyield_buy_apy_threshold]) == highyield_checkpoints and product['apy'] >= highyield_buy_apy_threshold:
+                    i['apy'] >= highyield_buy_apy_threshold]) == highyield_checkpoints and product[
+                'apy'] >= highyield_buy_apy_threshold:
                 logger.debug(f"add {product} to highyield_product_notifications, future results: {futures_results}")
                 highyield_product_notifications.append(notification)
 
@@ -303,7 +306,7 @@ class CryptoYieldMonitor:
             gateio_position_info = ""
             if token['spot_exchange'] == 'GateIO' and token['token'] in gateio_positions:
                 position = gateio_positions[token['token']]
-                gateio_position_info = f"\nGateIO理财持仓信息: 持仓金额 {position['curr_amount_usdt']} USDT, 持仓数量 {position['curr_amount']}, 当前价格 {position['price']}, 已赚利息 {position['interest']}, 下次利率 {float(position['next_time_rate_year'])*100:.2f}%, 上次利率 {float(position['last_rate_year'])*100:.2f}%"
+                gateio_position_info = f"\nGateIO理财持仓信息: 持仓金额 {position['curr_amount_usdt']} USDT, 持仓数量 {position['curr_amount']}, 当前价格 {position['price']}, 已赚利息 {position['interest']}, 下次利率 {float(position['next_time_rate_year']) * 100:.2f}%, 上次利率 {float(position['last_rate_year']) * 100:.2f}%"
 
             # 获取Bitget合约持仓信息
             bitget_position_info = ""
@@ -341,23 +344,23 @@ class CryptoYieldMonitor:
                 # 收益率、预估收益率、Pxx收益率 小于卖出年化阈值
                 if product['apy'] < sell_apy_threshold or \
                         estimate_apy < sell_apy_threshold:
-                        # estimate_apy_percentile < sell_apy_threshold:
+                    # estimate_apy_percentile < sell_apy_threshold:
                     content = f"📉**卖出提醒**: "
                 else:
                     content = f"💰**持仓收益率**: "
                 content += (
-                        f"{product['exchange']} {product['token']} ({now_str})\n"
-                        f"近24小时现货交易量: {product['volume_24h']/10000:.2f}万USDT\n"
-                        f"最新收益率: {product['apy']:.2f}%\n"
-                        f"P{yield_percentile}收益率: {apy_percentile:.2f}%\n"
-                        f"近7天P{yield_percentile}收益率: {d7apy_str}\n"
-                        f"近30天P{yield_percentile}收益率: {d30apy_str}\n"
-                        f"各交易所合约信息(套保交易所: {token['future_exchange']})\n"
-                        f"近24小时合约交易量|最新资金费率|近7天P{yield_percentile}资金费率|标记价格|预估收益率|近24小时P{yield_percentile}预估收益率|结算周期|下次结算时间\n"
-                        f"{future_info_str}"
-                        f"{gateio_position_info}"
-                        f"{bitget_position_info}"
-                    )
+                    f"{product['exchange']} {product['token']} ({now_str})\n"
+                    f"近24小时现货交易量: {product['volume_24h'] / 10000:.2f}万USDT\n"
+                    f"最新收益率: {product['apy']:.2f}%\n"
+                    f"P{yield_percentile}收益率: {apy_percentile:.2f}%\n"
+                    f"近7天P{yield_percentile}收益率: {d7apy_str}\n"
+                    f"近30天P{yield_percentile}收益率: {d30apy_str}\n"
+                    f"各交易所合约信息(套保交易所: {token['future_exchange']})\n"
+                    f"近24小时合约交易量|最新资金费率|近7天P{yield_percentile}资金费率|标记价格|预估收益率|近24小时P{yield_percentile}预估收益率|结算周期|下次结算时间\n"
+                    f"{future_info_str}"
+                    f"{gateio_position_info}"
+                    f"{bitget_position_info}"
+                )
                 sell_wechat_bot.send_message(content)
             else:
                 content = f"在{token['future_exchange']}交易所中未找到 {token['token']} 合约产品"
