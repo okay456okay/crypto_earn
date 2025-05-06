@@ -41,17 +41,24 @@ def calculate_annual_yield(funding_rate: float, interval_hours: int) -> float:
     """
     return funding_rate / interval_hours * 24 * 365
 
-def calculate_p95_yield(funding_rates: List[float], interval_hours: int) -> float:
+def calculate_average_annual_yield(funding_rates: List[Dict[str, Any]], interval_hours: int) -> float:
     """
-    计算P95年化收益率
-    :param funding_rates: 资金费率列表
-    :param interval_hours: 资金费率周期（小时）
-    :return: P95年化收益率（百分比）
+    计算平均年化收益率
+    :param funding_rates: 资金费率历史列表，每个元素包含fundingRate和fundingIntervalHours
+    :param interval_hours: 当前资金费率周期（小时）
+    :return: 平均年化收益率（百分比）
     """
     if not funding_rates:
         return 0
-    p95_rate = np.percentile(funding_rates, 5)  # 取5%分位数，因为资金费率越低越好
-    return calculate_annual_yield(p95_rate, interval_hours)
+    
+    total_yield = 0
+    for rate in funding_rates:
+        # 使用实际的资金费率周期计算
+        actual_interval = rate.get('fundingIntervalHours', interval_hours)
+        yield_per_period = calculate_annual_yield(rate['fundingRate'], actual_interval)
+        total_yield += yield_per_period
+    
+    return total_yield / len(funding_rates)
 
 def get_funding_rate_history(api: ExchangeAPI, exchange: str, token: str, days: int) -> List[Dict[str, Any]]:
     """
@@ -60,7 +67,7 @@ def get_funding_rate_history(api: ExchangeAPI, exchange: str, token: str, days: 
     :param exchange: 交易所名称
     :param token: 交易对
     :param days: 天数
-    :return: 资金费率历史列表
+    :return: 资金费率历史列表，每个元素包含fundingRate和fundingIntervalHours
     """
     end_time = int(time.time() * 1000)
     start_time = end_time - days * 24 * 60 * 60 * 1000
@@ -179,8 +186,8 @@ def send_to_wechat_robot(data: List[Dict[str, Any]]):
         message += f"- 当前资金费率: {item['funding_rate']:.4f}%\n"
         message += f"- 资金费率周期: {item['interval_hours']}小时\n"
         message += f"- 当前年化收益率: {item['current_yield']:.2f}%\n"
-        message += f"- 1天P95年化收益率: {item['p95_yield_1d']:.2f}%\n"
-        message += f"- 3天P95年化收益率: {item['p95_yield_3d']:.2f}%\n"
+        message += f"- 近1天平均年化收益率: {item['avg_yield_1d']:.2f}%\n"
+        message += f"- 近3天平均年化收益率: {item['avg_yield_3d']:.2f}%\n"
         message += f"- 24小时合约交易量: {item['future_volume']:,.2f} USDT\n"
         message += f"- 24小时现货交易量: {item['spot_volume']:,.2f} USDT\n\n"
     
@@ -352,15 +359,11 @@ def main():
             history_1d = get_funding_rate_history(api, rate['exchange'], rate['token'], 1)
             history_3d = get_funding_rate_history(api, rate['exchange'], rate['token'], 3)
             
-            # 提取资金费率列表
-            rates_1d = [h['fundingRate'] for h in history_1d]
-            rates_3d = [h['fundingRate'] for h in history_3d]
+            # 计算平均年化收益率
+            avg_yield_1d = calculate_average_annual_yield(history_1d, rate['fundingIntervalHours'])
+            avg_yield_3d = calculate_average_annual_yield(history_3d, rate['fundingIntervalHours'])
             
-            # 计算P95年化收益率
-            p95_yield_1d = calculate_p95_yield(rates_1d, rate['fundingIntervalHours'])
-            p95_yield_3d = calculate_p95_yield(rates_3d, rate['fundingIntervalHours'])
-            
-            logger.info(f"{rate['exchange']} {rate['token']} P95年化收益率: 1天={p95_yield_1d:.2f}%, 3天={p95_yield_3d:.2f}%")
+            logger.info(f"{rate['exchange']} {rate['token']} 平均年化收益率: 1天={avg_yield_1d:.2f}%, 3天={avg_yield_3d:.2f}%")
             
             filtered_rates.append({
                 'exchange': rate['exchange'],
@@ -368,8 +371,8 @@ def main():
                 'funding_rate': rate['fundingRate'],
                 'interval_hours': rate['fundingIntervalHours'],
                 'current_yield': current_yield,
-                'p95_yield_1d': p95_yield_1d,
-                'p95_yield_3d': p95_yield_3d,
+                'avg_yield_1d': avg_yield_1d,
+                'avg_yield_3d': avg_yield_3d,
                 'future_volume': volumes['future_volume'],
                 'spot_volume': volumes['spot_volume']
             })
