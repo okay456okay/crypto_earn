@@ -13,6 +13,7 @@
 配置说明：
     在config.py中设置：
     - funding_rate_threshold: 资金费率年化收益率阈值（默认30%）
+    - min_funding_rate: 最小资金费率阈值（默认0.01%）
     - webhook_url: 企业微信群机器人webhook地址
 
 作者：Raymon
@@ -26,7 +27,7 @@ import requests
 import json
 from typing import List, Dict, Any
 from exchange import ExchangeAPI
-from config import webhook_url, funding_rate_threshold
+from config import webhook_url, funding_rate_threshold, min_funding_rate
 from tools.logger import logger
 
 def calculate_annual_yield(funding_rate: float, interval_hours: int) -> float:
@@ -139,60 +140,175 @@ def send_to_wechat_robot(data: List[Dict[str, Any]]):
     except Exception as e:
         logger.error(f"发送消息时出错: {str(e)}")
 
+def get_all_funding_rates(api: ExchangeAPI) -> List[Dict[str, Any]]:
+    """
+    获取所有交易所的资金费率信息
+    :param api: ExchangeAPI实例
+    :return: 资金费率信息列表
+    """
+    all_rates = []
+    
+    # 获取Binance所有合约资金费率
+    try:
+        logger.info("开始获取Binance所有合约资金费率")
+        url = "https://fapi.binance.com/fapi/v1/premiumIndex"
+        response = requests.get(url, proxies=api.session.proxies)
+        if response.status_code == 200:
+            data = response.json()
+            for item in data:
+                if float(item['lastFundingRate']) * 100 >= min_funding_rate:  # 转换为百分比
+                    all_rates.append({
+                        'exchange': 'Binance',
+                        'token': item['symbol'],
+                        'fundingRate': float(item['lastFundingRate']) * 100,
+                        'fundingTime': int(item['nextFundingTime']),
+                        'fundingIntervalHours': 8,  # Binance固定8小时
+                        'markPrice': float(item['markPrice'])
+                    })
+            logger.info(f"获取到Binance {len(all_rates)}个合约的资金费率")
+    except Exception as e:
+        logger.error(f"获取Binance所有合约资金费率失败: {str(e)}")
+    
+    # 获取Bitget所有合约资金费率
+    try:
+        logger.info("开始获取Bitget所有合约资金费率")
+        url = "https://api.bitget.com/api/v2/mix/market/current-fund-rate"
+        params = {"productType": "USDT-FUTURES"}
+        response = requests.get(url, params=params, proxies=api.session.proxies)
+        if response.status_code == 200:
+            data = response.json()
+            if data["code"] == "00000" and "data" in data:
+                for item in data["data"]:
+                    if float(item['fundingRate']) * 100 >= min_funding_rate:
+                        all_rates.append({
+                            'exchange': 'Bitget',
+                            'token': item['symbol'],
+                            'fundingRate': float(item['fundingRate']) * 100,
+                            'fundingTime': int(item['fundingTime']),
+                            'fundingIntervalHours': 8,  # Bitget固定8小时
+                            'markPrice': float(item['markPrice'])
+                        })
+            logger.info(f"获取到Bitget {len(data.get('data', []))}个合约的资金费率")
+    except Exception as e:
+        logger.error(f"获取Bitget所有合约资金费率失败: {str(e)}")
+    
+    # 获取Bybit所有合约资金费率
+    try:
+        logger.info("开始获取Bybit所有合约资金费率")
+        url = "https://api.bybit.com/v5/market/tickers"
+        params = {"category": "linear"}
+        response = requests.get(url, params=params, proxies=api.session.proxies)
+        if response.status_code == 200:
+            data = response.json()
+            if data["retCode"] == 0 and "result" in data and "list" in data["result"]:
+                for item in data["result"]["list"]:
+                    if float(item['fundingRate']) * 100 >= min_funding_rate:
+                        all_rates.append({
+                            'exchange': 'Bybit',
+                            'token': item['symbol'],
+                            'fundingRate': float(item['fundingRate']) * 100,
+                            'fundingTime': int(item['nextFundingTime']),
+                            'fundingIntervalHours': 8,  # Bybit固定8小时
+                            'markPrice': float(item['markPrice'])
+                        })
+            logger.info(f"获取到Bybit {len(data['result'].get('list', []))}个合约的资金费率")
+    except Exception as e:
+        logger.error(f"获取Bybit所有合约资金费率失败: {str(e)}")
+    
+    # 获取GateIO所有合约资金费率
+    try:
+        logger.info("开始获取GateIO所有合约资金费率")
+        url = "https://api.gateio.ws/api/v4/futures/usdt/contracts"
+        response = requests.get(url, proxies=api.session.proxies)
+        if response.status_code == 200:
+            data = response.json()
+            for item in data:
+                if not item['in_delisting'] and float(item['funding_rate']) * 100 >= min_funding_rate:
+                    all_rates.append({
+                        'exchange': 'GateIO',
+                        'token': item['name'].replace('_USDT', 'USDT'),
+                        'fundingRate': float(item['funding_rate']) * 100,
+                        'fundingTime': int(item['funding_next_apply']) * 1000,
+                        'fundingIntervalHours': int(item['funding_interval'] / 3600),
+                        'markPrice': float(item['mark_price'])
+                    })
+            logger.info(f"获取到GateIO {len(data)}个合约的资金费率")
+    except Exception as e:
+        logger.error(f"获取GateIO所有合约资金费率失败: {str(e)}")
+    
+    # 获取OKX所有合约资金费率
+    try:
+        logger.info("开始获取OKX所有合约资金费率")
+        url = "https://www.okx.com/api/v5/public/funding-rate"
+        params = {"instType": "SWAP"}
+        response = requests.get(url, params=params, proxies=api.session.proxies)
+        if response.status_code == 200:
+            data = response.json()
+            if data["code"] == "0" and "data" in data:
+                for item in data["data"]:
+                    if float(item['fundingRate']) * 100 >= min_funding_rate:
+                        all_rates.append({
+                            'exchange': 'OKX',
+                            'token': item['instId'].replace('-USDT-SWAP', 'USDT'),
+                            'fundingRate': float(item['fundingRate']) * 100,
+                            'fundingTime': int(item['nextFundingTime']),
+                            'fundingIntervalHours': 8,  # OKX固定8小时
+                            'markPrice': float(item['markPrice'])
+                        })
+            logger.info(f"获取到OKX {len(data.get('data', []))}个合约的资金费率")
+    except Exception as e:
+        logger.error(f"获取OKX所有合约资金费率失败: {str(e)}")
+    
+    return all_rates
+
 def main():
     logger.info("开始执行资金费率套利监控")
     api = ExchangeAPI()
     
     # 获取所有交易所的资金费率信息
-    all_rates = []
-    tokens = ['BTCUSDT', 'ETHUSDT']  # 这里可以扩展更多token
+    all_rates = get_all_funding_rates(api)
+    logger.info(f"共获取到{len(all_rates)}个合约的资金费率信息")
     
-    for token in tokens:
-        logger.info(f"开始获取{token}的资金费率信息")
-        rates = api.get_funding_rate(token)
-        for rate in rates:
-            if not rate:  # 跳过空数据
-                continue
+    # 筛选符合条件的交易对
+    filtered_rates = []
+    for rate in all_rates:
+        # 计算当前年化收益率
+        current_yield = calculate_annual_yield(rate['fundingRate'], rate['fundingIntervalHours'])
+        logger.debug(f"{rate['exchange']} {rate['token']}当前年化收益率: {current_yield:.2f}%")
+        
+        # 如果当前年化收益率超过阈值，获取历史数据
+        if current_yield >= funding_rate_threshold:
+            logger.info(f"{rate['exchange']} {rate['token']}年化收益率{current_yield:.2f}%超过阈值{funding_rate_threshold}%，开始获取历史数据")
             
-            logger.debug(f"获取到{rate['exchange']} {token}资金费率: {rate['fundingRate']}%, 周期: {rate['fundingIntervalHours']}小时")
+            # 获取1天和3天的历史数据
+            history_1d = get_funding_rate_history(api, rate['token'], 1)
+            history_3d = get_funding_rate_history(api, rate['token'], 3)
             
-            # 计算当前年化收益率
-            current_yield = calculate_annual_yield(rate['fundingRate'], rate['fundingIntervalHours'])
-            logger.debug(f"{rate['exchange']} {token}当前年化收益率: {current_yield:.2f}%")
+            # 提取资金费率列表
+            rates_1d = [h['fundingRate'] for h in history_1d]
+            rates_3d = [h['fundingRate'] for h in history_3d]
             
-            # 如果当前年化收益率超过阈值，获取历史数据
-            if current_yield >= funding_rate_threshold:
-                logger.info(f"{rate['exchange']} {token}年化收益率{current_yield:.2f}%超过阈值{funding_rate_threshold}%，开始获取历史数据")
-                
-                # 获取1天和3天的历史数据
-                history_1d = get_funding_rate_history(api, token, 1)
-                history_3d = get_funding_rate_history(api, token, 3)
-                
-                # 提取资金费率列表
-                rates_1d = [h['fundingRate'] for h in history_1d]
-                rates_3d = [h['fundingRate'] for h in history_3d]
-                
-                # 计算P95年化收益率
-                p95_yield_1d = calculate_p95_yield(rates_1d, rate['fundingIntervalHours'])
-                p95_yield_3d = calculate_p95_yield(rates_3d, rate['fundingIntervalHours'])
-                
-                logger.info(f"{rate['exchange']} {token} P95年化收益率: 1天={p95_yield_1d:.2f}%, 3天={p95_yield_3d:.2f}%")
-                
-                all_rates.append({
-                    'exchange': rate['exchange'],
-                    'token': token,
-                    'funding_rate': rate['fundingRate'],
-                    'interval_hours': rate['fundingIntervalHours'],
-                    'current_yield': current_yield,
-                    'p95_yield_1d': p95_yield_1d,
-                    'p95_yield_3d': p95_yield_3d
-                })
+            # 计算P95年化收益率
+            p95_yield_1d = calculate_p95_yield(rates_1d, rate['fundingIntervalHours'])
+            p95_yield_3d = calculate_p95_yield(rates_3d, rate['fundingIntervalHours'])
+            
+            logger.info(f"{rate['exchange']} {rate['token']} P95年化收益率: 1天={p95_yield_1d:.2f}%, 3天={p95_yield_3d:.2f}%")
+            
+            filtered_rates.append({
+                'exchange': rate['exchange'],
+                'token': rate['token'],
+                'funding_rate': rate['fundingRate'],
+                'interval_hours': rate['fundingIntervalHours'],
+                'current_yield': current_yield,
+                'p95_yield_1d': p95_yield_1d,
+                'p95_yield_3d': p95_yield_3d
+            })
     
     # 按当前年化收益率排序
-    all_rates.sort(key=lambda x: x['current_yield'], reverse=True)
+    filtered_rates.sort(key=lambda x: x['current_yield'], reverse=True)
     
     # 发送到企业微信群机器人
-    send_to_wechat_robot(all_rates)
+    send_to_wechat_robot(filtered_rates)
     logger.info("资金费率套利监控执行完成")
 
 if __name__ == "__main__":
