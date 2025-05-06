@@ -438,8 +438,8 @@ def send_to_wechat_robot(data: List[Dict[str, Any]]):
     # 构建消息内容
     message = "## 高资金费率套利机会\n\n"
     
-    for item in data:
-        message += f"### {item['exchange']} {item['token']}\n"
+    for index, item in enumerate(data, 1):
+        message += f"{index}. {item['exchange']} {item['token']}\n"
         message += f"- 当前资金费率: {item['funding_rate']:.4f}%\n"
         message += f"- 资金费率周期: {item['interval_hours']}小时\n"
         message += f"- 当前年化收益率: {item['current_yield']:.2f}%\n"
