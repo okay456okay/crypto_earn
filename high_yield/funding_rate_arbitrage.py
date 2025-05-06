@@ -3,9 +3,10 @@
 
 该脚本用于监控各大交易所的资金费率，寻找高收益的套利机会。主要功能包括：
 1. 从Binance、Bitget、Bybit、GateIO、OKX等交易所获取资金费率数据
-2. 计算年化收益率，筛选出收益率超过阈值的交易对
-3. 获取历史资金费率数据，计算P95值
-4. 将符合条件的套利机会发送到企业微信群机器人
+2. 获取交易对的24小时合约和现货交易量
+3. 计算年化收益率，筛选出收益率超过阈值的交易对
+4. 获取历史资金费率数据，计算P95值
+5. 将符合条件的套利机会发送到企业微信群机器人
 
 使用方法：
     python funding_rate_arbitrage.py
@@ -14,6 +15,7 @@
     在config.py中设置：
     - funding_rate_threshold: 资金费率年化收益率阈值（默认30%）
     - min_funding_rate: 最小资金费率阈值（默认0.01%）
+    - volume_24h_threshold: 24小时最小交易量阈值（默认20万USDT）
     - webhook_url: 企业微信群机器人webhook地址
 
 作者：Raymon
@@ -27,7 +29,7 @@ import requests
 import json
 from typing import List, Dict, Any
 from exchange import ExchangeAPI
-from config import webhook_url, funding_rate_threshold, min_funding_rate
+from config import webhook_url, funding_rate_threshold, min_funding_rate, volume_24h_threshold
 from tools.logger import logger
 
 def calculate_annual_yield(funding_rate: float, interval_hours: int) -> float:
@@ -51,10 +53,11 @@ def calculate_p95_yield(funding_rates: List[float], interval_hours: int) -> floa
     p95_rate = np.percentile(funding_rates, 5)  # 取5%分位数，因为资金费率越低越好
     return calculate_annual_yield(p95_rate, interval_hours)
 
-def get_funding_rate_history(api: ExchangeAPI, token: str, days: int) -> List[Dict[str, Any]]:
+def get_funding_rate_history(api: ExchangeAPI, exchange: str, token: str, days: int) -> List[Dict[str, Any]]:
     """
     获取指定天数的资金费率历史
     :param api: ExchangeAPI实例
+    :param exchange: 交易所名称
     :param token: 交易对
     :param days: 天数
     :return: 资金费率历史列表
@@ -62,47 +65,102 @@ def get_funding_rate_history(api: ExchangeAPI, token: str, days: int) -> List[Di
     end_time = int(time.time() * 1000)
     start_time = end_time - days * 24 * 60 * 60 * 1000
     
-    logger.info(f"开始获取{token}近{days}天的资金费率历史数据")
+    logger.info(f"开始获取{exchange} {token}近{days}天的资金费率历史数据")
     history = []
     
-    # 获取各交易所的资金费率历史
     try:
-        binance_history = api.get_binance_future_funding_rate_history(token, start_time, end_time)
-        logger.debug(f"Binance {token}历史数据: {len(binance_history)}条")
-        history.extend(binance_history)
+        if exchange == 'Binance':
+            history = api.get_binance_future_funding_rate_history(token, start_time, end_time)
+        elif exchange == 'Bitget':
+            history = api.get_bitget_futures_funding_rate_history(token, start_time, end_time)
+        elif exchange == 'Bybit':
+            history = api.get_bybit_futures_funding_rate_history(token, start_time, end_time)
+        elif exchange == 'GateIO':
+            history = api.get_gateio_futures_funding_rate_history(token, start_time, end_time)
+        elif exchange == 'OKX':
+            history = api.get_okx_futures_funding_rate_history(token, start_time, end_time)
+        
+        logger.info(f"{exchange} {token}近{days}天资金费率历史数据获取完成，共{len(history)}条")
     except Exception as e:
-        logger.error(f"获取Binance {token}历史数据失败: {str(e)}")
+        logger.error(f"获取{exchange} {token}历史数据失败: {str(e)}")
     
-    try:
-        bitget_history = api.get_bitget_futures_funding_rate_history(token, start_time, end_time)
-        logger.debug(f"Bitget {token}历史数据: {len(bitget_history)}条")
-        history.extend(bitget_history)
-    except Exception as e:
-        logger.error(f"获取Bitget {token}历史数据失败: {str(e)}")
-    
-    try:
-        bybit_history = api.get_bybit_futures_funding_rate_history(token, start_time, end_time)
-        logger.debug(f"Bybit {token}历史数据: {len(bybit_history)}条")
-        history.extend(bybit_history)
-    except Exception as e:
-        logger.error(f"获取Bybit {token}历史数据失败: {str(e)}")
-    
-    try:
-        gateio_history = api.get_gateio_futures_funding_rate_history(token, start_time, end_time)
-        logger.debug(f"GateIO {token}历史数据: {len(gateio_history)}条")
-        history.extend(gateio_history)
-    except Exception as e:
-        logger.error(f"获取GateIO {token}历史数据失败: {str(e)}")
-    
-    try:
-        okx_history = api.get_okx_futures_funding_rate_history(token, start_time, end_time)
-        logger.debug(f"OKX {token}历史数据: {len(okx_history)}条")
-        history.extend(okx_history)
-    except Exception as e:
-        logger.error(f"获取OKX {token}历史数据失败: {str(e)}")
-    
-    logger.info(f"{token}近{days}天资金费率历史数据获取完成，共{len(history)}条")
     return history
+
+def get_24h_volume(api: ExchangeAPI, exchange: str, token: str) -> Dict[str, float]:
+    """
+    获取交易对的24小时交易量
+    :param api: ExchangeAPI实例
+    :param exchange: 交易所名称
+    :param token: 交易对
+    :return: 包含合约和现货交易量的字典
+    """
+    try:
+        if exchange == 'Binance':
+            # 获取合约交易量
+            future_url = f"https://fapi.binance.com/fapi/v1/ticker/24hr?symbol={token}"
+            future_response = requests.get(future_url, proxies=api.session.proxies)
+            future_volume = float(future_response.json()['quoteVolume']) if future_response.status_code == 200 else 0
+            
+            # 获取现货交易量
+            spot_url = f"https://api.binance.com/api/v3/ticker/24hr?symbol={token}"
+            spot_response = requests.get(spot_url, proxies=api.session.proxies)
+            spot_volume = float(spot_response.json()['quoteVolume']) if spot_response.status_code == 200 else 0
+            
+        elif exchange == 'Bitget':
+            # 获取合约交易量
+            future_url = "https://api.bitget.com/api/v2/mix/market/ticker"
+            params = {"productType": "USDT-FUTURES", "symbol": token}
+            future_response = requests.get(future_url, params=params, proxies=api.session.proxies)
+            future_volume = float(future_response.json()['data']['quoteVolume']) if future_response.status_code == 200 else 0
+            
+            # 获取现货交易量
+            spot_url = "https://api.bitget.com/api/v2/spot/market/ticker"
+            params = {"symbol": token}
+            spot_response = requests.get(spot_url, params=params, proxies=api.session.proxies)
+            spot_volume = float(spot_response.json()['data']['quoteVolume']) if spot_response.status_code == 200 else 0
+            
+        elif exchange == 'Bybit':
+            # 获取合约交易量
+            future_url = "https://api.bybit.com/v5/market/tickers"
+            params = {"category": "linear", "symbol": token}
+            future_response = requests.get(future_url, params=params, proxies=api.session.proxies)
+            future_volume = float(future_response.json()['result']['list'][0]['volume24h']) if future_response.status_code == 200 else 0
+            
+            # 获取现货交易量
+            spot_url = "https://api.bybit.com/v5/market/tickers"
+            params = {"category": "spot", "symbol": token}
+            spot_response = requests.get(spot_url, params=params, proxies=api.session.proxies)
+            spot_volume = float(spot_response.json()['result']['list'][0]['volume24h']) if spot_response.status_code == 200 else 0
+            
+        elif exchange == 'GateIO':
+            # 获取合约交易量
+            future_url = f"https://api.gateio.ws/api/v4/futures/usdt/tickers/{token}"
+            future_response = requests.get(future_url, proxies=api.session.proxies)
+            future_volume = float(future_response.json()['quote_volume']) if future_response.status_code == 200 else 0
+            
+            # 获取现货交易量
+            spot_url = f"https://api.gateio.ws/api/v4/spot/tickers/{token}"
+            spot_response = requests.get(spot_url, proxies=api.session.proxies)
+            spot_volume = float(spot_response.json()['quote_volume']) if spot_response.status_code == 200 else 0
+            
+        elif exchange == 'OKX':
+            # 获取合约交易量
+            future_url = "https://www.okx.com/api/v5/market/ticker"
+            params = {"instId": f"{token}-SWAP"}
+            future_response = requests.get(future_url, params=params, proxies=api.session.proxies)
+            future_volume = float(future_response.json()['data'][0]['vol24h']) if future_response.status_code == 200 else 0
+            
+            # 获取现货交易量
+            spot_url = "https://www.okx.com/api/v5/market/ticker"
+            params = {"instId": f"{token}-SPOT"}
+            spot_response = requests.get(spot_url, params=params, proxies=api.session.proxies)
+            spot_volume = float(spot_response.json()['data'][0]['vol24h']) if spot_response.status_code == 200 else 0
+        
+        logger.info(f"{exchange} {token} 24小时交易量: 合约={future_volume:.2f} USDT, 现货={spot_volume:.2f} USDT")
+        return {'future_volume': future_volume, 'spot_volume': spot_volume}
+    except Exception as e:
+        logger.error(f"获取{exchange} {token} 24小时交易量失败: {str(e)}")
+        return {'future_volume': 0, 'spot_volume': 0}
 
 def send_to_wechat_robot(data: List[Dict[str, Any]]):
     """
@@ -115,12 +173,13 @@ def send_to_wechat_robot(data: List[Dict[str, Any]]):
     
     # 构建消息内容
     message = "## 高资金费率套利机会\n\n"
-    message += "| 交易所 | 交易对 | 当前资金费率 | 周期(小时) | 当前年化 | 1天P95年化 | 3天P95年化 |\n"
-    message += "|--------|--------|--------------|------------|----------|------------|------------|\n"
+    message += "| 交易所 | 交易对 | 当前资金费率 | 周期(小时) | 当前年化 | 1天P95年化 | 3天P95年化 | 合约交易量(USDT) | 现货交易量(USDT) |\n"
+    message += "|--------|--------|--------------|------------|----------|------------|------------|------------------|------------------|\n"
     
     for item in data:
         message += f"| {item['exchange']} | {item['token']} | {item['funding_rate']:.4f}% | {item['interval_hours']} | "
-        message += f"{item['current_yield']:.2f}% | {item['p95_yield_1d']:.2f}% | {item['p95_yield_3d']:.2f}% |\n"
+        message += f"{item['current_yield']:.2f}% | {item['p95_yield_1d']:.2f}% | {item['p95_yield_3d']:.2f}% | "
+        message += f"{item['future_volume']:,.2f} | {item['spot_volume']:,.2f} |\n"
     
     # 发送到企业微信群机器人
     payload = {
@@ -276,13 +335,19 @@ def main():
         current_yield = calculate_annual_yield(rate['fundingRate'], rate['fundingIntervalHours'])
         logger.debug(f"{rate['exchange']} {rate['token']}当前年化收益率: {current_yield:.2f}%")
         
-        # 如果当前年化收益率超过阈值，获取历史数据
+        # 如果当前年化收益率超过阈值，获取历史数据和交易量
         if current_yield >= funding_rate_threshold:
             logger.info(f"{rate['exchange']} {rate['token']}年化收益率{current_yield:.2f}%超过阈值{funding_rate_threshold}%，开始获取历史数据")
             
+            # 获取24小时交易量
+            volumes = get_24h_volume(api, rate['exchange'], rate['token'])
+            if volumes['future_volume'] < volume_24h_threshold or volumes['spot_volume'] < volume_24h_threshold:
+                logger.info(f"{rate['exchange']} {rate['token']}交易量不足，跳过")
+                continue
+            
             # 获取1天和3天的历史数据
-            history_1d = get_funding_rate_history(api, rate['token'], 1)
-            history_3d = get_funding_rate_history(api, rate['token'], 3)
+            history_1d = get_funding_rate_history(api, rate['exchange'], rate['token'], 1)
+            history_3d = get_funding_rate_history(api, rate['exchange'], rate['token'], 3)
             
             # 提取资金费率列表
             rates_1d = [h['fundingRate'] for h in history_1d]
@@ -301,7 +366,9 @@ def main():
                 'interval_hours': rate['fundingIntervalHours'],
                 'current_yield': current_yield,
                 'p95_yield_1d': p95_yield_1d,
-                'p95_yield_3d': p95_yield_3d
+                'p95_yield_3d': p95_yield_3d,
+                'future_volume': volumes['future_volume'],
+                'spot_volume': volumes['spot_volume']
             })
     
     # 按当前年化收益率排序
