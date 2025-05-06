@@ -358,13 +358,13 @@ def get_24h_volume(api: ExchangeAPI, exchange: str, token: str) -> Dict[str, Any
             if response.status_code == 200:
                 spot_price = float(response.json()['price'])
         elif spot_exchange == 'Bitget':
-            url = "https://api.bitget.com/api/v2/spot/market/ticker"
-            params = {"symbol": f"{spot_token}USDT"}
+            url = "https://api.bitget.com/api/spot/v1/market/ticker"
+            params = {"symbol": f"{spot_token}USDT_SPBL"}
             response = make_bitget_request(url, params=params, proxies=api.session.proxies)
             if response.status_code == 200:
                 data = response.json()
                 if data["code"] == "00000" and "data" in data:
-                    spot_price = float(data["data"][0]["last"])
+                    spot_price = float(data["data"]["close"])
         elif spot_exchange == 'Bybit':
             url = "https://api.bybit.com/v5/market/tickers"
             params = {"category": "spot", "symbol": f"{spot_token}USDT"}
@@ -678,6 +678,6 @@ def main():
 if __name__ == "__main__":
     # api = ExchangeAPI()
     # for exchange in ['Binance', 'Bybit', 'Bitget', 'GateIO', 'OKX']:
-    #     get_24h_volume(api, exchange, 'ETHUSDT')
+    #     get_24h_volume(api, exchange, 'HNTUSDT')
     #     print(exchange, get_funding_rate_history(exchange, 'ETHUSDT', days=1))
     main()
