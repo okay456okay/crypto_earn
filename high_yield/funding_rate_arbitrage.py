@@ -253,56 +253,74 @@ def get_24h_volume(api: ExchangeAPI, exchange: str, token: str) -> Dict[str, flo
     """
     获取交易对的24小时交易量
     :param api: ExchangeAPI实例
-    :param exchange: 交易所名称
+    :param exchange: 交易所名称（合约所在交易所）
     :param token: 交易对
     :return: 包含合约和现货交易量的字典
     """
     try:
-        # 确保交易量数据已获取
+        # 获取合约交易量（仅从指定交易所获取）
+        future_volume = 0
         if exchange == 'Binance':
-            if not api.binance_volumes:
-                api.get_binance_volumes()
             if not api.binance_futures_volumes:
                 api.get_binance_futures_volumes()
             future_volume = api.binance_futures_volumes.get(token, 0)
-            spot_volume = api.binance_volumes.get(token.replace('USDT', ''), 0)
-            
         elif exchange == 'Bitget':
-            if not api.bitget_volumes:
-                api.get_bitget_volumes()
             if not api.bitget_futures_volumes:
                 api.get_bitget_futures_volumes()
             future_volume = api.bitget_futures_volumes.get(token, 0)
-            spot_volume = api.bitget_volumes.get(token.replace('USDT', ''), 0)
-            
         elif exchange == 'Bybit':
-            if not api.bybit_volumes:
-                api.get_bybit_volumes()
             if not api.bybit_futures_volumes:
                 api.get_bybit_futures_volumes()
             future_volume = api.bybit_futures_volumes.get(token, 0)
-            spot_volume = api.bybit_volumes.get(token.replace('USDT', ''), 0)
-            
         elif exchange == 'GateIO':
-            if not api.gateio_volumes:
-                api.get_gateio_volumes()
             if not api.gateio_futures_volumes:
                 api.get_gateio_futures_volumes()
             future_volume = api.gateio_futures_volumes.get(token, 0)
-            spot_volume = api.gateio_volumes.get(token.replace('USDT', ''), 0)
-            
         elif exchange == 'OKX':
-            if not api.okx_volumes:
-                api.get_okx_volumes()
             if not api.okx_futures_volumes:
                 api.get_okx_futures_volumes()
             future_volume = api.okx_futures_volumes.get(token, 0)
-            spot_volume = api.okx_volumes.get(token.replace('USDT', ''), 0)
         
-        logger.info(f"{exchange} {token} 24小时交易量: 合约={future_volume:.2f} USDT, 现货={spot_volume:.2f} USDT")
+        # 获取现货交易量（从所有交易所获取，取最大值）
+        spot_volume = 0
+        spot_token = token.replace('USDT', '')
+        
+        # 获取所有交易所的现货交易量
+        if not api.binance_volumes:
+            api.get_binance_volumes()
+        if not api.bitget_volumes:
+            api.get_bitget_volumes()
+        if not api.bybit_volumes:
+            api.get_bybit_volumes()
+        if not api.gateio_volumes:
+            api.get_gateio_volumes()
+        if not api.okx_volumes:
+            api.get_okx_volumes()
+        
+        # 从所有交易所中获取最大的现货交易量
+        spot_volumes = [
+            api.binance_volumes.get(spot_token, 0),
+            api.bitget_volumes.get(spot_token, 0),
+            api.bybit_volumes.get(spot_token, 0),
+            api.gateio_volumes.get(spot_token, 0),
+            api.okx_volumes.get(spot_token, 0)
+        ]
+        spot_volume = max(spot_volumes)
+        
+        # 记录日志，显示每个交易所的现货交易量
+        logger.info(f"{token} 24小时交易量:")
+        logger.info(f"合约({exchange}): {future_volume:.2f} USDT")
+        logger.info(f"现货交易量:")
+        logger.info(f"- Binance: {api.binance_volumes.get(spot_token, 0):.2f} USDT")
+        logger.info(f"- Bitget: {api.bitget_volumes.get(spot_token, 0):.2f} USDT")
+        logger.info(f"- Bybit: {api.bybit_volumes.get(spot_token, 0):.2f} USDT")
+        logger.info(f"- GateIO: {api.gateio_volumes.get(spot_token, 0):.2f} USDT")
+        logger.info(f"- OKX: {api.okx_volumes.get(spot_token, 0):.2f} USDT")
+        logger.info(f"最大现货交易量: {spot_volume:.2f} USDT")
+        
         return {'future_volume': future_volume, 'spot_volume': spot_volume}
     except Exception as e:
-        logger.error(f"获取{exchange} {token} 24小时交易量失败: {str(e)}")
+        logger.error(f"获取{token} 24小时交易量失败: {str(e)}")
         return {'future_volume': 0, 'spot_volume': 0}
 
 def send_to_wechat_robot(data: List[Dict[str, Any]]):
