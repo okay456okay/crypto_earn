@@ -29,7 +29,7 @@ import requests
 import json
 from typing import List, Dict, Any
 from exchange import ExchangeAPI
-from config import webhook_url, funding_rate_threshold, min_funding_rate, volume_24h_threshold
+from config import webhook_url, funding_rate_threshold, min_funding_rate, volume_24h_threshold, proxies
 from tools.logger import logger
 import ccxt
 
@@ -123,6 +123,10 @@ def get_funding_rate_history(exchange: str, token: str, days: int) -> List[Dict[
     history_rates = []
     api = ExchangeAPI()
     
+    # 计算时间范围
+    end_time = int(time.time() * 1000)
+    start_time = end_time - days * 24 * 60 * 60 * 1000
+    
     # 获取Binance历史资金费率
     if exchange == 'Binance':
         try:
@@ -132,21 +136,15 @@ def get_funding_rate_history(exchange: str, token: str, days: int) -> List[Dict[
                 api.get_binance_funding_info()
             funding_interval = api.binance_funding_info.get(token, {}).get('fundingIntervalHours', 8)
             
-            url = "https://fapi.binance.com/fapi/v1/fundingRate/history"
-            params = {
-                "symbol": token,
-                "limit": 100  # 获取最多100条历史记录
-            }
-            response = requests.get(url, params=params, proxies=api.session.proxies)
-            if response.status_code == 200:
-                data = response.json()
-                for item in data:
-                    history_rates.append({
-                        'fundingRate': float(item['fundingRate']) * 100,
-                        'fundingTime': int(item['fundingTime']),
-                        'fundingIntervalHours': funding_interval
-                    })
-                logger.info(f"获取到Binance {token} {len(history_rates)}条历史资金费率")
+            # 使用exchange.py中的方法获取历史数据
+            history = api.get_binance_future_funding_rate_history(token, start_time, end_time)
+            for item in history:
+                history_rates.append({
+                    'fundingRate': float(item['fundingRate']) * 100,
+                    'fundingTime': item['fundingTime'],
+                    'fundingIntervalHours': funding_interval
+                })
+            logger.info(f"获取到Binance {token} {len(history_rates)}条历史资金费率")
         except Exception as e:
             logger.error(f"获取Binance {token}历史资金费率失败: {str(e)}")
     
@@ -154,37 +152,20 @@ def get_funding_rate_history(exchange: str, token: str, days: int) -> List[Dict[
     elif exchange == 'Bitget':
         try:
             logger.info(f"开始获取Bitget {token}的历史资金费率")
-            url = "https://api.bitget.com/api/v2/mix/market/history-fund-rate"
-            params = {
-                "symbol": token,
-                "productType": "USDT-FUTURES",
-                "pageSize": 100  # 获取最多100条历史记录
-            }
-            response = make_bitget_request(url, params=params, proxies=api.session.proxies)
-            if response.status_code == 200:
-                data = response.json()
-                if data["code"] == "00000" and "data" in data:
-                    # 获取合约信息以获取资金费率周期
-                    contracts_url = "https://api.bitget.com/api/v2/mix/market/contracts"
-                    contracts_params = {"productType": "usdt-futures"}
-                    contracts_response = make_bitget_request(contracts_url, params=contracts_params, proxies=api.session.proxies)
-                    funding_interval = 8  # 默认8小时
-                    if contracts_response.status_code == 200:
-                        contracts_data = contracts_response.json()
-                        if contracts_data["code"] == "00000" and "data" in contracts_data:
-                            for contract in contracts_data["data"]:
-                                if contract['symbol'] == token:
-                                    funding_interval = int(contract['fundInterval'])
-                                    break
-                    
-                    # 处理历史数据
-                    for item in data["data"]:
-                        history_rates.append({
-                            'fundingRate': float(item['fundingRate']) * 100,
-                            'fundingTime': int(item['fundingTime']),
-                            'fundingIntervalHours': funding_interval
-                        })
-                    logger.info(f"获取到Bitget {token} {len(history_rates)}条历史资金费率")
+            # 获取资金费率周期
+            funding_time, funding_interval = api.get_bitget_futures_funding_time(token)
+            if not funding_interval:
+                funding_interval = 8  # 默认8小时
+            
+            # 使用exchange.py中的方法获取历史数据
+            history = api.get_bitget_futures_funding_rate_history(token, start_time, end_time)
+            for item in history:
+                history_rates.append({
+                    'fundingRate': float(item['fundingRate']) * 100,
+                    'fundingTime': item['fundingTime'],
+                    'fundingIntervalHours': funding_interval
+                })
+            logger.info(f"获取到Bitget {token} {len(history_rates)}条历史资金费率")
         except Exception as e:
             logger.error(f"获取Bitget {token}历史资金费率失败: {str(e)}")
     
@@ -193,35 +174,25 @@ def get_funding_rate_history(exchange: str, token: str, days: int) -> List[Dict[
         try:
             logger.info(f"开始获取Bybit {token}的历史资金费率")
             # 获取资金费率周期
-            endTime = int(time.time()) * 1000
-            startTime = endTime - 2 * 24 * 60 * 60 * 1000
-            funding_rate_history = api.get_bybit_futures_funding_rate_history(token, startTime, endTime)
+            funding_rate_history = api.get_bybit_futures_funding_rate_history(token, start_time, end_time)
             funding_interval = 8  # 默认8小时
             if funding_rate_history:
                 funding_interval = abs(int((funding_rate_history[0]['fundingTime'] - funding_rate_history[1]['fundingTime']) / 1000 / 60 / 60))
             
-            url = "https://api.bybit.com/v5/market/funding/history"
-            params = {
-                "category": "linear",
-                "symbol": token,
-                "limit": 100  # 获取最多100条历史记录
-            }
-            response = requests.get(url, params=params, proxies=api.session.proxies)
-            if response.status_code == 200:
-                data = response.json()
-                if data["retCode"] == 0 and "result" in data and "list" in data["result"]:
-                    for item in data["result"]["list"]:
-                        history_rates.append({
-                            'fundingRate': float(item['fundingRate']) * 100,
-                            'fundingTime': int(item['fundingRateTimestamp']),
-                            'fundingIntervalHours': funding_interval
-                        })
-                    logger.info(f"获取到Bybit {token} {len(history_rates)}条历史资金费率")
+            # 使用exchange.py中的方法获取历史数据
+            history = api.get_bybit_futures_funding_rate_history(token, start_time, end_time)
+            for item in history:
+                history_rates.append({
+                    'fundingRate': float(item['fundingRate']) * 100,
+                    'fundingTime': item['fundingTime'],
+                    'fundingIntervalHours': funding_interval
+                })
+            logger.info(f"获取到Bybit {token} {len(history_rates)}条历史资金费率")
         except Exception as e:
             logger.error(f"获取Bybit {token}历史资金费率失败: {str(e)}")
     
     # 获取Gate.io历史资金费率
-    elif exchange == 'Gate.io':
+    elif exchange == 'GateIO':
         try:
             logger.info(f"开始获取Gate.io {token}的历史资金费率")
             # 获取资金费率周期
@@ -234,21 +205,15 @@ def get_funding_rate_history(exchange: str, token: str, days: int) -> List[Dict[
             else:
                 funding_interval = 8  # 默认8小时
             
-            url = "https://api.gateio.ws/api/v4/futures/funding_rate_history"
-            params = {
-                "contract": token,
-                "limit": 100  # 获取最多100条历史记录
-            }
-            response = requests.get(url, params=params, proxies=api.session.proxies)
-            if response.status_code == 200:
-                data = response.json()
-                for item in data:
-                    history_rates.append({
-                        'fundingRate': float(item['r']) * 100,
-                        'fundingTime': int(item['t']),
-                        'fundingIntervalHours': funding_interval
-                    })
-                logger.info(f"获取到Gate.io {token} {len(history_rates)}条历史资金费率")
+            # 使用exchange.py中的方法获取历史数据
+            history = api.get_gateio_futures_funding_rate_history(token, start_time, end_time)
+            for item in history:
+                history_rates.append({
+                    'fundingRate': item['fundingRate'],
+                    'fundingTime': item['fundingTime'],
+                    'fundingIntervalHours': funding_interval
+                })
+            logger.info(f"获取到Gate.io {token} {len(history_rates)}条历史资金费率")
         except Exception as e:
             logger.error(f"获取Gate.io {token}历史资金费率失败: {str(e)}")
     
@@ -262,22 +227,15 @@ def get_funding_rate_history(exchange: str, token: str, days: int) -> List[Dict[
             funding_rate_info = exchange.fetch_funding_rate(symbol)
             funding_interval = int((funding_rate_info['nextFundingTimestamp'] - funding_rate_info['fundingTimestamp']) / 1000 / 60 / 60)
             
-            url = "https://www.okx.com/api/v5/public/funding-rate-history"
-            params = {
-                "instId": token,
-                "limit": 100  # 获取最多100条历史记录
-            }
-            response = requests.get(url, params=params, proxies=api.session.proxies)
-            if response.status_code == 200:
-                data = response.json()
-                if data["code"] == "0" and "data" in data:
-                    for item in data["data"]:
-                        history_rates.append({
-                            'fundingRate': float(item['fundingRate']) * 100,
-                            'fundingTime': int(item['fundingTime']),
-                            'fundingIntervalHours': funding_interval
-                        })
-                    logger.info(f"获取到OKX {token} {len(history_rates)}条历史资金费率")
+            # 使用exchange.py中的方法获取历史数据
+            history = api.get_okx_futures_funding_rate_history(token, start_time, end_time)
+            for item in history:
+                history_rates.append({
+                    'fundingRate': item['fundingRate'],
+                    'fundingTime': item['fundingTime'],
+                    'fundingIntervalHours': funding_interval
+                })
+            logger.info(f"获取到OKX {token} {len(history_rates)}条历史资金费率")
         except Exception as e:
             logger.error(f"获取OKX {token}历史资金费率失败: {str(e)}")
     
@@ -552,7 +510,7 @@ def main():
             # 获取24小时交易量
             volumes = get_24h_volume(api, rate['exchange'], rate['token'])
             if volumes['future_volume'] < volume_24h_threshold or volumes['spot_volume'] < volume_24h_threshold:
-                logger.info(f"{rate['exchange']} {rate['token']}交易量不足，跳过")
+                logger.info(f"{rate['exchange']} {rate['token']}现货交易量:{volumes['spot_volume']}、合约交易量:{volumes['future_volume']}不足 {volume_24h_threshold}，跳过")
                 continue
             
             # 获取1天和3天的历史数据
@@ -585,6 +543,8 @@ def main():
     logger.info("资金费率套利监控执行完成")
 
 if __name__ == "__main__":
-    api = ExchangeAPI()
-    print(get_24h_volume(api, 'GateIO', 'CTSIUSDT'))
-    # main()
+    # api = ExchangeAPI()
+    # for exchange in ['Binance', 'Bybit', 'Bitget', 'GateIO', 'OKX']:
+    #     # get_24h_volume(api, exchange, 'ETHUSDT')
+    #     print(exchange, get_funding_rate_history(exchange, 'ETHUSDT', days=1))
+    main()
