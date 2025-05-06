@@ -16,7 +16,7 @@
     - funding_rate_threshold: 资金费率年化收益率阈值（默认30%）
     - min_funding_rate: 最小资金费率阈值（默认0.01%）
     - volume_24h_threshold: 24小时最小交易量阈值（默认20万USDT）
-    - webhook_url: 企业微信群机器人webhook地址
+    - funding_rate_webhook_url: 企业微信群机器人webhook地址
 
 作者：Raymon
 创建时间：2024-05-06
@@ -29,7 +29,7 @@ import requests
 import json
 from typing import List, Dict, Any
 from exchange import ExchangeAPI
-from config import webhook_url, funding_rate_threshold, min_funding_rate, volume_24h_threshold, proxies
+from config import funding_rate_webhook_url, funding_rate_threshold, min_avg_yield_threshold, min_funding_rate, volume_24h_threshold, proxies
 from tools.logger import logger
 import ccxt
 
@@ -452,7 +452,7 @@ def send_to_wechat_robot(data: List[Dict[str, Any]]):
     
     try:
         logger.info("开始发送消息到企业微信群机器人")
-        response = requests.post(webhook_url, json=payload)
+        response = requests.post(funding_rate_webhook_url, json=payload)
         if response.status_code == 200:
             logger.info("消息发送成功")
         else:
