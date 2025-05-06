@@ -196,14 +196,18 @@ def get_funding_rate_history(exchange: str, token: str, days: int) -> List[Dict[
         try:
             logger.info(f"开始获取Gate.io {token}的历史资金费率")
             # 获取资金费率周期
+            if not api.gateio_futures_volumes:
+                api.get_gateio_futures_volumes()
+            future_volume = api.gateio_futures_volumes.get(token, 0)
+            # 获取合约价格
             gate_io_token = token.replace('USDT', '_USDT')
             url = f"https://api.gateio.ws/api/v4/futures/usdt/contracts/{gate_io_token}"
             response = requests.get(url, proxies=api.session.proxies)
             if response.status_code == 200:
                 data = response.json()
-                funding_interval = int(data['funding_interval'] / 3600)  # 转换为小时
+                future_price = float(data['mark_price'])
             else:
-                funding_interval = 8  # 默认8小时
+                future_price = 0
             
             # 使用exchange.py中的方法获取历史数据
             history = api.get_gateio_futures_funding_rate_history(token, start_time, end_time)
@@ -211,7 +215,8 @@ def get_funding_rate_history(exchange: str, token: str, days: int) -> List[Dict[
                 history_rates.append({
                     'fundingRate': item['fundingRate'],
                     'fundingTime': item['fundingTime'],
-                    'fundingIntervalHours': funding_interval
+                    'fundingIntervalHours': 8,  # Gate.io固定8小时
+                    'markPrice': future_price
                 })
             logger.info(f"获取到Gate.io {token} {len(history_rates)}条历史资金费率")
         except Exception as e:
@@ -369,11 +374,15 @@ def get_24h_volume(api: ExchangeAPI, exchange: str, token: str) -> Dict[str, Any
                 if data["retCode"] == 0 and "result" in data and "list" in data["result"]:
                     spot_price = float(data["result"]["list"][0]["lastPrice"])
         elif spot_exchange == 'GateIO':
-            url = f"https://api.gateio.ws/api/v4/spot/tickers/{spot_token}_USDT"
+            url = "https://api.gateio.ws/api/v4/spot/tickers"
             response = requests.get(url, proxies=api.session.proxies)
             if response.status_code == 200:
                 data = response.json()
-                spot_price = float(data['last'])
+                gate_io_token = spot_token + '_USDT'
+                for ticker in data:
+                    if ticker['currency_pair'] == gate_io_token:
+                        spot_price = float(ticker['last'])
+                        break
         elif spot_exchange == 'OKX':
             url = f"https://www.okx.com/api/v5/market/ticker?instId={spot_token}-USDT"
             response = requests.get(url, proxies=api.session.proxies)
@@ -669,6 +678,6 @@ def main():
 if __name__ == "__main__":
     # api = ExchangeAPI()
     # for exchange in ['Binance', 'Bybit', 'Bitget', 'GateIO', 'OKX']:
-    #     # get_24h_volume(api, exchange, 'ETHUSDT')
+    #     get_24h_volume(api, exchange, 'ETHUSDT')
     #     print(exchange, get_funding_rate_history(exchange, 'ETHUSDT', days=1))
     main()
