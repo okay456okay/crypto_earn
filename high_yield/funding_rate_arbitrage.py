@@ -173,13 +173,16 @@ def send_to_wechat_robot(data: List[Dict[str, Any]]):
     
     # 构建消息内容
     message = "## 高资金费率套利机会\n\n"
-    message += "| 交易所 | 交易对 | 当前资金费率 | 周期(小时) | 当前年化 | 1天P95年化 | 3天P95年化 | 合约交易量(USDT) | 现货交易量(USDT) |\n"
-    message += "|--------|--------|--------------|------------|----------|------------|------------|------------------|------------------|\n"
     
     for item in data:
-        message += f"| {item['exchange']} | {item['token']} | {item['funding_rate']:.4f}% | {item['interval_hours']} | "
-        message += f"{item['current_yield']:.2f}% | {item['p95_yield_1d']:.2f}% | {item['p95_yield_3d']:.2f}% | "
-        message += f"{item['future_volume']:,.2f} | {item['spot_volume']:,.2f} |\n"
+        message += f"### {item['exchange']} {item['token']}\n"
+        message += f"- 当前资金费率: {item['funding_rate']:.4f}%\n"
+        message += f"- 资金费率周期: {item['interval_hours']}小时\n"
+        message += f"- 当前年化收益率: {item['current_yield']:.2f}%\n"
+        message += f"- 1天P95年化收益率: {item['p95_yield_1d']:.2f}%\n"
+        message += f"- 3天P95年化收益率: {item['p95_yield_3d']:.2f}%\n"
+        message += f"- 24小时合约交易量: {item['future_volume']:,.2f} USDT\n"
+        message += f"- 24小时现货交易量: {item['spot_volume']:,.2f} USDT\n\n"
     
     # 发送到企业微信群机器人
     payload = {
