@@ -350,13 +350,14 @@ class UnhedgeTrader:
 
                         except Exception as e:
                             logger.error(f"处理订单簿数据时出错: {str(e)}")
+                            raise
 
                 except asyncio.CancelledError:
                     logger.info(f"{self.symbol}订单簿监控任务被取消")
                     break
                 except Exception as e:
                     logger.error(f"订阅订单簿时出错: {str(e)}")
-                    await asyncio.sleep(1)
+                    raise
 
         except Exception as e:
             logger.error(f"执行优化版平仓交易时出错: {str(e)}")

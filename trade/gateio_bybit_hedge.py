@@ -275,7 +275,8 @@ class HedgeTrader:
                                     self.ws_running = False
                                     break
                                 else:
-                                    logger.warning(f"订单状态异常 - Gate.io: {spot_status}, Bybit: {contract_status}")
+                                    logger.error(f"订单状态异常 - Gate.io: {spot_status}, Bybit: {contract_status}")
+                                    raise
                             else:
                                 # 只在满足价差条件尝试执行交易但失败时才终止循环
                                 # 检查是否因为价差不满足条件导致的返回None,None
@@ -286,7 +287,8 @@ class HedgeTrader:
                                 # 如果是因为价差不满足条件而未执行交易，继续等待下一次订单簿更新
 
                         except Exception as e:
-                            logger.debug(f"处理订单簿数据时出错: {str(e)}")
+                            logger.error(f"处理订单簿数据时出错: {str(e)}")
+                            raise
 
                     # 取消未完成的任务
                     for task in pending:
@@ -301,11 +303,7 @@ class HedgeTrader:
                         break
 
                 except Exception as e:
-                    retry_count += 1
-                    # 计算指数退避延迟
-                    delay = min(max_retry_delay, base_delay * (2 ** (retry_count - 1)))
-                    logger.error(f"订阅订单簿时出错: {str(e)}，{delay:.2f}秒后重试 (重试 #{retry_count})")
-                    await asyncio.sleep(delay)  # 使用指数退避延迟
+                    return None, None
 
             # 如果成功执行了交易，返回订单信息
             if successful_spot_order and successful_contract_order:

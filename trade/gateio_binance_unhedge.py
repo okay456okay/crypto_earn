@@ -542,6 +542,8 @@ class UnhedgeTrader:
                             
             except Exception as e:
                 logger.warning(f"获取成交结果时出错: {str(e)}")
+                return None, None, False
+
                             
             # 验证订单结果
             is_successful = await self.verify_order_results(spot_order, contract_order)

@@ -261,8 +261,9 @@ class HedgeTrader:
                                 self.orderbooks['bitget'] = ob
                                 logger.debug("收到Bitget订单簿更新")
                         except Exception as e:
-                            logger.debug(f"处理订单簿数据时出错: {str(e)}")
-                    
+                            logger.error(f"处理订单簿数据时出错: {str(e)}")
+                            raise
+
                     # 取消未完成的任务
                     for task in pending:
                         task.cancel()
@@ -421,9 +422,9 @@ class HedgeTrader:
                                     if not updated_spot_order:
                                         updated_spot_order = await self.gateio.fetch_order(spot_order_id, self.symbol)
                                 except Exception as e:
-                                    logger.debug(f"获取已完成订单失败: {str(e)}，将直接使用fetch_order")
-                                    updated_spot_order = await self.gateio.fetch_order(spot_order_id, self.symbol)
-                                    
+                                    logger.error(f"获取已完成订单失败: {str(e)}")
+                                    return None, None
+
                                 if updated_spot_order:
                                     logger.debug(f"获取到Gate.io最新订单状态: {updated_spot_order}")
                                     spot_order = updated_spot_order
@@ -444,6 +445,7 @@ class HedgeTrader:
                                 logger.error(f"获取Gate.io订单更新失败: {str(e)}")
                                 import traceback
                                 logger.debug(f"获取订单状态异常详情: {traceback.format_exc()}")
+                                return None, None
                         else:
                             logger.error("Gate.io订单ID无效，无法检查订单状态")
                             return None, None
@@ -475,6 +477,7 @@ class HedgeTrader:
                                 logger.error(f"获取Bitget订单更新失败: {str(e)}")
                                 import traceback
                                 logger.debug(f"获取订单状态异常详情: {traceback.format_exc()}")
+                                return None, None
                         else:
                             logger.error("Bitget订单ID无效，无法检查订单状态")
                             return None, None
@@ -571,12 +574,13 @@ class HedgeTrader:
                     continue
                 except Exception as e:
                     logger.error(f"订阅或处理订单簿时出错: {str(e)}")
-                    await asyncio.sleep(1)  # 出错后等待一秒再重试
-            
+                    return None, None
+
         except Exception as e:
             logger.error(f"执行对冲交易时出错: {str(e)}")
             import traceback
             logger.debug(f"错误堆栈: {traceback.format_exc()}")
+            return None, None
         finally:
             # 确保所有WebSocket连接都被关闭
             try:
@@ -945,7 +949,7 @@ async def main():
                         # 如果不是最后一次交易，等待一小段时间再继续
                         if completed_trades < target_count:
                             logger.info(f"等待5秒后继续下一次交易...")
-                            await asyncio.sleep(5)
+                            await asyncio.sleep(1)
                         continue
                     else:
                         # 详细记录订单问题
@@ -973,13 +977,15 @@ async def main():
                         
                         # 打印当前交易执行统计
                         logger.info(f"当前交易统计 - 已完成: {completed_trades}/{target_count}, 失败: {total_errors + 1}")
+                        break
                 except Exception as e:
                     logger.error(f"执行交易过程中出错: {str(e)}")
                     import traceback
                     logger.debug(f"交易执行错误堆栈: {traceback.format_exc()}")
-                    
+
                     # 打印当前交易执行统计
                     logger.info(f"当前交易统计 - 已完成: {completed_trades}/{target_count}, 失败: {total_errors + 1}")
+                    break
                 
                 # 如果执行到这里，说明交易失败
                 total_errors += 1

@@ -377,8 +377,9 @@ class HedgeTrader:
                                 logger.debug(f"获取到Binance更新后的订单状态: {updated_contract_order.get('status')}")
                                 contract_order = updated_contract_order
                         except Exception as e:
-                            logger.warning(f"获取更新后的订单状态时出错: {str(e)}")
-                        
+                            logger.error(f"获取更新后的订单状态时出错: {str(e)}")
+                            return None, None
+
                         # 验证订单执行状态
                         spot_status = spot_order.get('status', '')
                         contract_status = contract_order.get('status', '')
@@ -475,9 +476,6 @@ class HedgeTrader:
                                 logger.error(f"本次操作的现货和合约持仓差异过大: {position_diff_abs} {self.symbol.split('/')[0]} ({position_diff_percent:.2f}%)")
                                 return None, None
                         
-                        # 检查持仓情况 (保留这个调用，但降低日志级别)
-                        # await self.check_positions()
-                        
                         # 申购余币宝
                         if not self.test_mode:
                             try:
@@ -500,7 +498,7 @@ class HedgeTrader:
                     raise
                 except Exception as e:
                     logger.error(f"监控订单簿时出错: {str(e)}")
-                    return None, None
+                    raise
                     # 短暂等待后重试
                     # await asyncio.sleep(1)
                 
@@ -516,54 +514,6 @@ class HedgeTrader:
             logger.error(f"错误详情: {traceback.format_exc()}")
             raise
 
-    async def check_positions(self):
-        """异步检查交易后的持仓情况"""
-        try:
-            await asyncio.sleep(1)  # 等待订单状态更新
-            
-            # 并行获取两个交易所的持仓信息
-            gateio_balance_task = self.gateio.fetch_balance()
-            positions_task = self.binance.fetch_positions([self.contract_symbol])
-            
-            gateio_balance, positions = await asyncio.gather(
-                gateio_balance_task,
-                positions_task
-            )
-            
-            # 获取现货持仓信息
-            base_currency = self.symbol.split('/')[0]
-            gateio_position = gateio_balance.get(base_currency, {}).get('total', 0)
-            
-            # 检查Binance合约持仓
-            contract_position = 0
-            
-            if positions:
-                for position in positions:
-                    if position['symbol'] == self.contract_symbol:
-                        contract_position = abs(float(position.get('contracts', 0)))
-                        position_side = position.get('side', 'unknown')
-                        position_leverage = position.get('leverage', self.leverage)
-                        position_notional = position.get('notional', 0)
-                        
-                        logger.info(f"Binance合约持仓: {position_side} {contract_position} 合约, "
-                                  f"杠杆: {position_leverage}倍, 名义价值: {position_notional}")
-            else:
-                logger.warning("未获取到Binance合约持仓信息")
-            
-            logger.info(f"持仓检查 - Gate.io现货: {gateio_position} {base_currency}, "
-                       f"Binance合约: {contract_position} {base_currency}")
-            
-            # 检查是否平衡（允许0.5%的误差）
-            position_diff = abs(float(gateio_position) - float(contract_position))
-            position_diff_percent = position_diff / float(gateio_position) * 100
-            
-            if position_diff_percent > 0.5:  # 允许0.5%的误差
-                logger.warning(f"现货和合约持仓不平衡! 差异: {position_diff} {base_currency} ({position_diff_percent:.2f}%)")
-            else:
-                logger.info(f"现货和合约持仓基本平衡，差异在允许范围内: {position_diff} {base_currency} ({position_diff_percent:.2f}%)")
-                
-        except Exception as e:
-            logger.error(f"检查持仓信息失败: {str(e)}") 
 
     async def check_balances(self):
         """
