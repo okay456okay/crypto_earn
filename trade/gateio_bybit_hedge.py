@@ -287,7 +287,7 @@ class HedgeTrader:
                                 # 如果是因为价差不满足条件而未执行交易，继续等待下一次订单簿更新
 
                         except Exception as e:
-                            logger.error(f"处理订单簿数据时出错: {str(e)}")
+                            logger.error(f"处理订单簿数据时出错: {str(e)}", exc_info=True)
                             raise
 
                     # 取消未完成的任务
@@ -315,7 +315,7 @@ class HedgeTrader:
         except Exception as e:
             logger.error(f"执行对冲交易时出错: {str(e)}")
             import traceback
-            logger.debug(f"错误堆栈:\n{traceback.format_exc()}")
+            logger.error(f"错误堆栈:\n{traceback.format_exc()}")
             return None, None
         finally:
             self.ws_running = False
@@ -502,7 +502,8 @@ class HedgeTrader:
                             if updated_spot_order:
                                 spot_order = updated_spot_order
                         except Exception as e:
-                            logger.warning(f"获取Gate.io订单详情失败: {str(e)}")
+                            logger.warning(f"获取Gate.io订单详情失败: {str(e)}", exc_info=True)
+                            return None, None
                     
                     if contract_order_id:
                         try:
@@ -513,8 +514,10 @@ class HedgeTrader:
                                     break
                         except Exception as e:
                             logger.warning(f"获取Bybit订单详情失败: {str(e)}")
+                            return None, None
                 except Exception as e:
                     logger.warning(f"获取订单详情时出错: {str(e)}")
+                    return None, None
 
                 # 获取现货订单的实际成交结果
                 filled_amount = float(spot_order.get('filled', 0))
@@ -555,6 +558,7 @@ class HedgeTrader:
                     except Exception as e:
                         logger.warning(f"从持仓获取合约成交量失败: {str(e)}")
                         contract_filled = float(contract_amount)
+                        return None, None
                 
                 # 计算合约实际成交均价和滑点
                 contract_avg_price = float(contract_order.get('average', 0))

@@ -541,7 +541,7 @@ class UnhedgeTrader:
                             f"手续费: {contract_fee} {contract_fee_currency}")
                             
             except Exception as e:
-                logger.warning(f"获取成交结果时出错: {str(e)}")
+                logger.error(f"获取成交结果时出错: {str(e)}", exc_info=True)
                 return None, None, False
 
                             
@@ -574,7 +574,7 @@ class UnhedgeTrader:
             logger.error(f"执行平仓交易时出错: {str(e)}")
             # 记录详细的错误信息
             import traceback
-            logger.debug(f"执行平仓交易的错误堆栈:\n{traceback.format_exc()}")
+            logger.error(f"执行平仓交易的错误堆栈:\n{traceback.format_exc()}")
             raise
             
     def get_trade_summary(self):
@@ -724,7 +724,7 @@ async def main():
                 logger.error(f"第 {i+1}/{count} 次交易过程中发生错误: {str(e)}")
                 # 记录详细的错误信息
                 import traceback
-                logger.debug(f"交易错误的堆栈:\n{traceback.format_exc()}")
+                logger.error(f"交易错误的堆栈:\n{traceback.format_exc()}")
                 break
                 
         # 交易全部完成

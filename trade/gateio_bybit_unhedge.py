@@ -349,18 +349,18 @@ class UnhedgeTrader:
                                     return spot_order, contract_order
 
                         except Exception as e:
-                            logger.error(f"处理订单簿数据时出错: {str(e)}")
+                            logger.error(f"处理订单簿数据时出错: {str(e)}", exc_info=True)
                             raise
 
                 except asyncio.CancelledError:
-                    logger.info(f"{self.symbol}订单簿监控任务被取消")
+                    logger.info(f"{self.symbol}订单簿监控任务被取消", exc_info=True)
                     break
                 except Exception as e:
-                    logger.error(f"订阅订单簿时出错: {str(e)}")
+                    logger.error(f"订阅订单簿时出错: {str(e)}", exc_info=True)
                     raise
 
         except Exception as e:
-            logger.error(f"执行优化版平仓交易时出错: {str(e)}")
+            logger.error(f"执行优化版平仓交易时出错: {str(e)}", exc_info=True)
             raise
         finally:
             self.ws_running = False

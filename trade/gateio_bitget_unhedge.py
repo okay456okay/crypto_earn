@@ -327,7 +327,7 @@ class UnhedgeTrader:
             return spot_order, contract_order
 
         except Exception as e:
-            logger.error(f"执行平仓交易时出错: {str(e)}")
+            logger.error(f"执行平仓交易时出错: {str(e)}", exc_info=True)
             raise
             
     async def verify_trade_result(self, spot_order, contract_order):
@@ -371,7 +371,7 @@ class UnhedgeTrader:
                 except Exception as e:
                     logger.warning(f"获取Gate.io订单更新失败: {str(e)}")
                     import traceback
-                    logger.debug(f"获取Gate.io订单错误堆栈: {traceback.format_exc()}")
+                    logger.error(f"获取Gate.io订单错误堆栈: {traceback.format_exc()}", exc_info=True)
             
             # 获取Bitget订单最新状态
             updated_contract_order = None
