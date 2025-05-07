@@ -854,6 +854,22 @@ class ExchangeAPI:
             if not self.bitget_futures_volumes:
                 self.get_bitget_futures_volumes()
             
+            # 首先检查合约是否存在
+            contract_url = "https://api.bitget.com/api/v2/mix/market/contracts"
+            contract_params = {
+                "productType": "usdt-futures",
+                "symbol": token
+            }
+            contract_response = self.session.get(contract_url, params=contract_params)
+            if contract_response.status_code != 200:
+                logger.error(f"bitget get {token} contract info failed, url: {contract_url}, status: {contract_response.status_code}, response: {contract_response.text}")
+                return {}
+            
+            contract_data = contract_response.json()
+            if not contract_data.get('data'):  # 如果data为空列表，说明合约不存在
+                logger.debug(f"bitget合约{token}不存在")
+                return {}
+            
             url = "https://api.bitget.com/api/v2/mix/market/current-fund-rate"
             params = {
                 "symbol": f"{token}",
@@ -1074,6 +1090,9 @@ class ExchangeAPI:
 
 if __name__ == "__main__":
     api = ExchangeAPI()
+    print(api.get_bitget_futures_funding_rate('ETHUSDT'))
+    print(api.get_bitget_futures_funding_rate('GMUSDT'))
+    # print(api.get_binance_futures_funding_rate('ETHUSDT'))
     # print(api.get_binance_futures_funding_rate('LOOMUSDT'))
     # print(api.get_binance_futures_funding_rate('ALPACAUSDT'))
     parser = argparse.ArgumentParser(description='获取指定代币在各交易所的合约资金费率信息')
