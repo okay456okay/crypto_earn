@@ -40,6 +40,8 @@ class ExchangeAPI:
         self.bybit_futures_volumes = {}
         self.gateio_futures_volumes = {}
         self.okx_futures_volumes = {}
+        self.binance_exchange_info = None  # Cache for exchange info
+        self.binance_exchange_info_time = 0  # Timestamp of last update
 
     def get_binance_volumes(self):
         """获取币安所有交易对24小时交易量"""
@@ -657,6 +659,24 @@ class ExchangeAPI:
             logger.error(f"get get_binance_future_funding_rate_history failed, code: {str(e)}")
         return history
 
+    def get_binance_exchange_info(self):
+        """获取并缓存币安合约交易对信息"""
+        current_time = time.time()
+        # 如果缓存存在且未过期（1小时），直接返回缓存数据
+        if self.binance_exchange_info and (current_time - self.binance_exchange_info_time) < 3600:
+            return self.binance_exchange_info
+
+        try:
+            url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
+            response = requests.get(url, proxies=proxies)
+            if response.status_code == 200:
+                self.binance_exchange_info = response.json()
+                self.binance_exchange_info_time = current_time
+                return self.binance_exchange_info
+        except Exception as e:
+            logger.error(f"获取币安合约交易对信息失败: {str(e)}")
+        return None
+
     def get_binance_futures_funding_rate(self, token):
         """
         获取币安合约资金费率
@@ -666,6 +686,24 @@ class ExchangeAPI:
             # 检查并获取交易量数据
             if not self.binance_futures_volumes:
                 self.get_binance_futures_volumes()
+            
+            # 获取交易对状态
+            exchange_info = self.get_binance_exchange_info()
+            if not exchange_info:
+                logger.error(f"获取币安合约交易对信息失败")
+                return {}
+
+            # 查找交易对状态
+            token_status = None
+            for symbol_info in exchange_info.get('symbols', []):
+                if symbol_info['symbol'] == token:
+                    token_status = symbol_info['status']
+                    break
+
+            # 如果状态不是TRADING或未找到状态，返回空
+            if not token_status or token_status != 'TRADING':
+                logger.debug(f"币安合约{token}状态不是TRADING或未找到状态: {token_status}")
+                return {}
             
             url = f"https://fapi.binance.com/fapi/v1/premiumIndex?symbol={token}"
             response = requests.get(url, proxies=proxies)
@@ -1035,9 +1073,11 @@ class ExchangeAPI:
 
 
 if __name__ == "__main__":
+    api = ExchangeAPI()
+    # print(api.get_binance_futures_funding_rate('LOOMUSDT'))
+    # print(api.get_binance_futures_funding_rate('ALPACAUSDT'))
     parser = argparse.ArgumentParser(description='获取指定代币在各交易所的合约资金费率信息')
     parser.add_argument('token', type=str, help='代币名称，例如：ETHUSDT, BTCUSDT')
     args = parser.parse_args()
     
-    api = ExchangeAPI()
     api.print_funding_rate_info(args.token)
