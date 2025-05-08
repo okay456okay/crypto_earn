@@ -262,12 +262,9 @@ class HedgeTrader:
                             else:  # bitget task
                                 self.orderbooks['bitget'] = ob
                                 logger.debug("收到Bitget订单簿更新")
-                        except ccxt.base.errors.UnsubscribeError as e:
-                            pass
                         except Exception as e:
                             logger.error(f"处理订单簿数据时出错: {str(e)}", exc_info=True)
-                            raise
-                        continue
+                            continue
 
                     # 取消未完成的任务
                     for task in pending:
