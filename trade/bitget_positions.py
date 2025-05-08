@@ -109,9 +109,9 @@ class BitgetPositionFetcher:
                     next_funding_datetime = datetime.fromtimestamp(next_funding_time/1000).strftime('%Y-%m-%d %H:%M') if next_funding_time else 'N/A'
                     
                     # 检查资金费率是否为负
-                    if funding_rate_value < 0:
+                    if funding_rate_value < -0.1:
                         token = symbol.replace('/USDT:USDT', '')
-                        # self.run_funding_script(token)
+                        self.run_funding_script(token)
                 except Exception as e:
                     logger.warning(f"获取{symbol}资金费率失败: {str(e)}")
                     funding_rate_value = 0.0

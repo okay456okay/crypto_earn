@@ -37,6 +37,7 @@ class SpikeAnalyzer:
         self.symbol = symbol
         self.min_price_change = min_price_change
         self.window_minutes = window_minutes
+        self.window_seconds = window_minutes * 60  # 转换为秒
 
     def fetch_ohlcv_data(self, timeframe: str = '1s', days: int = 1) -> pd.DataFrame:
         """
@@ -70,11 +71,17 @@ class SpikeAnalyzer:
                 # 避免请求过于频繁
                 time.sleep(0.1)
             
+            if not all_ohlcv:
+                raise Exception("未获取到任何数据")
+                
             logger.info(f"成功获取 {len(all_ohlcv)} 条OHLCV数据")
             
             df = pd.DataFrame(all_ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             # 保持毫秒级精度
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            
+            # 确保数据按时间排序
+            df = df.sort_values('timestamp')
             
             logger.info(f"数据时间范围: {df['timestamp'].min()} 至 {df['timestamp'].max()}")
             logger.info(f"价格范围: {df['low'].min():.2f} - {df['high'].max():.2f}")
@@ -90,9 +97,9 @@ class SpikeAnalyzer:
         :param df: OHLCV数据
         :return: 插针列表
         """
-        logger.info(f"开始分析插针 - 数据条数: {len(df)}, 时间窗口: {self.window_minutes}分钟")
+        logger.info(f"开始分析插针 - 数据条数: {len(df)}, 时间窗口: {self.window_seconds}秒")
         spikes = []
-        window = self.window_minutes
+        window = self.window_seconds  # 使用秒级窗口
 
         for i in range(window, len(df) - window):
             current_low = df.iloc[i]['low']
@@ -103,6 +110,9 @@ class SpikeAnalyzer:
             prev_window = df.iloc[i-window:i]
             next_window = df.iloc[i+1:i+window+1]
             
+            if len(prev_window) == 0 or len(next_window) == 0:
+                continue
+                
             prev_high = prev_window['high'].max()
             prev_high_time = prev_window.loc[prev_window['high'] == prev_high, 'timestamp'].iloc[0]
             

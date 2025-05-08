@@ -106,9 +106,9 @@ class BybitPositionFetcher:
                 next_funding_time_str = datetime.fromtimestamp(next_funding_time/1000).strftime('%Y-%m-%d %H:%M:%S') if next_funding_time else '无'
 
                 # 检查资金费率是否为负
-                if funding_rate < 0:
+                if funding_rate < -0.1:
                     token = symbol.replace('/USDT:USDT', '')
-                    # self.run_funding_script(token)
+                    self.run_funding_script(token)
 
                 # 格式化输出一行
                 position_line = (
