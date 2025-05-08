@@ -309,14 +309,17 @@ class ExchangeArbitrageCalculator:
 
         # 打印GateIO理财与套利情况
         print("\n【GateIO理财与套利情况】")
-        print(f"{'代币':<8} {'理财数量':<12} {'合约净仓位':<15} {'对冲差额':<12} {'当前价格':<12} {'套利价值(USDT)':<15}")
-        print("-"*100)
+        print(f"{'代币':<8} {'理财数量':<12} {'合约净仓位':<15} {'对冲差额':<12} {'当前价格':<12} {'理财金额':<12} {'年化收益率':<10} {'套利价值(USDT)':<15} {'套利收益率':<10}")
+        print("-"*130)
 
         # 计算套利情况
+        arbitrage_summary = []
         for earn_position in self.gateio_earn_positions:
             token = earn_position['token']
             earn_amount = earn_position['amount']
             price = earn_position['price']
+            last_rate_year = float(earn_position.get('last_rate_year', 0)) * 100  # 转换为百分比
+            earn_value = earn_amount * price  # 理财金额
 
             # 只计算在合约中也有的代币
             if token in self.aggregated_positions:
@@ -329,20 +332,26 @@ class ExchangeArbitrageCalculator:
                 # 理财多少，合约应该空多少 (净空仓)，所以理财量+净仓位应该接近0
                 hedge_diff = earn_amount + net_position
                 arbitrage_value = hedge_diff * price
+                arbitrage_rate = (arbitrage_value / earn_value * 100) if earn_value > 0 else 0  # 套利收益率
 
-                print(f"{token:<10} {earn_amount:<16.2f} {net_position:<20.2f} {hedge_diff:<16.2f} {price:<16.6f} {arbitrage_value:<15.2f}")
-
-                arbitrage_results.append({
+                arbitrage_summary.append({
                     'token': token,
                     'earn_amount': earn_amount,
                     'net_position': net_position,
                     'hedge_diff': hedge_diff,
                     'price': price,
-                    'arbitrage_value': arbitrage_value
+                    'earn_value': earn_value,
+                    'last_rate_year': last_rate_year,
+                    'arbitrage_value': arbitrage_value,
+                    'arbitrage_rate': arbitrage_rate
                 })
 
-                total_arbitrage_value += arbitrage_value
+        # 按理财金额降序排序
+        arbitrage_summary.sort(key=lambda x: x['earn_value'], reverse=True)
 
+        # 打印排序后的结果
+        for pos in arbitrage_summary:
+            print(f"{pos['token']:<10} {pos['earn_amount']:<16.2f} {pos['net_position']:<20.2f} {pos['hedge_diff']:<16.2f} {pos['price']:<16.6f} {pos['earn_value']:<16.2f} {pos['last_rate_year']:<14.2f} {pos['arbitrage_value']:<15.2f} {pos['arbitrage_rate']:<14.2f}")
 
         # 打印合约中有但理财没有的代币
         for token, positions in self.aggregated_positions.items():
@@ -356,7 +365,7 @@ class ExchangeArbitrageCalculator:
                 price = self.token_prices.get(token, 0)
                 arbitrage_value = abs(net_position) * price
                 try:
-                    print(f"{token:<8} {'0':<12.2f} {net_position:<15.2f} {-net_position:<12.2f} {price:<12.6f} {arbitrage_value:<15.2f}")
+                    print(f"{token:<10} {'0':<16.2f} {net_position:<20.2f} {-net_position:<16.2f} {price:<16.6f} {'0':<16.2f} {'0':<14.2f} {arbitrage_value:<15.2f} {'0':<14.2f}")
                 except Exception as e:
                     logger.error(f"print failed, info: {token} {net_position} {price} {arbitrage_value}")
                     continue
