@@ -233,6 +233,7 @@ class ExchangeArbitrageCalculator:
                 amount = float(position['curr_amount'])
                 price = float(position['price'])
                 value_usdt = float(position['curr_amount_usdt'])
+                last_rate_year = float(position.get('last_rate_year', 0))  # 获取年化收益率
 
                 # 保存当前价格
                 self.token_prices[token] = price
@@ -241,7 +242,8 @@ class ExchangeArbitrageCalculator:
                     'token': token,
                     'amount': amount,
                     'price': price,
-                    'value_usdt': value_usdt
+                    'value_usdt': value_usdt,
+                    'last_rate_year': last_rate_year  # 添加到valid_position中
                 }
                 valid_positions.append(valid_position)
 
