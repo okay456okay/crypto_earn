@@ -205,7 +205,7 @@ class UnhedgeTrader:
 
                 except Exception as e:
                     logger.error(f"订阅订单簿时出错: {str(e)}")
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(0.3)
 
         except Exception as e:
             logger.error(f"订单簿订阅循环出错: {str(e)}")
@@ -618,7 +618,7 @@ async def main():
                         break
                     
                     logger.info(f"等待5秒后继续下一次交易...")
-                    await asyncio.sleep(5)
+                    await asyncio.sleep(0.3)
             
             except Exception as e:
                 logger.error(f"执行第{i+1}次交易过程中出错: {str(e)}")

@@ -717,7 +717,7 @@ async def main():
                 # 最后一次交易不需要等待
                 if i < count - 1:
                     # 每次交易之间等待3秒
-                    wait_seconds = 3
+                    wait_seconds = 0.3
                     logger.debug(f"等待 {wait_seconds} 秒后进行下一次交易...")
                     await asyncio.sleep(wait_seconds)
             except Exception as e:
