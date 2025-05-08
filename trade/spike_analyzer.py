@@ -46,14 +46,33 @@ class SpikeAnalyzer:
         :return: DataFrame包含OHLCV数据
         """
         try:
-            since = int((datetime.now() - timedelta(days=days)).timestamp() * 1000)
+            # 计算起始时间（当前时间往前推days天）
+            end_time = datetime.now()
+            start_time = end_time - timedelta(days=days)
+            since = int(start_time.timestamp() * 1000)
+            
             logger.info(f"开始获取OHLCV数据 - 交易对: {self.symbol}, 时间范围: {days}天, 时间周期: {timeframe}")
             logger.info(f"起始时间戳: {since} ({datetime.fromtimestamp(since/1000)})")
             
-            ohlcv = self.exchange.fetch_ohlcv(self.symbol, timeframe, since)
-            logger.info(f"成功获取 {len(ohlcv)} 条OHLCV数据")
+            # 分批获取数据，每次获取1000条
+            all_ohlcv = []
+            current_since = since
             
-            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            while current_since < int(end_time.timestamp() * 1000):
+                ohlcv = self.exchange.fetch_ohlcv(self.symbol, timeframe, current_since, limit=1000)
+                if not ohlcv:
+                    break
+                    
+                all_ohlcv.extend(ohlcv)
+                # 更新下一次获取的起始时间
+                current_since = ohlcv[-1][0] + 1
+                
+                # 避免请求过于频繁
+                time.sleep(0.1)
+            
+            logger.info(f"成功获取 {len(all_ohlcv)} 条OHLCV数据")
+            
+            df = pd.DataFrame(all_ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
             
             logger.info(f"数据时间范围: {df['timestamp'].min()} 至 {df['timestamp'].max()}")
@@ -183,8 +202,8 @@ def print_spike_results(spikes: List[Dict]):
 def parse_args():
     """解析命令行参数"""
     parser = argparse.ArgumentParser(description='加密货币价格插针分析工具')
-    parser.add_argument('-t', '--token', type=str, default='ETHUSDT',
-                      help='交易对名称 (例如: ETHUSDT, BTCUSDT)')
+    parser.add_argument('-t', '--token', type=str, default='ETH/USDT',
+                      help='交易对名称 (例如: ETH/USDT, BTC/USDT, ETH/USDC)')
     parser.add_argument('-c', '--min-change', type=float, default=0.5,
                       help='最小价格变化百分比 (默认: 0.5)')
     parser.add_argument('-w', '--window', type=int, default=5,
@@ -203,7 +222,7 @@ def main():
         logger.setLevel(logging.DEBUG)
     
     # 构建交易对符号
-    symbol = f"{args.token}/USDT:USDT"
+    symbol = f"{args.token}:USDT" if ':USDT' not in args.token else args.token
     
     # 初始化分析器
     analyzer = SpikeAnalyzer(
