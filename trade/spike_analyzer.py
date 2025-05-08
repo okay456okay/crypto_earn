@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import time
 from typing import List, Dict, Tuple
 import logging
+import argparse
 
 import os
 import sys
@@ -15,12 +16,18 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 from tools.logger import logger
 
 class SpikeAnalyzer:
-    def __init__(self, exchange_id: str = 'bybit', symbol: str = 'ETH/USDT:USDT'):
+    def __init__(self, exchange_id: str = 'bybit', symbol: str = 'ETH/USDT:USDT', 
+                 min_price_change: float = 0.005, window_minutes: int = 5):
         """
         初始化分析器
         :param exchange_id: 交易所ID，默认bybit
         :param symbol: 交易对，默认ETH/USDT永续合约
+        :param min_price_change: 最小价格变化阈值，默认0.5%
+        :param window_minutes: 分析窗口大小（分钟），默认5分钟
         """
+        logger.info(f"初始化分析器 - 交易所: {exchange_id}, 交易对: {symbol}")
+        logger.info(f"参数设置 - 最小价差: {min_price_change*100}%, 时间窗口: {window_minutes}分钟")
+        
         self.exchange = getattr(ccxt, exchange_id)({
             'enableRateLimit': True,
             'options': {
@@ -28,7 +35,8 @@ class SpikeAnalyzer:
             }
         })
         self.symbol = symbol
-        self.min_price_change = 0.005  # 最小价格变化阈值 (0.5%)
+        self.min_price_change = min_price_change
+        self.window_minutes = window_minutes
 
     def fetch_ohlcv_data(self, timeframe: str = '1m', days: int = 1) -> pd.DataFrame:
         """
@@ -39,24 +47,32 @@ class SpikeAnalyzer:
         """
         try:
             since = int((datetime.now() - timedelta(days=days)).timestamp() * 1000)
+            logger.info(f"开始获取OHLCV数据 - 交易对: {self.symbol}, 时间范围: {days}天, 时间周期: {timeframe}")
+            logger.info(f"起始时间戳: {since} ({datetime.fromtimestamp(since/1000)})")
+            
             ohlcv = self.exchange.fetch_ohlcv(self.symbol, timeframe, since)
+            logger.info(f"成功获取 {len(ohlcv)} 条OHLCV数据")
             
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            
+            logger.info(f"数据时间范围: {df['timestamp'].min()} 至 {df['timestamp'].max()}")
+            logger.info(f"价格范围: {df['low'].min():.2f} - {df['high'].max():.2f}")
+            
             return df
         except Exception as e:
             logger.error(f"获取OHLCV数据失败: {str(e)}")
             raise
 
-    def find_spikes(self, df: pd.DataFrame, window_minutes: int = 5) -> List[Dict]:
+    def find_spikes(self, df: pd.DataFrame) -> List[Dict]:
         """
         在给定的数据中查找价格插针
         :param df: OHLCV数据
-        :param window_minutes: 前后检查的时间窗口（分钟）
         :return: 插针列表
         """
+        logger.info(f"开始分析插针 - 数据条数: {len(df)}, 时间窗口: {self.window_minutes}分钟")
         spikes = []
-        window = window_minutes
+        window = self.window_minutes
 
         for i in range(window, len(df) - window):
             current_low = df.iloc[i]['low']
@@ -88,6 +104,8 @@ class SpikeAnalyzer:
 
             # 记录向下插针
             if down_spike_prev_change > self.min_price_change and down_spike_next_change > self.min_price_change:
+                logger.debug(f"发现向下插针 - 时间: {current_time}, 价格: {current_low:.2f}, "
+                           f"前向变化: {down_spike_prev_change*100:.2f}%, 后向变化: {down_spike_next_change*100:.2f}%")
                 spikes.append({
                     'type': '向下插针',
                     'spike_time': current_time,
@@ -102,6 +120,8 @@ class SpikeAnalyzer:
 
             # 记录向上插针
             if up_spike_prev_change > self.min_price_change and up_spike_next_change > self.min_price_change:
+                logger.debug(f"发现向上插针 - 时间: {current_time}, 价格: {current_high:.2f}, "
+                           f"前向变化: {up_spike_prev_change*100:.2f}%, 后向变化: {up_spike_next_change*100:.2f}%")
                 spikes.append({
                     'type': '向上插针',
                     'spike_time': current_time,
@@ -114,18 +134,19 @@ class SpikeAnalyzer:
                     'next_change_pct': up_spike_next_change * 100
                 })
 
+        logger.info(f"插针分析完成 - 共发现 {len(spikes)} 个插针")
         return spikes
 
-    def analyze_spikes(self, days: int = 1, window_minutes: int = 5) -> List[Dict]:
+    def analyze_spikes(self, days: int = 1) -> List[Dict]:
         """
         分析指定时间段内的所有插针
         :param days: 分析的天数
-        :param window_minutes: 分析窗口大小（分钟）
         :return: 插针列表
         """
         try:
+            logger.info(f"开始分析 - 交易对: {self.symbol}, 分析天数: {days}")
             df = self.fetch_ohlcv_data(days=days)
-            spikes = self.find_spikes(df, window_minutes)
+            spikes = self.find_spikes(df)
             return spikes
         except Exception as e:
             logger.error(f"分析插针失败: {str(e)}")
@@ -137,10 +158,10 @@ def print_spike_results(spikes: List[Dict]):
     :param spikes: 插针列表
     """
     if not spikes:
-        print("未发现符合条件的插针")
+        logger.info("未发现符合条件的插针")
         return
 
-    print(f"\n找到 {len(spikes)} 个插针:")
+    logger.info(f"找到 {len(spikes)} 个插针:")
     print("-" * 100)
 
     for spike in spikes:
@@ -159,11 +180,41 @@ def print_spike_results(spikes: List[Dict]):
         print(f"后向价差: {spike['next_change_pct']:.2f}%")
         print("-" * 100)
 
+def parse_args():
+    """解析命令行参数"""
+    parser = argparse.ArgumentParser(description='加密货币价格插针分析工具')
+    parser.add_argument('-t', '--token', type=str, default='ETHUSDT',
+                      help='交易对名称 (例如: ETHUSDT, BTCUSDT)')
+    parser.add_argument('-c', '--min-change', type=float, default=0.5,
+                      help='最小价格变化百分比 (默认: 0.5)')
+    parser.add_argument('-w', '--window', type=int, default=5,
+                      help='分析窗口大小(分钟) (默认: 5)')
+    parser.add_argument('--days', type=int, default=1,
+                      help='分析天数 (默认: 1)')
+    parser.add_argument('-d', '--debug', action='store_true',
+                      help='启用调试日志')
+    return parser.parse_args()
+
 def main():
-    # 示例使用
-    analyzer = SpikeAnalyzer(exchange_id='bybit', symbol='ETH/USDT:USDT')
+    args = parse_args()
+    
+    # 设置日志级别
+    if args.debug:
+        logger.setLevel(logging.DEBUG)
+    
+    # 构建交易对符号
+    symbol = f"{args.token}/USDT:USDT"
+    
+    # 初始化分析器
+    analyzer = SpikeAnalyzer(
+        exchange_id='bybit',
+        symbol=symbol,
+        min_price_change=args.min_change/100,  # 转换为小数
+        window_minutes=args.window
+    )
+    
     try:
-        spikes = analyzer.analyze_spikes(days=1, window_minutes=5)
+        spikes = analyzer.analyze_spikes(days=args.days)
         print_spike_results(spikes)
     except Exception as e:
         logger.error(f"运行失败: {str(e)}")
