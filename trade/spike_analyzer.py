@@ -38,10 +38,10 @@ class SpikeAnalyzer:
         self.min_price_change = min_price_change
         self.window_minutes = window_minutes
 
-    def fetch_ohlcv_data(self, timeframe: str = '1m', days: int = 1) -> pd.DataFrame:
+    def fetch_ohlcv_data(self, timeframe: str = '1s', days: int = 1) -> pd.DataFrame:
         """
         获取OHLCV数据
-        :param timeframe: 时间周期
+        :param timeframe: 时间周期，默认1秒
         :param days: 获取多少天的数据
         :return: DataFrame包含OHLCV数据
         """
@@ -73,6 +73,7 @@ class SpikeAnalyzer:
             logger.info(f"成功获取 {len(all_ohlcv)} 条OHLCV数据")
             
             df = pd.DataFrame(all_ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            # 保持毫秒级精度
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
             
             logger.info(f"数据时间范围: {df['timestamp'].min()} 至 {df['timestamp'].max()}")
@@ -185,15 +186,15 @@ def print_spike_results(spikes: List[Dict]):
 
     for spike in spikes:
         print(f"类型: {spike['type']}")
-        print(f"插针时间点: {spike['spike_time']}")
+        print(f"插针时间点: {spike['spike_time'].strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
         print(f"插针价格: {spike['spike_price']:.4f}")
         
         if spike['type'] == '向下插针':
-            print(f"前5分钟最高价: {spike['prev_high_price']:.4f} (时间: {spike['prev_high_time']})")
-            print(f"后5分钟最高价: {spike['next_high_price']:.4f} (时间: {spike['next_high_time']})")
+            print(f"前5分钟最高价: {spike['prev_high_price']:.4f} (时间: {spike['prev_high_time'].strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]})")
+            print(f"后5分钟最高价: {spike['next_high_price']:.4f} (时间: {spike['next_high_time'].strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]})")
         else:
-            print(f"前5分钟最低价: {spike['prev_low_price']:.4f} (时间: {spike['prev_low_time']})")
-            print(f"后5分钟最低价: {spike['next_low_price']:.4f} (时间: {spike['next_low_time']})")
+            print(f"前5分钟最低价: {spike['prev_low_price']:.4f} (时间: {spike['prev_low_time'].strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]})")
+            print(f"后5分钟最低价: {spike['next_low_price']:.4f} (时间: {spike['next_low_time'].strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]})")
         
         print(f"前向价差: {spike['prev_change_pct']:.2f}%")
         print(f"后向价差: {spike['next_change_pct']:.2f}%")
