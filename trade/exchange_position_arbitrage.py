@@ -266,10 +266,11 @@ class ExchangeArbitrageCalculator:
 
         # 先打印持仓汇总表头
         print("\n【合约持仓汇总】")
-        print(f"{'代币':<8} {'Binance多':<12} {'Binance空':<12} {'Bybit多':<12} {'Bybit空':<12} {'Bitget多':<12} {'Bitget空':<12} {'总多仓':<12} {'总空仓':<12} {'净仓位':<12} {'当前价格':<12}")
-        print("-"*150)
+        print(f"{'代币':<8} {'Binance多':<12} {'Binance空':<12} {'Bybit多':<12} {'Bybit空':<12} {'Bitget多':<12} {'Bitget空':<12} {'总多仓':<12} {'总空仓':<12} {'净仓位':<12} {'当前价格':<12} {'持仓金额':<15}")
+        print("-"*165)
 
         # 合约持仓汇总
+        position_summary = []
         for token, positions in self.aggregated_positions.items():
             binance_long = sum(p['contracts'] for p in self.positions['binance'] if p['token'] == token and p['side'] == 'long')
             binance_short = sum(p['contracts'] for p in self.positions['binance'] if p['token'] == token and p['side'] == 'short')
@@ -282,8 +283,29 @@ class ExchangeArbitrageCalculator:
             total_short = positions['short']
             net_position = total_long - total_short
             price = self.token_prices.get(token, 0)
+            position_value = abs(net_position) * price
 
-            print(f"{token:<10} {binance_long:<13.2f} {binance_short:<13.2f} {bybit_long:<13.2f} {bybit_short:<13.2f} {bitget_long:<13.2f} {bitget_short:<13.2f} {total_long:<15.2f} {total_short:<14.2f} {net_position:<15.2f} {price:<12.6f}")
+            position_summary.append({
+                'token': token,
+                'binance_long': binance_long,
+                'binance_short': binance_short,
+                'bybit_long': bybit_long,
+                'bybit_short': bybit_short,
+                'bitget_long': bitget_long,
+                'bitget_short': bitget_short,
+                'total_long': total_long,
+                'total_short': total_short,
+                'net_position': net_position,
+                'price': price,
+                'position_value': position_value
+            })
+
+        # 按持仓金额降序排序
+        position_summary.sort(key=lambda x: x['position_value'], reverse=True)
+
+        # 打印排序后的结果
+        for pos in position_summary:
+            print(f"{pos['token']:<10} {pos['binance_long']:<13.2f} {pos['binance_short']:<13.2f} {pos['bybit_long']:<13.2f} {pos['bybit_short']:<13.2f} {pos['bitget_long']:<13.2f} {pos['bitget_short']:<13.2f} {pos['total_long']:<15.2f} {pos['total_short']:<14.2f} {pos['net_position']:<15.2f} {pos['price']:<12.6f} {pos['position_value']:<15.2f}")
 
         # 打印GateIO理财与套利情况
         print("\n【GateIO理财与套利情况】")
