@@ -953,7 +953,7 @@ async def main():
                         
                         # 如果不是最后一次交易，等待一小段时间再继续
                         if completed_trades < target_count:
-                            logger.info(f"等待5秒后继续下一次交易...")
+                            logger.info(f"等待1秒后继续下一次交易...")
                             await asyncio.sleep(1)
                         continue
                     else:
