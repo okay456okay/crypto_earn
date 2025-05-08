@@ -267,7 +267,11 @@ class HedgeTrader:
                     binance_task = asyncio.create_task(self.binance.watch_order_book(self.contract_symbol))
                     
                     # 等待两个订单簿都更新
-                    gateio_ob, binance_ob = await asyncio.gather(gateio_task, binance_task)
+                    try:
+                        gateio_ob, binance_ob = await asyncio.gather(gateio_task, binance_task)
+                    except Exception as e:
+                        logger.error(f"获取订单簿数据失败, 错误: {e}")
+                        continue
                     
                     # 快速提取需要的价格和数量数据
                     gateio_ask = float(gateio_ob['asks'][0][0])
