@@ -7,7 +7,6 @@ import requests
 import sys
 import os
 
-
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import proxies, gateio_login_token
 from tools.logger import logger
@@ -111,6 +110,7 @@ def redeem_earn(token, amount, login_token=gateio_login_token):
 
 def get_earn_positions(login_token=gateio_login_token, limit=50, page=1):
     """
+    获取申购的所有理财产品
     :param login_token:
     :param limit:
     :param page:
@@ -140,8 +140,10 @@ def get_earn_positions(login_token=gateio_login_token, limit=50, page=1):
         logger.error(f"get gateio earn positions failed, code:{r.status_code}, error: {r.text}")
     return positions
 
+
 def get_earn_interest(token, limit=24, page=1, login_token=gateio_login_token):
     """
+    获取申购的理财产品收益明细
     :param login_token:
     :param limit: 1小时1个点，limit为多少表示多少个小时
     :param page:
@@ -177,6 +179,61 @@ def get_earn_interest(token, limit=24, page=1, login_token=gateio_login_token):
     return interests
 
 
+def get_earn_product(token):
+    """
+    {
+    "id": 734,
+    "asset": "SAFE",
+    "name": "Safe",
+    "name_cn": "Safe",
+    "total_lend_amount": "553479.47",
+    "total_lend_amount_fiat": "294783.17",
+    "total_lend_available": "93.94",
+    "total_lend_available_origin": "93.935792",
+    "total_lend_available_fiat": "50.03",
+    "total_lend_all_amount": "553573.41",
+    "total_lend_all_amount_fiat": "294833.20",
+    "next_time_rate_year": "2.4339",
+    "last_time_rate_year": "0.0585",
+    "min_lend_rate_year": "0.0010",
+    "max_lend_rate_year": "4.9932",
+    "lend_ratio": "0.9998",
+    "sort_value": "81.90255515",
+    "is_open_award_pool": 0,
+    "award_asset": "",
+    "ext_award_rate_year": "0",
+    "year_rate": "2.4339",
+    "ext_award_limit": "0",
+    "is_top": 0,
+    "auto_invest_status": 1,
+    "user_available_usdt": "",
+    "usdt_rate": "0.5326",
+    "len_usd": "39945000",
+    "Sort": 0,
+    "NewSort": 0,
+    "fixed_list": [],
+    "icon": "https://icon.gateimg.com/images/coin_icon/64/safe.png?v=1743408000",
+    "symbol": "S",
+    "max_year_rate": "2.4339",
+    "ladder_apr": null
+}
+    :param token:
+    :return:
+    """
+    product = {}
+    url = 'https://www.gate.io/apiw/v2/uni-loan/earn/market/list'
+    params = {
+        'search_coin': token,
+        'limit': 7,
+    }
+    r = requests.get(url, params=params, proxies=proxies)
+    if r.status_code == 200 and r.json().get('code') == 0:
+        products = [i for i in r.json().get('data', {}).get('list', []) if i['asset'] == token]
+    if len(products) == 1:
+        product = products[0]
+    return product
+
+
 def switch_autoinvest(token, status, login_token=gateio_login_token):
     """
     自动赚币
@@ -199,7 +256,6 @@ def switch_autoinvest(token, status, login_token=gateio_login_token):
             logger.error(f"gateio set {token} autoinvest failed, code:{r.status_code}, response: {r.text}")
     except Exception as e:
         logger.exception(f"gateio set {token} autoinvest failed, error: {e}")
-
 
 
 if __name__ == '__main__':
