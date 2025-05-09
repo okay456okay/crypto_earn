@@ -264,8 +264,9 @@ if __name__ == '__main__':
     # subscrible_earn(token, 500)
     # print(get_earn_positions())
     # print(get_earn_interest('AVL'))
-    subscrible_earn(token, 20, rate=0.01)
-    pass
+    # subscrible_earn(token, 20, rate=0.01)
+    # pass
+    print(get_earn_product(token))
     # positions = get_earn_positions()
     # print(positions)
     # for p in positions:
