@@ -232,6 +232,18 @@ def get_earn_product(token):
             products = [i for i in r.json().get('data', {}).get('list', []) if i['asset'] == token]
             if len(products) == 1:
                 product = products[0]
+        elif r.text.find('TOO_MANY_REQUESTS') >= 0:
+            sleep(1)
+            url = 'https://www.gate.io/apiw/v2/uni-loan/earn/market/list'
+            params = {
+                'search_coin': token,
+                'limit': 7,
+            }
+            r = requests.get(url, params=params, proxies=proxies)
+            if r.status_code == 200 and r.json().get('code') == 0:
+                products = [i for i in r.json().get('data', {}).get('list', []) if i['asset'] == token]
+                if len(products) == 1:
+                    product = products[0]
     except Exception as e:
         logger.error(f"get_earn_product failed for {token}: {str(e)}")
     return product
@@ -262,7 +274,7 @@ def switch_autoinvest(token, status, login_token=gateio_login_token):
 
 
 if __name__ == '__main__':
-    token = 'BR'
+    token = 'HOUSE'
     # redeem_earn(token, 500)
     # subscrible_earn(token, 500)
     # print(get_earn_positions())
