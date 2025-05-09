@@ -252,7 +252,11 @@ class HedgeTrader:
                                 logger.debug(f"{self.symbol} 收到Bybit订单簿更新")
 
                             # 检查是否可以执行交易
-                            spot_order, contract_order = await self.check_and_execute_trade()
+                            spot_order, contract_order, is_conditions_met = await self.check_and_execute_trade()
+                            
+                            # 如果条件不满足，继续等待下一次更新
+                            if not is_conditions_met:
+                                continue
                             
                             # 验证订单提交是否成功
                             if spot_order and contract_order:
@@ -303,20 +307,20 @@ class HedgeTrader:
                         break
 
                 except Exception as e:
-                    return None, None
+                    return None, None, False
 
             # 如果成功执行了交易，返回订单信息
             if successful_spot_order and successful_contract_order:
-                return successful_spot_order, successful_contract_order
+                return successful_spot_order, successful_contract_order, True
             else:
                 logger.warning("没有成功执行交易，返回None")
-                return None, None
+                return None, None, False
 
         except Exception as e:
             logger.error(f"执行对冲交易时出错: {str(e)}")
             import traceback
             logger.error(f"错误堆栈:\n{traceback.format_exc()}")
-            return None, None
+            return None, None, False
         finally:
             self.ws_running = False
             # 确保所有WebSocket连接都被关闭
@@ -341,7 +345,7 @@ class HedgeTrader:
 
             # 如果任一订单簿数据不存在，直接返回
             if not gateio_ob or not bybit_ob:
-                return None, None
+                return None, None, False
 
             # 获取价格和数量
             gateio_ask = float(gateio_ob['asks'][0][0])
@@ -377,7 +381,7 @@ class HedgeTrader:
             # 快速预检查，避免不必要的计算
             if not is_spread_met:
                 logger.debug(f"价差不满足, 跳过本次检查")
-                return None, None
+                return None, None, False
                 
             # 存储重复使用的计算结果
             depth_requirement = self.spot_amount * self.depth_multiplier
@@ -449,7 +453,7 @@ class HedgeTrader:
                     # 立即验证订单是否成功提交
                     if not spot_order or not contract_order:
                         logger.error("订单提交失败: 无法获取订单信息")
-                        return None, None
+                        return None, None, False
                     
                     # 检查订单ID是否存在且有效，确认订单提交成功
                     spot_order_id = spot_order.get('id')
@@ -457,11 +461,11 @@ class HedgeTrader:
                     
                     if not spot_order_id or spot_order_id == '':
                         logger.error("Gate.io订单ID无效或为空，订单提交失败")
-                        return None, None
+                        return None, None, False
                         
                     if not contract_order_id or contract_order_id == '':
                         logger.error("Bybit订单ID无效或为空，订单提交失败")
-                        return None, None
+                        return None, None, False
                     
                     # 检查订单状态
                     spot_status = spot_order.get('status', 'unknown')
@@ -470,7 +474,7 @@ class HedgeTrader:
                     # 检查Gate.io订单
                     if spot_status not in ['open', 'closed', 'filled']:
                         logger.error(f"Gate.io订单提交状态异常: {spot_status}")
-                        return None, None
+                        return None, None, False
                         
                     # 检查Bybit订单
                     if contract_status not in ['open', 'closed', 'filled'] and contract_status == 'unknown':
@@ -485,7 +489,7 @@ class HedgeTrader:
                         logger.error("Gate.io现货订单已提交，但Bybit合约订单失败")
                     elif contract_order and not spot_order:
                         logger.error("Bybit合约订单已提交，但Gate.io现货订单失败")
-                    return None, None
+                    return None, None, False
 
                 # 等待一小段时间，确保订单状态更新
                 await asyncio.sleep(2)
@@ -503,7 +507,7 @@ class HedgeTrader:
                                 spot_order = updated_spot_order
                         except Exception as e:
                             logger.warning(f"获取Gate.io订单详情失败: {str(e)}", exc_info=True)
-                            return None, None
+                            return None, None, False
                     
                     if contract_order_id:
                         try:
@@ -514,10 +518,10 @@ class HedgeTrader:
                                     break
                         except Exception as e:
                             logger.warning(f"获取Bybit订单详情失败: {str(e)}")
-                            return None, None
+                            return None, None, False
                 except Exception as e:
                     logger.warning(f"获取订单详情时出错: {str(e)}")
-                    return None, None
+                    return None, None, False
 
                 # 获取现货订单的实际成交结果
                 filled_amount = float(spot_order.get('filled', 0))
@@ -558,7 +562,7 @@ class HedgeTrader:
                     except Exception as e:
                         logger.warning(f"从持仓获取合约成交量失败: {str(e)}")
                         contract_filled = float(contract_amount)
-                        return None, None
+                        return None, None, False
                 
                 # 计算合约实际成交均价和滑点
                 contract_avg_price = float(contract_order.get('average', 0))
@@ -599,7 +603,7 @@ class HedgeTrader:
                     logger.error(f"余币宝申购失败: {str(e)}")
 
                 # 交易成功，返回订单信息（不再设置ws_running=False，由外层函数控制）
-                return spot_order, contract_order
+                return spot_order, contract_order, True
             else:
                 # 价差或数量不满足条件，记录日志（调试级别）
                 if logger.isEnabledFor(logging.DEBUG):
@@ -610,13 +614,13 @@ class HedgeTrader:
                     if not is_bybit_volume_met:
                         logger.debug(f"Bybit买一数量不足: {bybit_bid_volume:.8f} < {depth_requirement:.8f}")
                 
-                return None, None
+                return None, None, False
 
         except Exception as e:
             logger.error(f"{self.symbol}检查价差并执行交易时出错: {str(e)}")
             import traceback
             logger.debug(f"错误堆栈:\n{traceback.format_exc()}")
-            return None, None
+            return None, None, False
 
     async def check_positions(self):
         """异步检查交易后的持仓情况"""
@@ -1035,7 +1039,14 @@ async def main():
                 hedge_success = False
                 
                 try:
-                    spot_order, contract_order = await trader.execute_hedge_trade()
+                    spot_order, contract_order, is_conditions_met = await trader.execute_hedge_trade()
+                    
+                    # 如果条件不满足，继续等待下一次机会
+                    if not is_conditions_met:
+                        logger.info(f"第 {current_iteration}/{total_count} 次交易条件不满足，等待下一次机会...")
+                        await asyncio.sleep(3)  # 等待3秒后继续
+                        continue
+                    
                     executed_count += 1
                     
                     # 验证订单成功
