@@ -15,7 +15,7 @@ cd ../trade
 mkdir -p reports
 
 suffix=$(date +%Y%m%d%H%M)
-python gateio_positions.py |grep -v 'gateio_positions.py' >reports/gateio_positions_$suffix.log
+#python gateio_positions.py |grep -v 'gateio_positions.py' >reports/gateio_positions_$suffix.log
 python bitget_positions.py >reports/bitget_positions_$suffix.log
 python bybit_positions.py >reports/bybit_positions_$suffix.log
 python binance_positions.py >reports/binance_positions_$suffix.log

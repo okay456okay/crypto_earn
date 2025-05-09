@@ -391,7 +391,7 @@ class ExchangeArbitrageCalculator:
                 try:
                     print(f"{token:<10} {'0':<16.2f} {net_position:<20.2f} {-net_position:<16.2f} {price:<16.6f} {'0':<16.2f} {'0':<14.2f} {arbitrage_value:<15.2f} {'0':<14.2f} {'0':<16.2f} {'0':<16.2f}")
                 except Exception as e:
-                    logger.error(f"print failed, info: {token} {net_position} {price} {arbitrage_value}")
+                    logger.error(f"print failed, info: {token} {net_position} {price} {arbitrage_value}", exc_info=True)
                     continue
 
                 arbitrage_results.append({
