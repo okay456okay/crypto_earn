@@ -233,12 +233,7 @@ def get_earn_product(token):
             if len(products) == 1:
                 product = products[0]
         elif r.text.find('TOO_MANY_REQUESTS') >= 0:
-            sleep(3)
-            url = 'https://www.gate.io/apiw/v2/uni-loan/earn/market/list'
-            params = {
-                'search_coin': token,
-                'limit': 2,
-            }
+            sleep(5)
             r = requests.get(url, params=params, proxies=proxies)
             if r.status_code == 200 and r.json().get('code') == 0:
                 products = [i for i in r.json().get('data', {}).get('list', []) if i['asset'] == token]
@@ -274,14 +269,14 @@ def switch_autoinvest(token, status, login_token=gateio_login_token):
 
 
 if __name__ == '__main__':
-    token = 'HOUSE'
+    token = 'FLM'
+    print(get_earn_product(token))
     # redeem_earn(token, 500)
     # subscrible_earn(token, 500)
     # print(get_earn_positions())
     # print(get_earn_interest('AVL'))
     # subscrible_earn(token, 20, rate=0.01)
     # pass
-    print(get_earn_product(token))
     # positions = get_earn_positions()
     # print(positions)
     # for p in positions:
