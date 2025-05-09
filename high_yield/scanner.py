@@ -29,7 +29,7 @@ from high_yield.token_manager import TokenManager
 from tools.proxy import get_proxy_ip
 from config import leverage_ratio, yield_percentile, stability_buy_apy_threshold, sell_apy_threshold, \
     future_percentile, highyield_buy_apy_threshold, stability_buy_webhook_url, highyield_buy_webhook_url, \
-    highyield_checkpoints, volume_24h_threshold
+    highyield_checkpoints, volume_24h_threshold, subscribed_webhook_url
 from tools.logger import logger
 
 
@@ -142,6 +142,8 @@ class CryptoYieldMonitor:
             wechat_bot = WeChatWorkBot(stability_buy_webhook_url)
         elif product_type == 'highyield':
             wechat_bot = WeChatWorkBot(highyield_buy_webhook_url)
+        elif product_type == 'subscribed':
+            wechat_bot = WeChatWorkBot(subscribed_webhook_url)
         else:
             logger.error("unknown product type")
             return
@@ -280,132 +282,40 @@ class CryptoYieldMonitor:
             logger.info(f"已添加{len(highyield_product_notifications)}个金狗Token到通知列表")
             self._send_product_notifications(highyield_product_notifications, product_type='highyield')
 
-    def check_tokens(self, tokens, all_products):
-        now = datetime.now()
-        now_str = now.strftime("%Y-%m-%d %H:%M:%S")
-        end = int(datetime.now().timestamp() * 1000)
-        d7start = end - 7 * 24 * 60 * 60 * 1000
-        d30start = end - 30 * 24 * 60 * 60 * 1000
-
-        # 获取GateIO理财持仓信息
-        gateio_positions = {}
-        try:
-            from trade.gateio_api import get_earn_positions
-            positions = get_earn_positions()
-            for position in positions:
-                gateio_positions[position["asset"]] = position
-        except Exception as e:
-            logger.error(f"获取GateIO理财持仓信息失败: {str(e)}")
-
-        logger.debug(f"gateio positions: {gateio_positions}")
-        # 获取Bitget合约持仓信息
-        bitget_positions = {}
-        try:
-            from trade.bitget_positions import BitgetPositionFetcher
-            import asyncio
-            fetcher = BitgetPositionFetcher()
-            positions = asyncio.run(fetcher.fetch_positions())
-            for position in positions:
-                if position['contracts'] > 0:  # 只保存有持仓的
-                    bitget_positions[position['symbol']] = position
-        except Exception as e:
-            logger.error(f"获取Bitget合约持仓信息失败: {str(e)}")
-        logger.debug(f"bitget positions: {bitget_positions}")
-
-        logger.info(f"检查理财持仓信息，共{len(tokens)}个产品")
-        for token in tokens:
-            # 获取理财产品最新利率
-            sell_wechat_bot = WeChatWorkBot(token['webhook_url'])
-            product = [i for i in all_products if
-                       i['exchange'] == token['spot_exchange'] and i['token'] == token['token']]
-            apy_percentile = 0.0
-            if not product:
-                # 发送未找到理财产品通知
-                content = f"在{token['spot_exchange']}交易所中未找到 {token['token']} 理财产品"
-                # sell_wechat_bot.send_message(content)
-                logger.debug(content)
-                if token['spot_exchange'] == 'GateIO':
-                    product = self.exchange_api.get_gateio_flexible_product(token['token'])
-            else:
-                product = product[0]
-                if token['spot_exchange'] == 'GateIO' and (not product['apy_day']):
-                    product = self.exchange_api.get_gateio_flexible_product(token['token'])
-
-            # 获取GateIO理财持仓信息
-            gateio_position_info = ""
-            if token['spot_exchange'] == 'GateIO' and token['token'] in gateio_positions:
-                position = gateio_positions[token['token']]
-                gateio_position_info = f"\nGateIO理财持仓信息: 持仓金额 {position['curr_amount_usdt']} USDT, 持仓数量 {position['curr_amount']}, 当前价格 {position['price']}, 已赚利息 {position['interest']}, 下次利率 {float(position['next_time_rate_year']) * 100:.2f}%, 上次利率 {float(position['last_rate_year']) * 100:.2f}%"
-
-            # 获取Bitget合约持仓信息
-            bitget_position_info = ""
-            if token['future_exchange'] == 'Bitget':
-                perp_token = f"{token['token']}/USDT:USDT"
-                if perp_token in bitget_positions:
-                    position = bitget_positions[perp_token]
-                    bitget_position_info = f"\nBitget合约持仓信息: {'多' if position['side'] == 'long' else '空'} {position['contracts']} 张, {position['leverage']}x, 开仓价 {position['entryPrice']}, 标记价 {position['markPrice']}, 未实现盈亏 {position['unrealizedPnl']} USDT"
-            # 过滤资金费率和利率，如果满足条件就告警
-            perp_token = f"{token['token']}USDT"
+    def check_tokens(self,  all_products):
+        subscribed_tokens = [i['asset'] for i in self.exchange_api.get_gateio_subscribed_products() if i['asset'] != 'USDT']
+        filtered_products = [i for i in all_products if i['token'] in subscribed_tokens]
+        notifications = []
+        for product in filtered_products:
+            token = product["token"]
+            perp_token = f"{token}USDT"
             futures_results = self.get_futures_trading(perp_token)
-            token_future = [i for i in futures_results if i['exchange'] == token['future_exchange']]
-            if token_future:
-                token_future = token_future[0]
-                estimate_apy = self.get_estimate_apy(product['apy'], token_future['fundingRate'],
-                                                     token_future['fundingIntervalHours'])
-                if product['apy_day']:
-                    apy_percentile = get_percentile([i['apy'] for i in product['apy_day']], yield_percentile)
-                estimate_apy_percentile = self.get_estimate_apy(apy_percentile, token_future['fundingRate'],
-                                                                token_future['fundingIntervalHours'])
-                future_info_str = '\n'.join([
-                    f"   • {i['exchange']}: {i['volume_24h'] / 10000:.2f}万USDT, {i['fundingRate']:.4f}%, {get_percentile([i['fundingRate'] for i in i['d7history']], future_percentile):.4f}%, {i['markPrice']:.5f}, {self.get_estimate_apy(product['apy'], i['fundingRate'], i['fundingIntervalHours']):.2f}%, {self.get_estimate_apy(apy_percentile, i['fundingRate'], i['fundingIntervalHours']):.2f}%, {i['fundingIntervalHoursText']}, {datetime.fromtimestamp(i['fundingTime'] / 1000)}"
-                    for i in
-                    futures_results])
-                # token_future['fundingRate'] < 0
-                d7apy_str = f"无";
-                d30apy_str = f"无"
-                if product['apy_month']:
-                    d7apy = get_percentile([i['apy'] for i in product['apy_month'] if d7start <= i['timestamp'] <= end],
-                                           yield_percentile)
-                    d7apy_str = f"{d7apy:.2f}%"
-                    d30apy = get_percentile(
-                        [i['apy'] for i in product['apy_month'] if d30start <= i['timestamp'] <= end], yield_percentile)
-                    d30apy_str = f"{d30apy:.2f}%"
-                # 收益率、预估收益率、Pxx收益率 小于卖出年化阈值
-                if product['apy'] < sell_apy_threshold or \
-                        estimate_apy < sell_apy_threshold:
-                    # estimate_apy_percentile < sell_apy_threshold:
-                    content = f"📉**卖出提醒**: "
-                else:
-                    content = f"💰**持仓收益率**: "
-                content += (
-                    f"{product['exchange']} {product['token']} ({now_str})\n"
-                    f"近24小时现货交易量: {product['volume_24h'] / 10000:.2f}万USDT\n"
-                    f"最新收益率: {product['apy']:.2f}%\n"
-                    f"P{yield_percentile}收益率: {apy_percentile:.2f}%\n"
-                    f"近7天P{yield_percentile}收益率: {d7apy_str}\n"
-                    f"近30天P{yield_percentile}收益率: {d30apy_str}\n"
-                    f"各交易所合约信息(套保交易所: {token['future_exchange']})\n"
-                    f"近24小时合约交易量|最新资金费率|近7天P{yield_percentile}资金费率|标记价格|预估收益率|近24小时P{yield_percentile}预估收益率|结算周期|下次结算时间\n"
-                    f"{future_info_str}"
-                    f"{gateio_position_info}"
-                    f"{bitget_position_info}"
-                )
-                sell_wechat_bot.send_message(content)
-            else:
-                content = f"在{token['future_exchange']}交易所中未找到 {token['token']} 合约产品"
-                logger.info(content)
-                # sell_wechat_bot.send_message(content)
-            sleep(0.5)
+            logger.debug(f"{perp_token} get future results: {futures_results}")
+            apy_percentile = 0.0
+            if product['apy_day']:
+                apy_percentile = get_percentile([i['apy'] for i in product['apy_day']], yield_percentile)
 
-    def position_check(self, all_products):
-        try:
-            # 对所有已购买产品做检查
-            token_manger = TokenManager()
-            purchased_tokens = token_manger.query_tokens()
-            logger.debug(f"获取到的活期理财账户仓位如下：{purchased_tokens}")
-            self.check_tokens(purchased_tokens, all_products)
-        except Exception as e:
-            logger.exception(f"对所有已购买产品做检查失败 {e}")
+            future_info_str = '\n'.join([
+                f"   • {i['exchange']}: {i['volume_24h'] / 10000:.2f}万USDT, {i['fundingRate']:.4f}%, {get_percentile([i['fundingRate'] for i in i['d7history']], future_percentile):.4f}%, {i['markPrice']:.5f}, {self.get_estimate_apy(product['apy'], i['fundingRate'], i['fundingIntervalHours']):.2f}%, {self.get_estimate_apy(apy_percentile, i['fundingRate'], i['fundingIntervalHours']):.2f}%, {i['fundingIntervalHoursText']}, {datetime.fromtimestamp(i['fundingTime'] / 1000)}"
+                for i in
+                futures_results])
+            # 生成通知内容
+            notification = {
+                "exchange": product["exchange"],
+                "token": token,
+                "apy": product["apy"],
+                "apy_percentile": apy_percentile,
+                "volume_24h": product["volume_24h"],
+                'apy_month': product['apy_month'],
+                "future_info": future_info_str,
+                "min_purchase": product["min_purchase"],
+                "max_purchase": product["max_purchase"],
+            }
+            notifications.append(notification)
+        # 发送通知
+        if notifications:
+            logger.info(f"已添加{len(notifications)}个订阅理财Token到通知列表")
+            self._send_product_notifications(notifications, product_type='subscribed')
 
     def run(self):
         # 尝试获取外网出口IP
@@ -440,6 +350,7 @@ class CryptoYieldMonitor:
             self.exchange_api.get_binance_funding_info()
             # 过滤和处理高收益理财产品
             self.product_filter(all_products)
+            self.check_tokens(all_products)
             # self.position_check(all_products)
         except Exception as e:
             logger.exception(f"运行监控任务时发生错误: {str(e)}")

@@ -8,6 +8,8 @@ import os
 import sys
 import argparse
 
+from trade.gateio_api import get_earn_positions
+
 # 获取当前脚本的目录
 current_dir = os.path.dirname(os.path.abspath(__file__))
 # 将 config.py 所在的目录添加到系统路径
@@ -42,6 +44,17 @@ class ExchangeAPI:
         self.okx_futures_volumes = {}
         self.binance_exchange_info = None  # Cache for exchange info
         self.binance_exchange_info_time = 0  # Timestamp of last update
+        self.gateio_subscribed_products = []
+        self.get_gateio_subscribed_products()
+
+
+    def get_gateio_subscribed_products(self):
+        if not self.gateio_subscribed_products:
+            try:
+                self.gateio_subscribed_products = get_earn_positions()
+            except Exception as e:
+                logger.error(f"get gateio subscribed products: {e}")
+        return self.gateio_subscribed_products
 
     def get_binance_volumes(self):
         """获取币安所有交易对24小时交易量"""
