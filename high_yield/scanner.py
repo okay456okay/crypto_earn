@@ -131,6 +131,13 @@ class CryptoYieldMonitor:
         # 生成日志文件名
         timestamp = now.strftime("%Y%m%d%H%M")
         log_file = os.path.join(reports_dir, f'{product_type}_products_{timestamp}.log')
+        combined_file = os.path.join(reports_dir, 'products')
+        
+        # 清空合并文件
+        if os.path.exists(combined_file):
+            with open(combined_file, 'w', encoding='utf-8') as f:
+                f.write('')
+        
         if product_type == 'stable':
             wechat_bot = WeChatWorkBot(stability_buy_webhook_url)
         elif product_type == 'highyield':
@@ -170,9 +177,15 @@ class CryptoYieldMonitor:
                 wechat_message = f"📊交易所{product_type}活期理财产品监控 ({now_str})\n\n" + message
                 wechat_bot.send_message(wechat_message)
                 
-                # 写入日志文件
+                # 写入单独的日志文件
                 with open(log_file, 'a', encoding='utf-8') as f:
                     f.write(f"=== {now_str} ===\n")
+                    f.write(message)
+                    f.write("\n\n")
+                
+                # 写入合并文件
+                with open(combined_file, 'a', encoding='utf-8') as f:
+                    f.write(f"=== {now_str} ({product_type}) ===\n")
                     f.write(message)
                     f.write("\n\n")
                 
