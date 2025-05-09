@@ -233,7 +233,7 @@ def get_earn_product(token):
             if len(products) == 1:
                 product = products[0]
         elif r.text.find('TOO_MANY_REQUESTS') >= 0:
-            sleep(5)
+            sleep(6)
             r = requests.get(url, params=params, proxies=proxies)
             if r.status_code == 200 and r.json().get('code') == 0:
                 products = [i for i in r.json().get('data', {}).get('list', []) if i['asset'] == token]
