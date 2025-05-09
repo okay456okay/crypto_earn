@@ -233,7 +233,7 @@ def get_earn_product(token):
             if len(products) == 1:
                 product = products[0]
         elif r.text.find('TOO_MANY_REQUESTS') >= 0:
-            sleep(1)
+            sleep(2)
             url = 'https://www.gate.io/apiw/v2/uni-loan/earn/market/list'
             params = {
                 'search_coin': token,
