@@ -418,7 +418,7 @@ class ExchangeArbitrageCalculator:
                 total_earn_value += earn_value
                 weighted_apy_sum += earn_value * pos['last_rate_year']
 
-        weighted_apy = (weighted_apy_sum / total_earn_value * 100) if total_earn_value > 0 else 0
+        weighted_apy = (weighted_apy_sum / total_earn_value) if total_earn_value > 0 else 0
         print(f"加权平均年化收益率: {weighted_apy:.2f}%")
         print("="*90)
 
