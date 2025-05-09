@@ -1041,11 +1041,10 @@ async def main():
                     # 验证订单成功
                     if not spot_order or not contract_order:
                         logger.error(f"第 {current_iteration}/{total_count} 次交易失败: 订单未成功提交")
-                        # 立即打印交易执行结果并退出
-                        logger.warning(f"由于订单提交失败，停止后续交易流程")
-                        # 立即打印交易结果
-                        await trader.print_trade_results()
-                        break
+                        # 继续等待下一次机会，而不是退出
+                        logger.info(f"等待下一次交易机会...")
+                        await asyncio.sleep(3)  # 等待3秒后继续
+                        continue
                     
                     # 进一步检查订单ID是否有效
                     spot_order_id = spot_order.get('id')
@@ -1054,10 +1053,9 @@ async def main():
                     if not spot_order_id or not contract_order_id:
                         logger.error(f"第 {current_iteration}/{total_count} 次交易失败: 订单ID无效")
                         logger.warning(f"Gate.io订单ID: {spot_order_id}, Bybit订单ID: {contract_order_id}")
-                        logger.warning(f"由于订单ID无效，停止后续交易流程")
-                        # 立即打印交易结果
-                        await trader.print_trade_results()
-                        break
+                        logger.info(f"等待下一次交易机会...")
+                        await asyncio.sleep(3)  # 等待3秒后继续
+                        continue
                     
                     # 进一步验证订单状态
                     if (spot_order.get('status') in ['closed', 'filled'] and
@@ -1078,41 +1076,33 @@ async def main():
                             failure_reasons.append("合约成交量为0")
                             
                         logger.error(f"第 {current_iteration}/{total_count} 次交易失败: {', '.join(failure_reasons)}")
-                        logger.warning(f"由于订单执行异常，停止后续交易流程")
-                        # 立即打印交易结果
-                        await trader.print_trade_results()
-                        break
+                        logger.info(f"等待下一次交易机会...")
+                        await asyncio.sleep(3)  # 等待3秒后继续
+                        continue
                         
                 except Exception as e:
                     logger.error(f"执行对冲交易时发生错误: {str(e)}")
                     if "不足" in str(e) or "insufficient" in str(e).lower():
                         logger.error("资金不足，停止后续交易")
+                        break
                     else:
                         logger.debug(f"错误详情: {e}", exc_info=True)
-                    
-                    # 计入执行次数，但标记为失败
-                    executed_count += 1
-                    # 立即打印交易结果
-                    await trader.print_trade_results()
-                    # 由于交易失败，不继续后续交易
-                    break
+                        logger.info(f"等待下一次交易机会...")
+                        await asyncio.sleep(3)  # 等待3秒后继续
+                        continue
                 
                 # 只有成功完成当前交易才继续下一次
                 if hedge_success and current_iteration < total_count:
                     wait_time = 3  # 等待3秒
                     logger.debug(f"等待 {wait_time} 秒后开始下一次交易...")
                     await asyncio.sleep(wait_time)
-                elif not hedge_success:
-                    logger.warning("当前交易未成功完成，停止后续交易")
-                    break
                 
             except Exception as e:
                 logger.error(f"第 {current_iteration}/{total_count} 次交易操作时出错: {str(e)}")
                 logger.debug(f"错误详情: {e}", exc_info=True)  # 打印完整堆栈跟踪
-                # 立即打印交易结果
-                await trader.print_trade_results()
-                # 出现异常，停止后续交易
-                break
+                logger.info(f"等待下一次交易机会...")
+                await asyncio.sleep(3)  # 等待3秒后继续
+                continue
 
     except Exception as e:
         logger.error(f"程序执行过程中发生错误: {str(e)}")
