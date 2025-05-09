@@ -408,11 +408,24 @@ class ExchangeArbitrageCalculator:
         # 打印套利总和
         print("\n【套利汇总】")
         print(f"总套利价值: {total_arbitrage_value:.2f} USDT")
+
+        # 计算加权平均年化收益率
+        total_earn_value = 0
+        weighted_apy_sum = 0
+        for pos in arbitrage_summary:
+            earn_value = pos['earn_value']
+            if earn_value > 0:  # 只计算有理财金额的
+                total_earn_value += earn_value
+                weighted_apy_sum += earn_value * pos['last_rate_year']
+
+        weighted_apy = (weighted_apy_sum / total_earn_value * 100) if total_earn_value > 0 else 0
+        print(f"加权平均年化收益率: {weighted_apy:.2f}%")
         print("="*90)
 
         return {
             'arbitrage_results': arbitrage_results,
-            'total_arbitrage_value': total_arbitrage_value
+            'total_arbitrage_value': total_arbitrage_value,
+            'weighted_apy': weighted_apy
         }
 
     async def close_exchanges(self):

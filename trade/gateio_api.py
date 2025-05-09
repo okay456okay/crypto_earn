@@ -224,7 +224,7 @@ def get_earn_product(token):
     url = 'https://www.gate.io/apiw/v2/uni-loan/earn/market/list'
     params = {
         'search_coin': token,
-        'limit': 7,
+        'limit': 2,
     }
     try:
         r = requests.get(url, params=params, proxies=proxies)
@@ -233,11 +233,11 @@ def get_earn_product(token):
             if len(products) == 1:
                 product = products[0]
         elif r.text.find('TOO_MANY_REQUESTS') >= 0:
-            sleep(2)
+            sleep(3)
             url = 'https://www.gate.io/apiw/v2/uni-loan/earn/market/list'
             params = {
                 'search_coin': token,
-                'limit': 7,
+                'limit': 2,
             }
             r = requests.get(url, params=params, proxies=proxies)
             if r.status_code == 200 and r.json().get('code') == 0:
