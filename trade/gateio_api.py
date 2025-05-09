@@ -226,11 +226,14 @@ def get_earn_product(token):
         'search_coin': token,
         'limit': 7,
     }
-    r = requests.get(url, params=params, proxies=proxies)
-    if r.status_code == 200 and r.json().get('code') == 0:
-        products = [i for i in r.json().get('data', {}).get('list', []) if i['asset'] == token]
-    if len(products) == 1:
-        product = products[0]
+    try:
+        r = requests.get(url, params=params, proxies=proxies)
+        if r.status_code == 200 and r.json().get('code') == 0:
+            products = [i for i in r.json().get('data', {}).get('list', []) if i['asset'] == token]
+            if len(products) == 1:
+                product = products[0]
+    except Exception as e:
+        logger.error(f"get_earn_product failed for {token}: {str(e)}")
     return product
 
 
