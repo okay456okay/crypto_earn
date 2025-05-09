@@ -283,7 +283,7 @@ class CryptoYieldMonitor:
             self._send_product_notifications(highyield_product_notifications, product_type='highyield')
 
     def check_tokens(self,  all_products):
-        subscribed_tokens = [i['asset'] for i in self.exchange_api.get_gateio_subscribed_products() if i['asset'] != 'USDT']
+        subscribed_tokens = [i['asset'] for i in self.exchange_api.get_gateio_subscribed_products() if i['asset'] != 'USDT' and float(i['curr_amount_usdt']) > 1 ]
         filtered_products = [i for i in all_products if i['token'] in subscribed_tokens]
         notifications = []
         for product in filtered_products:
