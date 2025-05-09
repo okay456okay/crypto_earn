@@ -284,7 +284,9 @@ class CryptoYieldMonitor:
 
     def check_tokens(self,  all_products):
         subscribed_tokens = [i['asset'] for i in self.exchange_api.get_gateio_subscribed_products() if i['asset'] != 'USDT' and float(i['curr_amount_usdt']) > 1 ]
-        filtered_products = [i for i in all_products if i['token'] in subscribed_tokens]
+        logger.info(f"get subscribed tokens: {len(subscribed_tokens)}, detail: {subscribed_tokens}")
+        filtered_products = [i for i in all_products if i['token'] in subscribed_tokens and i['exchange'] == 'GateIO']
+        logger.info(f"get filtered products: {len(filtered_products)}")
         notifications = []
         for product in filtered_products:
             token = product["token"]
