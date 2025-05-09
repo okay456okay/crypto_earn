@@ -117,24 +117,33 @@ class CryptoYieldMonitor:
         return results
 
     def _send_product_notifications(self, notifications, product_type):
-        """发送企业微信群机器人通知"""
+        """发送企业微信群机器人通知并写入日志文件"""
         now = datetime.now()
         now_str = now.strftime("%Y-%m-%d %H:%M:%S")
         end = int(now.timestamp() * 1000)
         d7start = end - 7 * 24 * 60 * 60 * 1000
         d30start = end - 30 * 24 * 60 * 60 * 1000
-        if product_type == '稳定':
+        
+        # 创建reports目录（如果不存在）
+        reports_dir = os.path.join(current_dir, '..', 'trade', 'reports')
+        os.makedirs(reports_dir, exist_ok=True)
+        
+        # 生成日志文件名
+        timestamp = now.strftime("%Y%m%d%H%M")
+        log_file = os.path.join(reports_dir, f'{product_type}_products_{timestamp}.log')
+        if product_type == 'stable':
             wechat_bot = WeChatWorkBot(stability_buy_webhook_url)
-        elif product_type == '金狗':
+        elif product_type == 'highyield':
             wechat_bot = WeChatWorkBot(highyield_buy_webhook_url)
         else:
             logger.error("unknown product type")
             return
+        
         limit = 3
         for p in range(int(len(notifications) / limit) + 1):
             message = ''
             for idx, notif in enumerate(notifications[p * limit:(p + 1) * limit], 1):
-                d7apy_str = '无';
+                d7apy_str = '无'
                 d30apy_str = '无'
                 if notif['apy_month']:
                     d7apy = get_percentile([i['apy'] for i in notif['apy_month'] if d7start <= i['timestamp'] <= end],
@@ -157,10 +166,17 @@ class CryptoYieldMonitor:
                     f"   • 最大购买量: {notif['max_purchase']}\n"
                 )
             if message:
-                # https://emojipedia.org/
-                message = f"📊交易所{product_type}活期理财产品监控 ({now_str})\n\n" + message
-                wechat_bot.send_message(message)
-        logger.info(f"已发送{len(notifications)}条高收益加密货币通知")
+                # 发送到企业微信
+                wechat_message = f"📊交易所{product_type}活期理财产品监控 ({now_str})\n\n" + message
+                wechat_bot.send_message(wechat_message)
+                
+                # 写入日志文件
+                with open(log_file, 'a', encoding='utf-8') as f:
+                    f.write(f"=== {now_str} ===\n")
+                    f.write(message)
+                    f.write("\n\n")
+                
+        logger.info(f"已发送{len(notifications)}条{product_type}加密货币通知，并写入日志文件: {log_file}")
 
     def get_estimate_apy(self, apy, fundingRate, fundingIntervalHours, leverage_ratio=leverage_ratio):
         """
@@ -246,10 +262,10 @@ class CryptoYieldMonitor:
         # 发送通知
         if stability_product_notifications:
             logger.info(f"已添加{len(stability_product_notifications)}个稳定理财Token到通知列表")
-            self._send_product_notifications(stability_product_notifications, product_type='稳定')
+            self._send_product_notifications(stability_product_notifications, product_type='stable')
         if highyield_product_notifications:
             logger.info(f"已添加{len(highyield_product_notifications)}个金狗Token到通知列表")
-            self._send_product_notifications(highyield_product_notifications, product_type='金狗')
+            self._send_product_notifications(highyield_product_notifications, product_type='highyield')
 
     def check_tokens(self, tokens, all_products):
         now = datetime.now()
