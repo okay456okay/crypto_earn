@@ -275,7 +275,7 @@ class ExchangeArbitrageCalculator:
 
         # 先打印持仓汇总表头
         print("\n【合约持仓汇总】")
-        print(f"{'代币':<8} {'Binance多':<12} {'Binance空':<12} {'Bybit多':<12} {'Bybit空':<12} {'Bitget多':<12} {'Bitget空':<12} {'总多仓':<12} {'总空仓':<12} {'净仓位':<12} {'当前价格':<12} {'持仓金额':<15}")
+        print(f"{'代币':<8} {'Binance多':<12} {'Binance空':<12} {'Bybit多':<12} {'Bybit空':<12} {'Bitget多':<12} {'Bitget空':<12} {'总多仓':<12} {'总空仓':<12} {'净仓位':<12} {'当前价格':<8} {'持仓金额':<15}")
         print("-"*165)
 
         # 合约持仓汇总
@@ -318,8 +318,8 @@ class ExchangeArbitrageCalculator:
 
         # 打印GateIO理财与套利情况
         print("\n【GateIO理财与套利情况】")
-        print(f"{'代币':<8} {'理财数量':<12} {'合约净仓位':<15} {'对冲差额':<12} {'当前价格':<12} {'理财金额':<12} {'年化收益率':<10} {'套利价值(USDT)':<15} {'套利收益率':<10} {'借出总额':<12} {'可借总额':<12}")
-        print("-"*150)
+        print(f"{'代币':<8} {'理财数量':<12} {'合约净仓位':<15} {'对冲差额':<12} {'当前价格':<12} {'理财金额':<10} {'年化收益率':<8} {'套利价值(USDT)':<15} {'套利收益率':<10} {'借出总额':<12} {'可借总额':<12}")
+        print("-"*165)
 
         # 计算套利情况
         arbitrage_summary = []
@@ -364,8 +364,7 @@ class ExchangeArbitrageCalculator:
 
         # 打印排序后的结果
         for pos in arbitrage_summary:
-            print(f"{pos['token']:<10} {pos['earn_amount']:<16.2f} {pos['net_position']:<20.2f} {pos['hedge_diff']:<16.2f} {pos['price']:<16.6f} {pos['earn_value']:<16.2f} {pos['last_rate_year']:<14.2f} {pos['arbitrage_value']:<15.2f} {pos['arbitrage_rate']:<14.2f} {pos['total_lend_amount']:<16.2f} {pos['total_lend_available']:<16.2f}")
-            
+            print(f"{pos['token']:<10} {pos['earn_amount']:<16.2f} {pos['net_position']:<20.2f} {pos['hedge_diff']:<16.2f} {pos['price']:<16.6f} {pos['earn_value']:<14.2f} {pos['last_rate_year']:<12.2f} {pos['arbitrage_value']:<19.2f} {pos['arbitrage_rate']:<16.2f} {pos['total_lend_amount']:<16.2f} {pos['total_lend_available']:<14.2f}")
             # 更新套利结果和总价值
             arbitrage_results.append({
                 'token': pos['token'],
