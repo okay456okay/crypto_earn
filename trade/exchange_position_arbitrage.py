@@ -354,6 +354,17 @@ class ExchangeArbitrageCalculator:
         # 打印排序后的结果
         for pos in arbitrage_summary:
             print(f"{pos['token']:<10} {pos['earn_amount']:<16.2f} {pos['net_position']:<20.2f} {pos['hedge_diff']:<16.2f} {pos['price']:<16.6f} {pos['earn_value']:<16.2f} {pos['last_rate_year']:<14.2f} {pos['arbitrage_value']:<15.2f} {pos['arbitrage_rate']:<14.2f}")
+            
+            # 更新套利结果和总价值
+            arbitrage_results.append({
+                'token': pos['token'],
+                'earn_amount': pos['earn_amount'],
+                'net_position': pos['net_position'],
+                'hedge_diff': pos['hedge_diff'],
+                'price': pos['price'],
+                'arbitrage_value': pos['arbitrage_value']
+            })
+            total_arbitrage_value += pos['arbitrage_value']
 
         # 打印合约中有但理财没有的代币
         for token, positions in self.aggregated_positions.items():
