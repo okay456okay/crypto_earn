@@ -8,17 +8,16 @@ import os
 import sys
 import argparse
 
-from trade.gateio_api import get_earn_positions
 
 # 获取当前脚本的目录
 current_dir = os.path.dirname(os.path.abspath(__file__))
 # 将 config.py 所在的目录添加到系统路径
 sys.path.append(os.path.join(current_dir, '..'))
 
+from trade.gateio_api import get_earn_positions
 from config import proxies, stability_buy_apy_threshold, yield_percentile, bitget_api_key, bitget_api_secret, \
     bitget_api_passphrase, okx_earn_insurance_keep_ratio, okx_login_token
 from tools.logger import logger
-from high_yield.common import get_percentile
 
 
 class ExchangeAPI:
@@ -237,7 +236,6 @@ class ExchangeAPI:
                                     apy_month = [{'timestamp': int(i['calcTime']), 'apy': float(i['marketApr']) * 100}
                                                  for i in response.json().get('data', {}).get('marketAprList', [])]
                                     apy_day = sorted(apy_month[-24:], key=lambda item: item['timestamp'], reverse=False)
-                                    # apy_percentile = get_percentile([i['apy'] for i in apy_month[-24:]], yield_percentile)
                                 else:
                                     logger.error(
                                         f"binance get asset charts, url: {url}, status: {response.status_code}, response: {response.text}")
@@ -352,7 +350,6 @@ class ExchangeAPI:
                                        i in data]
                             apy_day = sorted(apy_day, key=lambda item: item['timestamp'], reverse=False)
                             logger.debug(f"获取bybit {token}近24小时收益率曲线, 数据：{data}")
-                            # apy_percentile = get_percentile(data, percentile=yield_percentile, reverse=True)
                     except Exception as e:
                         logger.error(f"获取 {token}的收益曲线失败： {str(e)}")
                     product = {
@@ -489,7 +486,6 @@ class ExchangeAPI:
                             else:
                                 logger.debug(f"get gateio 1day asset charts, url: {url}, data: {response.json()}")
                             data = response.json().get('data', [])
-                            # apy_percentile = get_percentile([float(i['value']) for i in data], percentile=yield_percentile, reverse=True)
                             apy_day = [{'timestamp': int(i['time']) * 1000, 'apy': float(i['value'])} for i in data]
                             apy_day = sorted(apy_day, key=lambda item: item['timestamp'], reverse=False)
                             url = f'https://www.gate.io/apiw/v2/uni-loan/earn/chart?from={start_30}&to={end}&asset={token}&type=2'
@@ -581,7 +577,6 @@ class ExchangeAPI:
                             apy_day = [{'apy': float(i['rate']) * 100 * (1-okx_earn_insurance_keep_ratio), 'timestamp': int(i['dataDate'])} for i in
                                        data.get('lastOneDayRates', {}).get('rates')]
                             apy_day = sorted(apy_day, key=lambda item: item['timestamp'], reverse=False)
-                            # apy_percentile = get_percentile([float(i['rate'])*100 for i in data.get('lastOneDayRates', {}).get('rates')])
                             apy_month = [{'timestamp': i['dataDate'],
                                           'apy': float(i['rate']) * 100 * (1 - okx_earn_insurance_keep_ratio)} for i in
                                          data.get('lastOneMonthRates', {}).get('rates', [])]

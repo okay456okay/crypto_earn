@@ -13,8 +13,6 @@ from datetime import datetime
 import sys
 import os
 
-from pycparser.ply.yacc import token
-
 # import traceback
 
 # 获取当前脚本的目录
