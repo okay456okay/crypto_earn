@@ -32,6 +32,7 @@ from exchange import ExchangeAPI
 from config import funding_rate_webhook_url, funding_rate_threshold, min_avg_yield_threshold, min_funding_rate, volume_24h_threshold, proxies
 from tools.logger import logger
 import ccxt
+import os
 
 class RateLimiter:
     """令牌桶限速器"""
@@ -428,7 +429,7 @@ def get_24h_volume(api: ExchangeAPI, exchange: str, token: str) -> Dict[str, Any
 
 def send_to_wechat_robot(data: List[Dict[str, Any]]):
     """
-    发送数据到企业微信群机器人
+    发送数据到企业微信群机器人，并写入日志文件
     :param data: 要发送的数据
     """
     if not data:
@@ -468,6 +469,34 @@ def send_to_wechat_robot(data: List[Dict[str, Any]]):
             logger.error(f"发送消息失败: {response.text}")
     except Exception as e:
         logger.error(f"发送消息时出错: {str(e)}")
+    
+    # 写入日志文件
+    try:
+        # 创建日志目录
+        log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'trade', 'reports')
+        os.makedirs(log_dir, exist_ok=True)
+        
+        # 生成带时间戳的日志文件名
+        now = datetime.now()
+        timestamp = now.strftime("%Y%m%d%H")
+        log_file = os.path.join(log_dir, f'funding_rate_arbitrage_{timestamp}.log')
+        
+        # 写入日志文件
+        with open(log_file, 'a', encoding='utf-8') as f:
+            f.write(f"=== {now.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
+            f.write(message)
+            f.write("\n\n")
+        
+        # 写入合并文件（覆盖之前内容）
+        combined_file = os.path.join(log_dir, 'funding_rate_arbitrage')
+        with open(combined_file, 'w', encoding='utf-8') as f:
+            f.write(f"=== {now.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
+            f.write(message)
+            f.write("\n\n")
+        
+        logger.info(f"已写入日志文件: {log_file} 和 {combined_file}")
+    except Exception as e:
+        logger.error(f"写入日志文件时出错: {str(e)}")
 
 def get_all_funding_rates(api: ExchangeAPI) -> List[Dict[str, Any]]:
     """
