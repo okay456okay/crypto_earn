@@ -42,6 +42,10 @@ from tools.logger import logger
 class CryptoYieldMonitor:
     def __init__(self):
         self.exchange_api = ExchangeAPI()
+        # 创建reports目录（如果不存在）
+        self.reports_dir = os.path.join(current_dir, '..', 'trade', 'reports')
+        os.makedirs(self.reports_dir, exist_ok=True)
+        self.combined_file = os.path.join(self.reports_dir, 'products')
 
     def get_futures_trading(self, token):
         """检查Token是否在任意交易所上线了合约交易，且交易费率为正"""
@@ -124,19 +128,9 @@ class CryptoYieldMonitor:
         d7start = end - 7 * 24 * 60 * 60 * 1000
         d30start = end - 30 * 24 * 60 * 60 * 1000
         
-        # 创建reports目录（如果不存在）
-        reports_dir = os.path.join(current_dir, '..', 'trade', 'reports')
-        os.makedirs(reports_dir, exist_ok=True)
-        
         # 生成日志文件名
         timestamp = now.strftime("%Y%m%d%H%M")
-        log_file = os.path.join(reports_dir, f'{product_type}_products_{timestamp}.log')
-        combined_file = os.path.join(reports_dir, 'products')
-        
-        # 清空合并文件
-        if os.path.exists(combined_file):
-            with open(combined_file, 'w', encoding='utf-8') as f:
-                f.write('')
+        log_file = os.path.join(self.reports_dir, f'{product_type}_products_{timestamp}.log')
         
         if product_type == 'stable':
             wechat_bot = WeChatWorkBot(stability_buy_webhook_url)
@@ -186,7 +180,7 @@ class CryptoYieldMonitor:
                     f.write("\n\n")
                 
                 # 写入合并文件
-                with open(combined_file, 'a', encoding='utf-8') as f:
+                with open(self.combined_file, 'a', encoding='utf-8') as f:
                     f.write(f"=== {now_str} ({product_type}) ===\n")
                     f.write(message)
                     f.write("\n\n")
@@ -328,6 +322,11 @@ class CryptoYieldMonitor:
         """运行监控任务"""
         logger.info("开始检查高收益加密货币...")
         try:
+            # 清空合并文件
+            if os.path.exists(self.combined_file):
+                with open(self.combined_file, 'w', encoding='utf-8') as f:
+                    f.write('')
+            
             # 获取所有交易所的活期理财产品
             binance_products = self.exchange_api.get_binance_flexible_products()
             logger.info(f"从Binance获取到{len(binance_products)}个活期理财产品")
@@ -346,10 +345,9 @@ class CryptoYieldMonitor:
 
             # 合并所有产品
             all_products = binance_products + bitget_products + bybit_products + gateio_products + okx_products
-            # all_products =  bybit_products + gateio_products + okx_products + binance_products
-            # all_products = gateio_products
             logger.info(f"总共获取到{len(all_products)}个活期理财产品")
             self.exchange_api.get_binance_funding_info()
+            
             # 过滤和处理高收益理财产品
             self.product_filter(all_products)
             self.check_tokens(all_products)
