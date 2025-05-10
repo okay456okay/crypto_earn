@@ -154,7 +154,7 @@ class CryptoYieldMonitor:
                                             yield_percentile)
                     d30apy_str = f"{d30apy:.2f}%"
                 message += (
-                    f"**{idx + p * limit}. {notif['token']}({notif['exchange']})** 💰\n"
+                    f"**{idx + p * limit}. {notif['token']} ({notif['exchange']})** 💰\n"
                     f"   • 近24小时现货交易量: {notif['volume_24h'] / 10000:.2f}万USDT\n"
                     f"   • 最新收益率: {notif['apy']:.2f}%\n"
                     f"   • 近24小时P{yield_percentile}收益率: {notif['apy_percentile']:.2f}%\n"
