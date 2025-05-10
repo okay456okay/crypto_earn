@@ -440,9 +440,13 @@ def send_to_wechat_robot(data: List[Dict[str, Any]]):
     message = "## 高资金费率套利机会\n\n"
     
     for index, item in enumerate(data, 1):
+        # 格式化下次结算时间
+        next_settlement = datetime.fromtimestamp(item['fundingTime'] / 1000).strftime('%Y-%m-%d %H:%M:%S')
+        
         message += f"{index}. {item['exchange']} {item['token']}\n"
         message += f"- 当前资金费率: {item['funding_rate']:.4f}%\n"
         message += f"- 资金费率周期: {item['interval_hours']}小时\n"
+        message += f"- 下次结算时间: {next_settlement}\n"
         message += f"- 当前年化收益率: {item['current_yield']:.2f}%\n"
         message += f"- 近1天平均年化收益率: {item['avg_yield_1d']:.2f}%\n"
         message += f"- 近3天平均年化收益率: {item['avg_yield_3d']:.2f}%\n"
@@ -679,7 +683,12 @@ def main():
                 logger.info(f"{rate['exchange']} {rate['token']}平均年化收益率不足{min_avg_yield_threshold}%，跳过")
                 continue
             
-            logger.info(f"{rate['exchange']} {rate['token']} 平均年化收益率: 1天={avg_yield_1d:.2f}%, 3天={avg_yield_3d:.2f}%")
+            # 检查价差+资金费率是否超过阈值
+            if volumes['price_diff'] + rate['fundingRate'] <= 0.16:
+                logger.info(f"{rate['exchange']} {rate['token']}价差({volumes['price_diff']:.2f}%) + 资金费率({rate['fundingRate']:.4f}%) = {volumes['price_diff'] + rate['fundingRate']:.4f}% <= 0.16%，跳过")
+                continue
+            
+            logger.info(f"{rate['exchange']} {rate['token']} 平均年化收益率: 1天={avg_yield_1d:.2f}%, 3天={avg_yield_3d:.2f}%, 价差+资金费率={volumes['price_diff'] + rate['fundingRate']:.4f}%")
             
             filtered_rates.append({
                 'exchange': rate['exchange'],
@@ -694,7 +703,8 @@ def main():
                 'spot_exchange': volumes['spot_exchange'],
                 'future_price': volumes['future_price'],
                 'spot_price': volumes['spot_price'],
-                'price_diff': volumes['price_diff']
+                'price_diff': volumes['price_diff'],
+                'fundingTime': rate['fundingTime']  # 添加下次结算时间
             })
     
     # 按当前年化收益率排序
