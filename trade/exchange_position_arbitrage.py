@@ -386,7 +386,8 @@ class ExchangeArbitrageCalculator:
                     continue
 
                 price = self.token_prices.get(token, 0)
-                arbitrage_value = abs(net_position) * price
+                # arbitrage_value = net_position * price
+                arbitrage_value = 0
                 try:
                     print(f"{token:<10} {0.0:<16.2f} {net_position:<20.2f} {-net_position:<16.2f} {price:<16.6f} {0.0:<16.2f} {0.0:<14.2f} {arbitrage_value:<15.2f} {0.0:<14.2f} {0.0:<16.2f} {0.0:<16.2f}")
                 except Exception as e:
