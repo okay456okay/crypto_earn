@@ -377,7 +377,6 @@ class ExchangeArbitrageCalculator:
             total_arbitrage_value += pos['arbitrage_value']
 
         # 打印合约中有但理财没有的代币
-        """
         for token, positions in self.aggregated_positions.items():
             if token not in [p['token'] for p in self.gateio_earn_positions]:
                 net_position = positions['long'] - positions['short']
@@ -394,17 +393,16 @@ class ExchangeArbitrageCalculator:
                     logger.error(f"print failed, info: {token} {net_position} {price} {arbitrage_value}", exc_info=True)
                     continue
 
-                arbitrage_results.append({
-                    'token': token,
-                    'earn_amount': 0,
-                    'net_position': net_position,
-                    'hedge_diff': net_position,
-                    'price': price,
-                    'arbitrage_value': arbitrage_value
-                })
-
-                total_arbitrage_value += arbitrage_value
-        """
+                # arbitrage_results.append({
+                #     'token': token,
+                #     'earn_amount': 0,
+                #     'net_position': net_position,
+                #     'hedge_diff': net_position,
+                #     'price': price,
+                #     'arbitrage_value': arbitrage_value
+                # })
+                #
+                # total_arbitrage_value += arbitrage_value
 
         # 打印套利总和
         print("\n【套利汇总】")
