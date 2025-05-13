@@ -50,6 +50,7 @@ class ExchangeArbitrageCalculator:
         self.aggregated_positions = defaultdict(lambda: {'long': 0, 'short': 0})
         self.token_prices = {}
         self.gateio_earn_positions = []
+        self.exchange_api = ExchangeAPI()  # 初始化ExchangeAPI实例
 
     def init_exchanges(self):
         """初始化所有交易所连接"""
