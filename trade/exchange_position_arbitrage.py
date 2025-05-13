@@ -321,7 +321,7 @@ class ExchangeArbitrageCalculator:
 
         # 打印GateIO理财与套利情况
         print("\n【GateIO理财与套利情况】")
-        print(f"{'代币':<8} {'理财数量':<12} {'合约净仓位':<15} {'对冲差额':<12} {'当前价格':<12} {'理财金额':<10} {'理财年化':<8} {'合约年化':<8} {'综合年化':<8} {'套利价值(USDT)':<15} {'套利收益率':<10} {'借出总额':<12} {'可借总额':<12}")
+        print(f"{'代币':<8} {'理财数量':<12} {'合约净仓位':<9} {'对冲差额':<8} {'当前价格':<12} {'理财金额':<6} {'理财年化':<5} {'合约年化':<5} {'综合年化':<5} {'套利价值':<7} {'套利收益率':<7} {'借出总额':<12} {'可借总额':<12}")
         print("-"*165)
 
         # 计算套利情况
@@ -353,12 +353,12 @@ class ExchangeArbitrageCalculator:
                     contracts = abs(pos['contracts'])
                     if contracts == 0:
                         continue
-                    
+
                     # 获取资金费率信息
                     funding_info = self.exchange_api.get_binance_futures_funding_rate(token + 'USDT')
                     funding_rate = float(funding_info.get('fundingRate', 0)) / 100  # 转换为小数
                     funding_interval = float(funding_info.get('fundingIntervalHours', 8))
-                    
+
                     # 计算年化收益率
                     position_value = contracts * price
                     position_apy = funding_rate * (24/funding_interval) * 365 * 100  # 转换为百分比
@@ -371,12 +371,12 @@ class ExchangeArbitrageCalculator:
                     contracts = abs(pos['contracts'])
                     if contracts == 0:
                         continue
-                    
+
                     # 获取资金费率信息
                     funding_info = self.exchange_api.get_bybit_futures_funding_rate(token + 'USDT')
                     funding_rate = float(funding_info.get('fundingRate', 0)) / 100  # 转换为小数
                     funding_interval = float(funding_info.get('fundingIntervalHours', 8))
-                    
+
                     # 计算年化收益率
                     position_value = contracts * price
                     position_apy = funding_rate * (24/funding_interval) * 365 * 100  # 转换为百分比
@@ -389,12 +389,12 @@ class ExchangeArbitrageCalculator:
                     contracts = abs(pos['contracts'])
                     if contracts == 0:
                         continue
-                    
+
                     # 获取资金费率信息
                     funding_info = self.exchange_api.get_bitget_futures_funding_rate(token + 'USDT')
                     funding_rate = float(funding_info.get('fundingRate', 0)) / 100  # 转换为小数
                     funding_interval = float(funding_info.get('fundingIntervalHours', 8))
-                    
+
                     # 计算年化收益率
                     position_value = contracts * price
                     position_apy = funding_rate * (24/funding_interval) * 365 * 100  # 转换为百分比
@@ -438,7 +438,7 @@ class ExchangeArbitrageCalculator:
 
         # 打印排序后的结果
         for pos in arbitrage_summary:
-            print(f"{pos['token']:<10} {pos['earn_amount']:<16.2f} {pos['net_position']:<20.2f} {pos['hedge_diff']:<16.2f} {pos['price']:<16.6f} {pos['earn_value']:<14.2f} {pos['last_rate_year']:<12.2f} {pos['funding_rate_apy']:<12.2f} {pos['combined_apy']:<12.2f} {pos['arbitrage_value']:<19.2f} {pos['arbitrage_rate']:<16.2f} {pos['total_lend_amount']:<16.2f} {pos['total_lend_available']:<14.2f}")
+            print(f"{pos['token']:<10} {pos['earn_amount']:<15.2f} {pos['net_position']:<15.2f} {pos['hedge_diff']:<12.2f} {pos['price']:<16.6f} {pos['earn_value']:<10.2f} {pos['last_rate_year']:<9.2f} {pos['funding_rate_apy']:<9.2f} {pos['combined_apy']:<9.2f} {pos['arbitrage_value']:<10.2f} {pos['arbitrage_rate']:<13.2f} {pos['total_lend_amount']:<16.2f} {pos['total_lend_available']:<14.2f}")
             # 更新套利结果和总价值
             arbitrage_results.append({
                 'token': pos['token'],
