@@ -19,6 +19,7 @@ from datetime import datetime
 from collections import defaultdict
 import ccxt.pro as ccxtpro
 
+
 # 添加项目根目录到系统路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tools.logger import logger
@@ -29,6 +30,7 @@ from config import (
     bitget_api_key, bitget_api_secret, bitget_api_passphrase,
     proxies
 )
+from high_yield.exchange import ExchangeAPI
 
 # 从现有模块导入
 from trade.gateio_api import get_earn_positions, get_earn_product
