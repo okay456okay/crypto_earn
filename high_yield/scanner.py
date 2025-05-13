@@ -267,12 +267,12 @@ class CryptoYieldMonitor:
                 highyield_product_notifications.append(notification)
 
         # 发送通知
-        if stability_product_notifications:
-            logger.info(f"已添加{len(stability_product_notifications)}个稳定理财Token到通知列表")
-            self._send_product_notifications(stability_product_notifications, product_type='stable')
         if highyield_product_notifications:
             logger.info(f"已添加{len(highyield_product_notifications)}个金狗Token到通知列表")
             self._send_product_notifications(highyield_product_notifications, product_type='highyield')
+        if stability_product_notifications:
+            logger.info(f"已添加{len(stability_product_notifications)}个稳定理财Token到通知列表")
+            self._send_product_notifications(stability_product_notifications, product_type='stable')
 
     def check_tokens(self,  all_products):
         subscribed_tokens = [i['asset'] for i in self.exchange_api.get_gateio_subscribed_products() if i['asset'] != 'USDT' and float(i['curr_amount_usdt']) > 1 ]
