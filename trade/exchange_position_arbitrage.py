@@ -318,7 +318,7 @@ class ExchangeArbitrageCalculator:
 
         # 打印GateIO理财与套利情况
         print("\n【GateIO理财与套利情况】")
-        print(f"{'代币':<8} {'理财数量':<12} {'合约净仓位':<15} {'对冲差额':<12} {'当前价格':<12} {'理财金额':<10} {'年化收益率':<8} {'套利价值(USDT)':<15} {'套利收益率':<10} {'借出总额':<12} {'可借总额':<12}")
+        print(f"{'代币':<8} {'理财数量':<12} {'合约净仓位':<15} {'对冲差额':<12} {'当前价格':<12} {'理财金额':<10} {'理财年化':<8} {'合约年化':<8} {'综合年化':<8} {'套利价值(USDT)':<15} {'套利收益率':<10} {'借出总额':<12} {'可借总额':<12}")
         print("-"*165)
 
         # 计算套利情况
@@ -340,6 +340,75 @@ class ExchangeArbitrageCalculator:
                 if net_position == 0:
                     continue
 
+                # 计算合约资金费率年化收益率
+                funding_rate_apy = 0
+                total_contract_value = 0
+
+                # Binance资金费率
+                binance_positions = [p for p in self.positions['binance'] if p['token'] == token]
+                for pos in binance_positions:
+                    contracts = abs(pos['contracts'])
+                    if contracts == 0:
+                        continue
+                    
+                    # 获取资金费率信息
+                    funding_info = self.exchange_api.get_binance_futures_funding_rate(token + 'USDT')
+                    funding_rate = float(funding_info.get('fundingRate', 0)) / 100  # 转换为小数
+                    funding_interval = float(funding_info.get('fundingIntervalHours', 8))
+                    
+                    # 计算年化收益率
+                    position_value = contracts * price
+                    position_apy = funding_rate * (24/funding_interval) * 365 * 100  # 转换为百分比
+                    funding_rate_apy += position_apy * position_value
+                    total_contract_value += position_value
+
+                # Bybit资金费率
+                bybit_positions = [p for p in self.positions['bybit'] if p['token'] == token]
+                for pos in bybit_positions:
+                    contracts = abs(pos['contracts'])
+                    if contracts == 0:
+                        continue
+                    
+                    # 获取资金费率信息
+                    funding_info = self.exchange_api.get_bybit_futures_funding_rate(token + 'USDT')
+                    funding_rate = float(funding_info.get('fundingRate', 0)) / 100  # 转换为小数
+                    funding_interval = float(funding_info.get('fundingIntervalHours', 8))
+                    
+                    # 计算年化收益率
+                    position_value = contracts * price
+                    position_apy = funding_rate * (24/funding_interval) * 365 * 100  # 转换为百分比
+                    funding_rate_apy += position_apy * position_value
+                    total_contract_value += position_value
+
+                # Bitget资金费率
+                bitget_positions = [p for p in self.positions['bitget'] if p['token'] == token]
+                for pos in bitget_positions:
+                    contracts = abs(pos['contracts'])
+                    if contracts == 0:
+                        continue
+                    
+                    # 获取资金费率信息
+                    funding_info = self.exchange_api.get_bitget_futures_funding_rate(token + 'USDT')
+                    funding_rate = float(funding_info.get('fundingRate', 0)) / 100  # 转换为小数
+                    funding_interval = float(funding_info.get('fundingIntervalHours', 8))
+                    
+                    # 计算年化收益率
+                    position_value = contracts * price
+                    position_apy = funding_rate * (24/funding_interval) * 365 * 100  # 转换为百分比
+                    funding_rate_apy += position_apy * position_value
+                    total_contract_value += position_value
+
+                # 计算加权平均资金费率年化收益率
+                if total_contract_value > 0:
+                    funding_rate_apy = funding_rate_apy / total_contract_value
+
+                # 计算综合加权收益率
+                total_value = total_contract_value + earn_value
+                if total_value > 0:
+                    combined_apy = (funding_rate_apy * total_contract_value + last_rate_year * earn_value) / total_value
+                else:
+                    combined_apy = 0
+
                 # 理财多少，合约应该空多少 (净空仓)，所以理财量+净仓位应该接近0
                 hedge_diff = earn_amount + net_position
                 arbitrage_value = hedge_diff * price
@@ -353,6 +422,8 @@ class ExchangeArbitrageCalculator:
                     'price': price,
                     'earn_value': earn_value,
                     'last_rate_year': last_rate_year,
+                    'funding_rate_apy': funding_rate_apy,
+                    'combined_apy': combined_apy,
                     'arbitrage_value': arbitrage_value,
                     'arbitrage_rate': arbitrage_rate,
                     'total_lend_amount': total_lend_amount,
@@ -364,7 +435,7 @@ class ExchangeArbitrageCalculator:
 
         # 打印排序后的结果
         for pos in arbitrage_summary:
-            print(f"{pos['token']:<10} {pos['earn_amount']:<16.2f} {pos['net_position']:<20.2f} {pos['hedge_diff']:<16.2f} {pos['price']:<16.6f} {pos['earn_value']:<14.2f} {pos['last_rate_year']:<12.2f} {pos['arbitrage_value']:<19.2f} {pos['arbitrage_rate']:<16.2f} {pos['total_lend_amount']:<16.2f} {pos['total_lend_available']:<14.2f}")
+            print(f"{pos['token']:<10} {pos['earn_amount']:<16.2f} {pos['net_position']:<20.2f} {pos['hedge_diff']:<16.2f} {pos['price']:<16.6f} {pos['earn_value']:<14.2f} {pos['last_rate_year']:<12.2f} {pos['funding_rate_apy']:<12.2f} {pos['combined_apy']:<12.2f} {pos['arbitrage_value']:<19.2f} {pos['arbitrage_rate']:<16.2f} {pos['total_lend_amount']:<16.2f} {pos['total_lend_available']:<14.2f}")
             # 更新套利结果和总价值
             arbitrage_results.append({
                 'token': pos['token'],
@@ -386,24 +457,12 @@ class ExchangeArbitrageCalculator:
                     continue
 
                 price = self.token_prices.get(token, 0)
-                # arbitrage_value = net_position * price
                 arbitrage_value = 0
                 try:
-                    print(f"{token:<10} {0.0:<16.2f} {net_position:<20.2f} {-net_position:<16.2f} {price:<16.6f} {0.0:<16.2f} {0.0:<14.2f} {arbitrage_value:<15.2f} {0.0:<14.2f} {0.0:<16.2f} {0.0:<16.2f}")
+                    print(f"{token:<10} {0.0:<16.2f} {net_position:<20.2f} {-net_position:<16.2f} {price:<16.6f} {0.0:<16.2f} {0.0:<14.2f} {0.0:<12.2f} {0.0:<12.2f} {arbitrage_value:<15.2f} {0.0:<14.2f} {0.0:<16.2f} {0.0:<16.2f}")
                 except Exception as e:
                     logger.error(f"print failed, info: {token} {net_position} {price} {arbitrage_value}", exc_info=True)
                     continue
-
-                # arbitrage_results.append({
-                #     'token': token,
-                #     'earn_amount': 0,
-                #     'net_position': net_position,
-                #     'hedge_diff': net_position,
-                #     'price': price,
-                #     'arbitrage_value': arbitrage_value
-                # })
-                #
-                # total_arbitrage_value += arbitrage_value
 
         # 打印套利总和
         print("\n【套利汇总】")
