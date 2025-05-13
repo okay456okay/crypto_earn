@@ -316,8 +316,9 @@ class HedgeTrader:
                     
                     # 每10次更新或者至少间隔5秒记录一次详细日志
                     if update_count % 10 == 0 or (current_time - last_log_time) >= 5:
-                        logger.debug(f"价格检查 - Gate.io卖1: {float(gateio_ask):.8f} vs Bitget买1: {float(bitget_bid):.8f}, "
-                                   f"价差: {float(spread_percent) * 100:.4f}%, 最小要求: {self.min_spread * 100:.4f}%")
+                        logger.debug(f"价格检查 - Gate.io卖1: {float(gateio_ask):.8f}(量:{float(gateio_ask_volume):.8f}) vs Bitget买1: {float(bitget_bid):.8f}(量:{float(bitget_bid_volume):.8f}), "
+                                   f"价差: {float(spread_percent) * 100:.4f}%, 最小要求: {self.min_spread * 100:.4f}%, "
+                                   f"要求深度: {required_depth:.8f}")
                         last_log_time = current_time
                     
                     # 检查价差是否有效（防止异常价格导致错误决策）
