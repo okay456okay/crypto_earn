@@ -397,7 +397,7 @@ class HedgeTrader:
                             return None, None
                         
                         # 获取现货订单的实际成交结果
-                        spot_filled_amount = float(spot_order.get('filled', 0))
+                        spot_filled_amount = float(spot_order.get('info', {}).get('filled_amount',0))
                         if spot_filled_amount <= 0:
                             logger.error(f"Gate.io订单成交量为0，交易可能未成功")
                             return None, None

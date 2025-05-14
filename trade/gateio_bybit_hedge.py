@@ -526,7 +526,7 @@ class HedgeTrader:
                 logger.debug(f"订单执行结果 - Gate.io现货订单: {spot_order}")
                 logger.debug(f"订单执行结果 - Bybit合约订单: {contract_order}")
                 # 获取现货订单的实际成交结果
-                filled_amount = float(spot_order.get('filled', 0))
+                filled_amount = float(spot_order.get('info', {}).get('filled_amount',0))
                 if filled_amount <= 0:
                     logger.warning("Gate.io订单似乎未成交，将从balance中获取实际成交量")
                     before_balance = await self.gateio.fetch_balance()

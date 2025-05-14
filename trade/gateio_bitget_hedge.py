@@ -487,7 +487,7 @@ class HedgeTrader:
 
                         # 提取订单执行结果
                         # 获取现货订单的实际成交结果
-                        filled_amount = float(spot_order.get('filled', 0))
+                        filled_amount = float(spot_order.get('info', {}).get('filled_amount',0))
                         fees = spot_order.get('fees', [])
                         base_fee = sum(float(fee['cost']) for fee in fees if fee['currency'] == base_currency)
                         actual_position = filled_amount - base_fee
