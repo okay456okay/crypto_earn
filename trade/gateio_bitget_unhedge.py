@@ -289,7 +289,7 @@ class UnhedgeTrader:
                 self.completed_trades += 1
 
                 # 检查平仓后的持仓情况
-                await self.check_positions()
+                # await self.check_positions()
 
                 return spot_order, contract_order
 
