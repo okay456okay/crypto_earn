@@ -161,10 +161,10 @@ class UnhedgeTrader:
             spot_position = self.gateio_balance.get(base_currency, {}).get('total', 0)
 
             contract_position = self.get_contract_position()
-            logger.info(f"Bitget合约空单持仓: {contract_position} {base_currency}")
+            # logger.info(f"Bitget合约空单持仓: {contract_position} {base_currency}")
 
-            logger.info(f"当前持仓 - Gate.io现货: {spot_position} {base_currency}, "
-                        f"Bitget合约空单: {contract_position} {base_currency}")
+            # logger.info(f"当前持仓 - Gate.io现货: {spot_position} {base_currency}, "
+            #             f"Bitget合约空单: {contract_position} {base_currency}")
 
         except Exception as e:
             logger.error(f"检查持仓时出错: {str(e)}")
@@ -242,7 +242,7 @@ class UnhedgeTrader:
             )
 
             # 始终打印价格检查信息
-            logger.info(
+            logger.debug(
                 f"{self.symbol} "
                 f"价格检查 - Gate.io买1: {float(gateio_bid):.6f} (量: {float(gateio_bid_volume):.6f}), "
                 f"Bitget卖1: {float(bitget_ask):.6f} (量: {float(bitget_ask_volume):.6f}), "
@@ -607,8 +607,8 @@ async def main():
                     # 执行交易
                     spot_order, contract_order = await trader.execute_trade_if_conditions_met()
                     if spot_order is None or contract_order is None:
-                        logger.warning(f"交易条件不满足，等待下一次机会")
-                        await asyncio.sleep(1)  # 等待1秒后继续
+                        logger.debug(f"交易条件不满足，等待下一次机会")
+                        await asyncio.sleep(0.1)  # 等待1秒后继续
                         continue
                         
                     logger.info(f"第{trader.completed_trades}/{total_count}次交易完成")
