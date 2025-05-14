@@ -567,7 +567,7 @@ async def main():
             attempt_count = 0
             while trader.completed_trades < total_count:
                 attempt_count += 1
-                logger.info(f"开始第{attempt_count}次尝试 (已完成{trader.completed_trades}/{total_count}次交易)")
+                # logger.info(f"开始第{attempt_count}次尝试 (已完成{trader.completed_trades}/{total_count}次交易)")
                 
                 try:
                     # 每次交易前重新检查持仓，确保有足够的资产
@@ -619,7 +619,7 @@ async def main():
                             logger.info(f"已完成 {trader.completed_trades}/{total_count} 次交易，但无法继续执行剩余交易")
                             break
                         
-                        logger.info(f"等待3秒后继续下一次交易...")
+                        logger.info(f"已完成 {trader.completed_trades}/{total_count} 次交易，等待3秒后继续下一次交易...")
                         await asyncio.sleep(3)
                 
                 except Exception as e:
