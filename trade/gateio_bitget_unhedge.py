@@ -197,7 +197,7 @@ class UnhedgeTrader:
                                 logger.debug(f"收到Bitget订单簿更新")
 
                             if self.orderbooks['gateio'] and self.orderbooks['bitget']:
-                                await self.check_spread_from_orderbooks()
+                                await self.execute_trade_if_conditions_met()
 
                         except Exception as e:
                             logger.error(f"处理订单簿数据时出错: {str(e)}")
@@ -218,8 +218,8 @@ class UnhedgeTrader:
                 self.bitget.close()
             )
 
-    async def check_spread_from_orderbooks(self):
-        """从订单簿数据中检查价差"""
+    async def execute_trade_if_conditions_met(self):
+        """检查价差条件并执行交易"""
         try:
             gateio_ob = self.orderbooks['gateio']
             bitget_ob = self.orderbooks['bitget']
@@ -243,108 +243,57 @@ class UnhedgeTrader:
                 bitget_ask_volume >= min_required_volume
             )
 
-            spread_data = {
-                'spread_percent': float(spread_percent),
-                'gateio_bid': float(gateio_bid),
-                'bitget_ask': float(bitget_ask),
-                'gateio_bid_volume': float(gateio_bid_volume),
-                'bitget_ask_volume': float(bitget_ask_volume),
-                'min_required_volume': float(min_required_volume),
-                'volume_condition_met': volume_condition_met
-            }
-            await self.price_updates.put(spread_data)
+            logger.debug(
+                f"{self.symbol}"
+                f"价格检查 - Gate.io买1: {float(gateio_bid)} (量: {float(gateio_bid_volume)}), "
+                f"Bitget卖1: {float(bitget_ask)} (量: {float(bitget_ask_volume)}), "
+                f"价差: {float(spread_percent) * 100:.4f}%")
 
-        except Exception as e:
-            logger.error(f"{self.symbol}检查订单簿价差时出错: {str(e)}")
+            if spread_percent >= self.min_spread and volume_condition_met:
+                logger.info(f"{self.symbol}交易条件满足：价差 {float(spread_percent) * 100:.4f}% >= {self.min_spread * 100:.4f}%, "
+                          f"Gate.io买1量 {float(gateio_bid_volume):.6f} >= {float(min_required_volume):.6f}, "
+                          f"Bitget卖1量 {float(bitget_ask_volume):.6f} >= {float(min_required_volume):.6f}")
 
-    async def wait_for_spread(self):
-        """等待价差达到要求"""
-        subscription_task = None
-        try:
-            subscription_task = asyncio.create_task(self.subscribe_orderbooks())
+                # 准备下单参数
+                trade_amount = self.spot_amount
+                contract_amount = self.bitget.amount_to_precision(self.contract_symbol, trade_amount)
 
-            while True:
-                try:
-                    spread_data = await asyncio.wait_for(
-                        self.price_updates.get(),
-                        timeout=10
+                # 执行交易
+                spot_order, contract_order = await asyncio.gather(
+                    self.gateio.create_market_sell_order(
+                        symbol=self.symbol,
+                        amount=trade_amount
+                    ),
+                    self.bitget.create_market_buy_order(
+                        symbol=self.contract_symbol,
+                        amount=contract_amount,
+                        params={"reduceOnly": True}  # 确保是平仓操作
                     )
-
-                    spread_percent = spread_data['spread_percent']
-                    volume_condition_met = spread_data['volume_condition_met']
-
-                    logger.debug(
-                        f"{self.symbol}"
-                        f"价格检查 - Gate.io买1: {spread_data['gateio_bid']} (量: {spread_data['gateio_bid_volume']}), "
-                        f"Bitget卖1: {spread_data['bitget_ask']} (量: {spread_data['bitget_ask_volume']}), "
-                        f"价差: {spread_percent * 100:.4f}%")
-
-                    if spread_percent >= self.min_spread and volume_condition_met:
-                        logger.info(f"{self.symbol}交易条件满足：价差 {spread_percent * 100:.4f}% >= {self.min_spread * 100:.4f}%, "
-                                  f"Gate.io买1量 {spread_data['gateio_bid_volume']:.6f} >= {spread_data['min_required_volume']:.6f}, "
-                                  f"Bitget卖1量 {spread_data['bitget_ask_volume']:.6f} >= {spread_data['min_required_volume']:.6f}")
-                        return spread_data
-
-                    logger.debug(f"{self.symbol}交易条件不满足: 价差 {spread_percent * 100:.4f}% < {self.min_spread * 100:.4f}% "
-                               f"或数量不足")
-
-                except asyncio.TimeoutError:
-                    logger.warning(f"{self.symbol}等待价差数据超时，重新订阅订单簿")
-                    if subscription_task:
-                        subscription_task.cancel()
-                    subscription_task = asyncio.create_task(self.subscribe_orderbooks())
-
-        except Exception as e:
-            logger.error(f"{self.symbol}等待价差时出错: {str(e)}")
-            raise
-        finally:
-            self.ws_running = False
-            if subscription_task:
-                subscription_task.cancel()
-
-    async def execute_unhedge_trade(self):
-        """执行平仓交易"""
-        try:
-            # 等待价差满足条件
-            spread_data = await self.wait_for_spread()
-
-            # 准备下单参数
-            trade_amount = self.spot_amount
-            contract_amount = self.bitget.amount_to_precision(self.contract_symbol, trade_amount)
-
-            # 执行交易
-            spot_order, contract_order = await asyncio.gather(
-                self.gateio.create_market_sell_order(
-                    symbol=self.symbol,
-                    amount=trade_amount
-                ),
-                self.bitget.create_market_buy_order(
-                    symbol=self.contract_symbol,
-                    amount=contract_amount,
-                    params={"reduceOnly": True}  # 确保是平仓操作
                 )
-            )
 
-            base_currency = self.symbol.split('/')[0]
-            logger.info(f"计划平仓数量: {trade_amount} {base_currency}")
-            logger.info(f"在Gate.io市价卖出 {trade_amount} {base_currency}")
-            logger.info(f"在Bitget市价平空单 {contract_amount} {base_currency}")
+                base_currency = self.symbol.split('/')[0]
+                logger.info(f"计划平仓数量: {trade_amount} {base_currency}")
+                logger.info(f"在Gate.io市价卖出 {trade_amount} {base_currency}")
+                logger.info(f"在Bitget市价平空单 {contract_amount} {base_currency}")
 
-            # 检查交易结果
-            await self.verify_trade_result(spot_order, contract_order)
-            
-            # 成功执行一次交易，更新计数器
-            self.completed_trades += 1
+                # 检查交易结果
+                await self.verify_trade_result(spot_order, contract_order)
+                
+                # 成功执行一次交易，更新计数器
+                self.completed_trades += 1
 
-            # 检查平仓后的持仓情况
-            await self.check_positions()
+                # 检查平仓后的持仓情况
+                await self.check_positions()
 
-            return spot_order, contract_order
+                return spot_order, contract_order
+
+            logger.debug(f"{self.symbol}交易条件不满足: 价差 {float(spread_percent) * 100:.4f}% < {self.min_spread * 100:.4f}% "
+                       f"或数量不足")
 
         except Exception as e:
-            logger.error(f"执行平仓交易时出错: {str(e)}", exc_info=True)
+            logger.error(f"执行交易时出错: {str(e)}")
             raise
-            
+
     async def verify_trade_result(self, spot_order, contract_order):
         """验证交易结果"""
         try:
@@ -645,7 +594,7 @@ async def main():
                     return 1
                 
                 # 执行交易
-                spot_order, contract_order = await trader.execute_unhedge_trade()
+                spot_order, contract_order = await trader.execute_trade_if_conditions_met()
                 if not (spot_order and contract_order):
                     logger.error(f"第{i+1}次交易执行失败，订单结果无效")
                     # 打印交易摘要并退出

@@ -507,7 +507,7 @@ class HedgeTrader:
                     # await asyncio.sleep(1)
                 
                 # 短暂等待后继续轮询，降低CPU占用
-                await asyncio.sleep(0.01)  # 10毫秒轮询一次，比之前的50毫秒更快
+                await asyncio.sleep(0.3)  # 10毫秒轮询一次，比之前的50毫秒更快
                 
         except asyncio.CancelledError:
             logger.info("交易监控任务被取消")

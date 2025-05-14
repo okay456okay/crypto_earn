@@ -97,7 +97,6 @@ class UnhedgeTrader:
 
         # 用于控制WebSocket订阅
         self.ws_running = False
-        self.price_updates = asyncio.Queue()
         
         # 交易统计信息
         self.completed_trades = 0
@@ -469,7 +468,7 @@ class UnhedgeTrader:
 
     async def execute_unhedge_trade(self):
         """
-        执行平仓交易
+        执行平仓交易 - 合并了价差检查和交易执行逻辑
         
         Returns:
             Tuple[Dict, Dict, bool]: (现货订单信息, 合约订单信息, 交易是否成功)
@@ -479,138 +478,186 @@ class UnhedgeTrader:
             if not await self.verify_positions_for_trade():
                 logger.error("持仓不满足交易条件，无法执行交易")
                 return None, None, False
-                
-            # 等待价差满足条件
-            logger.info(f"等待价差满足条件: 最低要求 {self.min_spread * 100:.4f}%")
-            spread_data = await self.wait_for_spread()
-            
-            # 记录当前价格情况
-            logger.debug(f"当前市场情况 - Gate.io买1价: {spread_data['gateio_bid']}, "
-                        f"Binance卖1价: {spread_data['binance_ask']}, "
-                        f"价差: {spread_data['spread_percent'] * 100:.4f}%")
 
-            # 准备下单参数
-            trade_amount = self.spot_amount
-            contract_amount = self.binance.amount_to_precision(self.contract_symbol, trade_amount)
+            # 订阅订单簿
+            self.ws_running = True
+            subscription_task = asyncio.create_task(self.subscribe_orderbooks())
             
-            logger.debug(f"下单参数 - 现货卖出数量: {trade_amount}, 合约平仓数量: {contract_amount}")
-
-            # 记录下单开始时间
-            order_start_time = time.time()
-            
-            # 执行交易
             try:
-                spot_order, contract_order = await asyncio.gather(
-                    self.gateio.create_market_sell_order(
-                        symbol=self.symbol,
-                        amount=trade_amount
-                    ),
-                    self.binance.create_market_buy_order(
-                        symbol=self.contract_symbol,
-                        amount=contract_amount,
-                        params={
-                            "positionSide": "SHORT"  # 指定是平空单
-                        }
-                    )
-                )
-                
-                # 记录下单耗时
-                order_time = time.time() - order_start_time
-                logger.debug(f"下单总耗时: {order_time:.3f}秒")
-                
-                # 记录原始订单响应
-                logger.debug(f"Gate.io订单原始响应: {spot_order}")
-                logger.debug(f"Binance订单原始响应: {contract_order}")
-                
+                while self.ws_running:
+                    # 等待两个交易所的订单簿数据都更新
+                    if not self.orderbooks['gateio'] or not self.orderbooks['binance']:
+                        await asyncio.sleep(0.1)
+                        continue
+
+                    # 检查价差和深度
+                    gateio_ob = self.orderbooks['gateio']
+                    binance_ob = self.orderbooks['binance']
+
+                    gateio_bid = Decimal(str(gateio_ob['bids'][0][0]))  # 现货卖出价(买1)
+                    gateio_bid_volume = Decimal(str(gateio_ob['bids'][0][1]))
+
+                    binance_ask = Decimal(str(binance_ob['asks'][0][0]))  # 合约买入价(卖1)
+                    binance_ask_volume = Decimal(str(binance_ob['asks'][0][1]))
+
+                    spread = gateio_bid - binance_ask
+                    spread_percent = spread / binance_ask
+
+                    # 检查深度是否满足要求
+                    min_required_volume = Decimal(str(self.spot_amount)) * Decimal(str(self.depth_multiplier))
+                    depth_satisfied = gateio_bid_volume >= min_required_volume and binance_ask_volume >= min_required_volume
+
+                    logger.debug(
+                        f"{self.symbol}"
+                        f"价格检查 - Gate.io买1: {float(gateio_bid)} (量: {float(gateio_bid_volume)}), "
+                        f"Binance卖1: {float(binance_ask)} (量: {float(binance_ask_volume)}), "
+                        f"价差: {float(spread_percent) * 100:.4f}%")
+
+                    if spread_percent >= self.min_spread and depth_satisfied:
+                        logger.info(f"{self.symbol}交易条件满足：价差 {float(spread_percent) * 100:.4f}% >= {self.min_spread * 100:.4f}%, "
+                                  f"Gate.io买1量 {float(gateio_bid_volume):.6f} >= {float(min_required_volume):.6f}, "
+                                  f"Binance卖1量 {float(binance_ask_volume):.6f} >= {float(min_required_volume):.6f}")
+                        
+                        # 准备下单参数
+                        trade_amount = self.spot_amount
+                        contract_amount = self.binance.amount_to_precision(self.contract_symbol, trade_amount)
+                        
+                        logger.debug(f"下单参数 - 现货卖出数量: {trade_amount}, 合约平仓数量: {contract_amount}")
+
+                        # 记录下单开始时间
+                        order_start_time = time.time()
+                        
+                        # 执行交易
+                        try:
+                            spot_order, contract_order = await asyncio.gather(
+                                self.gateio.create_market_sell_order(
+                                    symbol=self.symbol,
+                                    amount=trade_amount
+                                ),
+                                self.binance.create_market_buy_order(
+                                    symbol=self.contract_symbol,
+                                    amount=contract_amount,
+                                    params={
+                                        "positionSide": "SHORT"  # 指定是平空单
+                                    }
+                                )
+                            )
+                            
+                            # 记录下单耗时
+                            order_time = time.time() - order_start_time
+                            logger.debug(f"下单总耗时: {order_time:.3f}秒")
+                            
+                            # 记录原始订单响应
+                            logger.debug(f"Gate.io订单原始响应: {spot_order}")
+                            logger.debug(f"Binance订单原始响应: {contract_order}")
+                            
+                        except Exception as e:
+                            logger.error(f"下单过程出错: {str(e)}")
+                            import traceback
+                            logger.debug(f"下单错误的堆栈:\n{traceback.format_exc()}")
+                            return None, None, False
+
+                        base_currency = self.symbol.split('/')[0]
+                        logger.info(f"计划平仓数量: {trade_amount} {base_currency}")
+                        logger.info(f"在Gate.io市价卖出 {trade_amount} {base_currency}")
+                        logger.info(f"在Binance市价平空单 {contract_amount} {base_currency}")
+
+                        # 等待一小段时间确保订单状态已更新
+                        await asyncio.sleep(1)
+
+                        # 获取实际成交结果
+                        try:
+                            filled_amount = float(spot_order.get('filled', 0))
+                            spot_price = float(spot_order.get('price', 0)) if spot_order.get('price') else None
+                            fees = spot_order.get('fees', [])
+                            quote_fee = sum(float(fee.get('cost', 0)) for fee in fees if fee.get('currency') == 'USDT')
+
+                            logger.info(f"Gate.io实际成交数量: {filled_amount} {base_currency}, "
+                                        f"平均价格: {spot_price:.5f}, 手续费: {quote_fee} USDT")
+                                        
+                            # 记录合约成交数据
+                            contract_filled = float(contract_order.get('filled', 0))
+                            contract_price = float(contract_order.get('price', 0)) if contract_order.get('price') else None
+                            contract_fees = contract_order.get('fees', [])
+                            contract_fee = sum(float(fee.get('cost', 0)) for fee in contract_fees)
+                            contract_fee_currency = contract_fees[0].get('currency') if contract_fees else 'unknown'
+                            
+                            logger.info(f"Binance合约实际平仓数量: {contract_filled} {base_currency}, "
+                                        f"平均价格: {contract_price:.5f}, 手续费: {contract_fee} {contract_fee_currency}")
+
+                            # 计算滑点
+                            if spot_price and float(gateio_bid):
+                                spot_slippage = (spot_price - float(gateio_bid)) / float(gateio_bid)
+                                logger.info(f"Gate.io滑点: 预期价格 {float(gateio_bid):.6f}, "
+                                           f"实际成交价 {spot_price:.6f}, 滑点率 {spot_slippage * 100:.4f}%")
+
+                            if contract_price and float(binance_ask):
+                                contract_slippage = (contract_price - float(binance_ask)) / float(binance_ask)
+                                logger.info(f"Binance滑点: 预期价格 {float(binance_ask):.6f}, "
+                                           f"实际成交价 {contract_price:.6f}, 滑点率 {contract_slippage * 100:.4f}%")
+
+                            # 计算实际价差
+                            if spot_price and contract_price:
+                                actual_spread = (spot_price - contract_price) / contract_price
+                                spread_loss = float(spread_percent) - actual_spread
+                                logger.info(f"价差滑点: 预期价差 {float(spread_percent) * 100:.4f}%, "
+                                           f"实际价差 {actual_spread * 100:.4f}%, 价差损失 {spread_loss * 100:.4f}%")
+                                        
+                        except Exception as e:
+                            logger.error(f"获取成交结果时出错: {str(e)}", exc_info=True)
+                            return None, None, False
+
+                        # 验证订单结果
+                        is_successful = await self.verify_order_results(spot_order, contract_order)
+                        
+                        if not is_successful:
+                            logger.error("交易结果验证失败")
+                            return spot_order, contract_order, False
+
+                        # 检查平仓后的持仓情况
+                        await self.check_positions()
+                        
+                        # 更新交易统计
+                        self.completed_trades += 1
+                        self.trade_results.append({
+                            'time': time.strftime('%Y-%m-%d %H:%M:%S'),
+                            'spot_filled': float(spot_order.get('filled', 0)),
+                            'contract_filled': float(contract_order.get('filled', 0)),
+                            'spot_price': spot_price,
+                            'contract_price': contract_price,
+                            'spot_fee': quote_fee if 'quote_fee' in locals() else None,
+                            'trade_amount': trade_amount
+                        })
+                        
+                        logger.info(f"交易成功完成 - 第 {self.completed_trades} 次交易")
+                        return spot_order, contract_order, True
+
+                    if not depth_satisfied:
+                        logger.debug(f"{self.symbol}深度条件不满足: 需要 {float(min_required_volume):.6f}, "
+                                   f"Gate.io买1量: {float(gateio_bid_volume):.6f}, "
+                                   f"Binance卖1量: {float(binance_ask_volume):.6f}")
+                    else:
+                        logger.debug(f"{self.symbol}价差条件不满足: {float(spread_percent) * 100:.4f}% < {self.min_spread * 100:.4f}%")
+
+                    # 短暂等待后继续检查
+                    await asyncio.sleep(0.1)
+
             except Exception as e:
-                logger.error(f"下单过程出错: {str(e)}")
+                logger.error(f"执行平仓交易时出错: {str(e)}")
                 import traceback
-                logger.debug(f"下单错误的堆栈:\n{traceback.format_exc()}")
-                return None, None, False
-
-            base_currency = self.symbol.split('/')[0]
-            logger.info(f"计划平仓数量: {trade_amount} {base_currency}")
-            logger.info(f"在Gate.io市价卖出 {trade_amount} {base_currency}")
-            logger.info(f"在Binance市价平空单 {contract_amount} {base_currency}")
-
-            # 等待一小段时间确保订单状态已更新
-            await asyncio.sleep(1)
-
-            # 获取实际成交结果
-            try:
-                filled_amount = float(spot_order.get('filled', 0))
-                spot_price = float(spot_order.get('price', 0)) if spot_order.get('price') else None
-                fees = spot_order.get('fees', [])
-                quote_fee = sum(float(fee.get('cost', 0)) for fee in fees if fee.get('currency') == 'USDT')
-
-                logger.info(f"Gate.io实际成交数量: {filled_amount} {base_currency}, "
-                            f"平均价格: {spot_price:.5f}, 手续费: {quote_fee} USDT")
-                            
-                # 记录合约成交数据
-                contract_filled = float(contract_order.get('filled', 0))
-                contract_price = float(contract_order.get('price', 0)) if contract_order.get('price') else None
-                contract_fees = contract_order.get('fees', [])
-                contract_fee = sum(float(fee.get('cost', 0)) for fee in contract_fees)
-                contract_fee_currency = contract_fees[0].get('currency') if contract_fees else 'unknown'
-                
-                logger.info(f"Binance合约实际平仓数量: {contract_filled} {base_currency}, "
-                            f"平均价格: {contract_price:.5f}, 手续费: {contract_fee} {contract_fee_currency}")
-
-                # 计算滑点
-                if spot_price and spread_data['gateio_bid']:
-                    spot_slippage = (spot_price - spread_data['gateio_bid']) / spread_data['gateio_bid']
-                    logger.info(f"Gate.io滑点: 预期价格 {spread_data['gateio_bid']:.6f}, "
-                               f"实际成交价 {spot_price:.6f}, 滑点率 {spot_slippage * 100:.4f}%")
-
-                if contract_price and spread_data['binance_ask']:
-                    contract_slippage = (contract_price - spread_data['binance_ask']) / spread_data['binance_ask']
-                    logger.info(f"Binance滑点: 预期价格 {spread_data['binance_ask']:.6f}, "
-                               f"实际成交价 {contract_price:.6f}, 滑点率 {contract_slippage * 100:.4f}%")
-
-                # 计算实际价差
-                if spot_price and contract_price:
-                    actual_spread = (spot_price - contract_price) / contract_price
-                    spread_loss = spread_data['spread_percent'] - actual_spread
-                    logger.info(f"价差滑点: 预期价差 {spread_data['spread_percent'] * 100:.4f}%, "
-                               f"实际价差 {actual_spread * 100:.4f}%, 价差损失 {spread_loss * 100:.4f}%")
-                            
-            except Exception as e:
-                logger.error(f"获取成交结果时出错: {str(e)}", exc_info=True)
-                return None, None, False
-
-                            
-            # 验证订单结果
-            is_successful = await self.verify_order_results(spot_order, contract_order)
-            
-            if not is_successful:
-                logger.error("交易结果验证失败")
-                return spot_order, contract_order, False
-
-            # 检查平仓后的持仓情况
-            await self.check_positions()
-            
-            # 更新交易统计
-            self.completed_trades += 1
-            self.trade_results.append({
-                'time': time.strftime('%Y-%m-%d %H:%M:%S'),
-                'spot_filled': float(spot_order.get('filled', 0)),
-                'contract_filled': float(contract_order.get('filled', 0)),
-                'spot_price': spot_price,
-                'contract_price': contract_price,
-                'spot_fee': quote_fee if 'quote_fee' in locals() else None,
-                'trade_amount': trade_amount
-            })
-            
-            logger.info(f"交易成功完成 - 第 {self.completed_trades} 次交易")
-            return spot_order, contract_order, True
+                logger.error(f"执行平仓交易的错误堆栈:\n{traceback.format_exc()}")
+                raise
+            finally:
+                self.ws_running = False
+                if subscription_task:
+                    subscription_task.cancel()
 
         except Exception as e:
             logger.error(f"执行平仓交易时出错: {str(e)}")
-            # 记录详细的错误信息
             import traceback
             logger.error(f"执行平仓交易的错误堆栈:\n{traceback.format_exc()}")
             raise
-            
+
     def get_trade_summary(self):
         """
         获取交易摘要信息
