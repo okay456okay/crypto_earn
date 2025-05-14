@@ -196,9 +196,6 @@ class UnhedgeTrader:
                                 self.orderbooks['bitget'] = ob
                                 logger.debug(f"收到Bitget订单簿更新")
 
-                            if self.orderbooks['gateio'] and self.orderbooks['bitget']:
-                                await self.execute_trade_if_conditions_met()
-
                         except Exception as e:
                             logger.error(f"处理订单簿数据时出错: {str(e)}")
 
@@ -225,6 +222,7 @@ class UnhedgeTrader:
             bitget_ob = self.orderbooks['bitget']
 
             if not gateio_ob or not bitget_ob:
+                logger.debug("等待订单簿数据更新...")
                 return None, None
 
             gateio_bid = Decimal(str(gateio_ob['bids'][0][0]))  # 现货卖出价(买1)
@@ -561,70 +559,83 @@ async def main():
         
         logger.info(f"计划执行交易次数: {total_count}次")
         
-        # 执行指定次数的交易
-        attempt_count = 0
-        while trader.completed_trades < total_count:
-            attempt_count += 1
-            logger.info(f"开始第{attempt_count}次尝试 (已完成{trader.completed_trades}/{total_count}次交易)")
-            
-            try:
-                # 每次交易前重新检查持仓，确保有足够的资产
-                await trader.check_positions()
-                base_currency = args.symbol.split('/')[0]
-                current_amount = float(trader.gateio_balance.get(base_currency, {}).get('free', 0))
+        # 启动订单簿订阅
+        subscription_task = asyncio.create_task(trader.subscribe_orderbooks())
+        
+        try:
+            # 执行指定次数的交易
+            attempt_count = 0
+            while trader.completed_trades < total_count:
+                attempt_count += 1
+                logger.info(f"开始第{attempt_count}次尝试 (已完成{trader.completed_trades}/{total_count}次交易)")
                 
-                if current_amount < args.amount:
-                    # 如果现货持仓不足，尝试从理财中赎回
-                    need_spot_amount = args.amount - current_amount + 0.1
-                    try:
-                        logger.info(f"Gate.io {base_currency}余额不足，从理财中赎回 {need_spot_amount} {base_currency}")
-                        redeem_earn(base_currency, need_spot_amount)
-                        # 再检查余额是否够
-                        await trader.check_positions()
-                        current_amount = float(trader.gateio_balance.get(base_currency, {}).get('free', 0))
-                        if current_amount < args.amount:
-                            raise Exception(f"Gate.io {base_currency}余额不足且赎回后仍不足，需要 {args.amount}，"
-                                          f"当前可用 {current_amount}")
-                    except Exception as e:
-                        logger.error(f"理财赎回失败: {str(e)}")
+                try:
+                    # 每次交易前重新检查持仓，确保有足够的资产
+                    await trader.check_positions()
+                    base_currency = args.symbol.split('/')[0]
+                    current_amount = float(trader.gateio_balance.get(base_currency, {}).get('free', 0))
+                    
+                    if current_amount < args.amount:
+                        # 如果现货持仓不足，尝试从理财中赎回
+                        need_spot_amount = args.amount - current_amount + 0.1
+                        try:
+                            logger.info(f"Gate.io {base_currency}余额不足，从理财中赎回 {need_spot_amount} {base_currency}")
+                            redeem_earn(base_currency, need_spot_amount)
+                            # 再检查余额是否够
+                            await trader.check_positions()
+                            current_amount = float(trader.gateio_balance.get(base_currency, {}).get('free', 0))
+                            if current_amount < args.amount:
+                                raise Exception(f"Gate.io {base_currency}余额不足且赎回后仍不足，需要 {args.amount}，"
+                                              f"当前可用 {current_amount}")
+                        except Exception as e:
+                            logger.error(f"理财赎回失败: {str(e)}")
+                            # 打印交易摘要并退出
+                            trader.print_trade_summary(total_count, initial_position)
+                            return 1
+                    
+                    # 检查合约持仓是否足够
+                    contract_position = trader.get_contract_position()
+                    if contract_position < args.amount:
+                        logger.error(f"Bitget合约空单持仓不足，需要 {args.amount}，当前持仓 {contract_position}")
                         # 打印交易摘要并退出
                         trader.print_trade_summary(total_count, initial_position)
                         return 1
+                    
+                    # 执行交易
+                    spot_order, contract_order = await trader.execute_trade_if_conditions_met()
+                    if spot_order is None or contract_order is None:
+                        logger.warning(f"第{attempt_count}次尝试交易条件不满足，等待下一次机会")
+                        await asyncio.sleep(1)  # 等待1秒后继续
+                        continue
+                        
+                    logger.info(f"第{trader.completed_trades}/{total_count}次交易完成")
+                    
+                    # 如果不是最后一次交易，等待几秒后再继续
+                    if trader.completed_trades < total_count:
+                        # 检查是否还有足够的合约持仓继续交易
+                        contract_position = trader.get_contract_position()
+                        if contract_position < args.amount:
+                            logger.warning(f"合约持仓不足以继续交易，当前持仓: {contract_position}，需要: {args.amount}")
+                            logger.info(f"已完成 {trader.completed_trades}/{total_count} 次交易，但无法继续执行剩余交易")
+                            break
+                        
+                        logger.info(f"等待3秒后继续下一次交易...")
+                        await asyncio.sleep(3)
                 
-                # 检查合约持仓是否足够
-                contract_position = trader.get_contract_position()
-                if contract_position < args.amount:
-                    logger.error(f"Bitget合约空单持仓不足，需要 {args.amount}，当前持仓 {contract_position}")
+                except Exception as e:
+                    logger.error(f"执行第{attempt_count}次尝试过程中出错: {str(e)}")
                     # 打印交易摘要并退出
                     trader.print_trade_summary(total_count, initial_position)
                     return 1
-                
-                # 执行交易
-                spot_order, contract_order = await trader.execute_trade_if_conditions_met()
-                if spot_order is None or contract_order is None:
-                    logger.warning(f"第{attempt_count}次尝试交易条件不满足，等待下一次机会")
-                    await asyncio.sleep(1)  # 等待1秒后继续
-                    continue
-                    
-                logger.info(f"第{trader.completed_trades}/{total_count}次交易完成")
-                
-                # 如果不是最后一次交易，等待几秒后再继续
-                if trader.completed_trades < total_count:
-                    # 检查是否还有足够的合约持仓继续交易
-                    contract_position = trader.get_contract_position()
-                    if contract_position < args.amount:
-                        logger.warning(f"合约持仓不足以继续交易，当前持仓: {contract_position}，需要: {args.amount}")
-                        logger.info(f"已完成 {trader.completed_trades}/{total_count} 次交易，但无法继续执行剩余交易")
-                        break
-                    
-                    logger.info(f"等待3秒后继续下一次交易...")
-                    await asyncio.sleep(3)
-            
-            except Exception as e:
-                logger.error(f"执行第{attempt_count}次尝试过程中出错: {str(e)}")
-                # 打印交易摘要并退出
-                trader.print_trade_summary(total_count, initial_position)
-                return 1
+        finally:
+            # 停止订单簿订阅
+            trader.ws_running = False
+            if subscription_task:
+                subscription_task.cancel()
+                try:
+                    await subscription_task
+                except asyncio.CancelledError:
+                    pass
         
         logger.info("所有计划交易执行完毕!")
         trader.print_trade_summary(total_count, initial_position)
