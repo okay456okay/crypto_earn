@@ -161,10 +161,10 @@ class UnhedgeTrader:
             spot_position = self.gateio_balance.get(base_currency, {}).get('total', 0)
 
             contract_position = self.get_contract_position()
-            # logger.info(f"Bitget合约空单持仓: {contract_position} {base_currency}")
+            logger.info(f"Bitget合约空单持仓: {contract_position} {base_currency}")
 
-            # logger.info(f"当前持仓 - Gate.io现货: {spot_position} {base_currency}, "
-            #             f"Bitget合约空单: {contract_position} {base_currency}")
+            logger.info(f"当前持仓 - Gate.io现货: {spot_position} {base_currency}, "
+                        f"Bitget合约空单: {contract_position} {base_currency}")
 
         except Exception as e:
             logger.error(f"检查持仓时出错: {str(e)}")
