@@ -604,7 +604,7 @@ async def main():
                     # 执行交易
                     spot_order, contract_order = await trader.execute_trade_if_conditions_met()
                     if spot_order is None or contract_order is None:
-                        logger.warning(f"第{attempt_count}次尝试交易条件不满足，等待下一次机会")
+                        logger.warning(f"交易条件不满足，等待下一次机会")
                         await asyncio.sleep(1)  # 等待1秒后继续
                         continue
                         
