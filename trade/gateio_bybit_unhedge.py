@@ -319,7 +319,9 @@ class UnhedgeTrader:
                                         )
                                     )
                                     execution_duration = time.time() - execution_start_time
-                                    
+
+                                    logger.debug(f"订单提交结果 - Gate.io现货订单: {spot_order}")
+                                    logger.debug(f"订单提交结果 - Bybit合约订单: {contract_order}")
                                     # 记录完整的时间链
                                     total_process_time = time.time() - start_wait_time
                                     logger.info(f"时间统计 - 完整流程:"
@@ -425,37 +427,39 @@ class UnhedgeTrader:
                             logger.debug(f"从已关闭订单中获取到Bybit订单信息: {updated_contract_order}")
                             break
                     
-                    # 如果在关闭订单中没找到，查找未完成订单
-                    if not bybit_order_found:
-                        open_orders = await self.bybit.fetch_open_orders(self.contract_symbol, limit=20)
-                        for order in open_orders:
-                            if order.get('id') == contract_order_id:
-                                updated_contract_order = order
-                                bybit_order_found = True
-                                logger.debug(f"从未完成订单中获取到Bybit订单信息: {updated_contract_order}")
-                                break
+                    # # 如果在关闭订单中没找到，查找未完成订单
+                    # if not bybit_order_found:
+                    #     open_orders = await self.bybit.fetch_open_orders(self.contract_symbol, limit=20)
+                    #     for order in open_orders:
+                    #         if order.get('id') == contract_order_id:
+                    #             updated_contract_order = order
+                    #             bybit_order_found = True
+                    #             logger.debug(f"从未完成订单中获取到Bybit订单信息: {updated_contract_order}")
+                    #             break
                     
                     # 如果两种方式都未找到订单，尝试直接查询
-                    if not bybit_order_found:
-                        try:
-                            order_result = await self.bybit.fetch_order(contract_order_id, self.contract_symbol)
-                            if order_result:
-                                updated_contract_order = order_result
-                                bybit_order_found = True
-                                logger.debug(f"通过直接查询获取到Bybit订单信息: {updated_contract_order}")
-                        except Exception as e:
-                            logger.warning(f"直接查询Bybit订单失败: {str(e)}")
+                    # if not bybit_order_found:
+                    #     try:
+                    #         order_result = await self.bybit.fetch_order(contract_order_id, self.contract_symbol)
+                    #         if order_result:
+                    #             updated_contract_order = order_result
+                    #             bybit_order_found = True
+                    #             logger.debug(f"通过直接查询获取到Bybit订单信息: {updated_contract_order}")
+                    #     except Exception as e:
+                    #         logger.warning(f"直接查询Bybit订单失败: {str(e)}")
                     
                     # 如果所有方法都未找到订单
-                    if not bybit_order_found:
-                        raise Exception(f"无法找到Bybit订单 {contract_order_id} 的最新状态")
+                    # if not bybit_order_found:
+                    #     raise Exception(f"无法找到Bybit订单 {contract_order_id} 的最新状态")
                         
                 except Exception as e:
                     logger.error(f"获取Bybit订单详情失败: {str(e)}")
                     raise Exception(f"无法获取Bybit订单状态，验证失败: {str(e)}")
             else:
                 raise Exception("Bybit订单ID无效，无法验证订单状态")
-            
+
+            logger.debug(f"订单执行结果 - Gate.io现货订单: {updated_spot_order}")
+            logger.debug(f"订单执行结果 - Bybit合约订单: {updated_contract_order}")
             # 严格检查订单状态 - 必须是完成状态
             valid_statuses = ['closed', 'filled']
             spot_status = updated_spot_order.get('status')

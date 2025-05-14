@@ -279,6 +279,9 @@ class UnhedgeTrader:
                 logger.info(f"在Gate.io市价卖出 {trade_amount} {base_currency}")
                 logger.info(f"在Bitget市价平空单 {contract_amount} {base_currency}")
 
+                logger.debug(f"Gate.io现货订单提交详情: {spot_order}")
+                logger.debug(f"Bitget合约订单提交详情: {contract_order}")
+
                 # 检查交易结果
                 await self.verify_trade_result(spot_order, contract_order)
                 
@@ -315,21 +318,21 @@ class UnhedgeTrader:
             if spot_order_id:
                 try:
                     # 尝试多种方式获取Gate.io订单状态
-                    try:
-                        # 先尝试从已完成订单列表中获取
-                        closed_orders = await self.gateio.fetch_closed_orders(self.symbol, since=int(time.time() * 1000) - 60000)
-                        for order in closed_orders:
-                            if order.get('id') == spot_order_id:
-                                updated_spot_order = order
-                                logger.debug(f"从已完成订单中找到Gate.io订单: {order.get('id')}")
-                                break
-                    except Exception as e:
-                        logger.debug(f"通过fetch_closed_orders获取Gate.io订单状态失败: {str(e)}")
+                    # try:
+                    #     # 先尝试从已完成订单列表中获取
+                    #     closed_orders = await self.gateio.fetch_closed_orders(self.symbol, since=int(time.time() * 1000) - 60000)
+                    #     for order in closed_orders:
+                    #         if order.get('id') == spot_order_id:
+                    #             updated_spot_order = order
+                    #             logger.debug(f"从已完成订单中找到Gate.io订单: {order.get('id')}")
+                    #             break
+                    # except Exception as e:
+                    #     logger.debug(f"通过fetch_closed_orders获取Gate.io订单状态失败: {str(e)}")
                     
                     # 如果从已完成订单中未找到，直接查询单个订单
-                    if not updated_spot_order:
-                        updated_spot_order = await self.gateio.fetch_order(spot_order_id, self.symbol)
-                        logger.debug(f"通过fetch_order获取Gate.io订单状态: {updated_spot_order.get('status')}")
+                    # if not updated_spot_order:
+                    updated_spot_order = await self.gateio.fetch_order(spot_order_id, self.symbol)
+                    logger.debug(f"通过fetch_order获取Gate.io订单状态: {updated_spot_order.get('status')}, 订单执行详情: {updated_spot_order}")
                     
                     if updated_spot_order:
                         spot_order = updated_spot_order
@@ -347,11 +350,11 @@ class UnhedgeTrader:
                     error_messages = []
                     
                     # 方法1: 尝试获取已完成订单信息
-                    try:
-                        updated_contract_order = await self.bitget.fetch_closed_order(contract_order_id, self.contract_symbol)
-                        logger.debug("成功从fetch_closed_order获取Bitget订单")
-                    except Exception as e:
-                        error_messages.append(f"fetch_closed_order失败: {str(e)}")
+                    # try:
+                    #     updated_contract_order = await self.bitget.fetch_closed_order(contract_order_id, self.contract_symbol)
+                    #     logger.debug("成功从fetch_closed_order获取Bitget订单")
+                    # except Exception as e:
+                    #     error_messages.append(f"fetch_closed_order失败: {str(e)}")
                         
                     # 方法2: 如果方法1失败，尝试获取普通订单
                     if updated_contract_order is None:
@@ -362,16 +365,16 @@ class UnhedgeTrader:
                             error_messages.append(f"fetch_order失败: {str(e)}")
                     
                     # 方法3: 如果前两种方法都失败，尝试获取最近订单列表
-                    if updated_contract_order is None:
-                        try:
-                            recent_orders = await self.bitget.fetch_orders(self.contract_symbol, limit=10)
-                            for order in recent_orders:
-                                if order.get('id') == contract_order_id:
-                                    updated_contract_order = order
-                                    logger.debug("成功从fetch_orders获取Bitget订单")
-                                    break
-                        except Exception as e:
-                            error_messages.append(f"fetch_orders失败: {str(e)}")
+                    # if updated_contract_order is None:
+                    #     try:
+                    #         recent_orders = await self.bitget.fetch_orders(self.contract_symbol, limit=10)
+                    #         for order in recent_orders:
+                    #             if order.get('id') == contract_order_id:
+                    #                 updated_contract_order = order
+                    #                 logger.debug("成功从fetch_orders获取Bitget订单")
+                    #                 break
+                    #     except Exception as e:
+                    #         error_messages.append(f"fetch_orders失败: {str(e)}")
                     
                     if updated_contract_order:
                         contract_order = updated_contract_order
@@ -384,8 +387,8 @@ class UnhedgeTrader:
                     logger.debug(f"获取Bitget订单错误堆栈: {traceback.format_exc()}")
                     
             # 记录订单详细信息
-            logger.debug(f"Gate.io订单最终详情: {spot_order}")
-            logger.debug(f"Bitget订单最终详情: {contract_order}")
+            logger.debug(f"Gate.io订单执行详情: {spot_order}")
+            logger.debug(f"Bitget订单执行详情: {contract_order}")
             
             # 详细分析Gate.io现货订单
             spot_status = spot_order.get('status')

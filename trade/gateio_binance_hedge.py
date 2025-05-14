@@ -373,12 +373,12 @@ class HedgeTrader:
                         try:
                             if spot_order_id:
                                 updated_spot_order = await self.gateio.fetch_order(spot_order_id, self.symbol)
-                                logger.debug(f"获取到Gate.io更新后的订单状态: {updated_spot_order.get('status')}")
+                                logger.debug(f"获取到Gate.io更新后的订单状态: {updated_spot_order.get('status')}, 详情: {updated_spot_order}")
                                 spot_order = updated_spot_order
                             
                             if contract_order_id:
                                 updated_contract_order = await self.binance.fetch_order(contract_order_id, self.contract_symbol)
-                                logger.debug(f"获取到Binance更新后的订单状态: {updated_contract_order.get('status')}")
+                                logger.debug(f"获取到Binance更新后的订单状态: {updated_contract_order.get('status')}, 详情: {updated_contract_order}")
                                 contract_order = updated_contract_order
                         except Exception as e:
                             logger.error(f"获取更新后的订单状态时出错: {str(e)}")

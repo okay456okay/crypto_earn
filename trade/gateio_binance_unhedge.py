@@ -548,8 +548,8 @@ class UnhedgeTrader:
                             logger.debug(f"下单总耗时: {order_time:.3f}秒")
                             
                             # 记录原始订单响应
-                            logger.debug(f"Gate.io订单原始响应: {spot_order}")
-                            logger.debug(f"Binance订单原始响应: {contract_order}")
+                            logger.debug(f"Gate.io订单提交详情: {spot_order}")
+                            logger.debug(f"Binance订单提交详情: {contract_order}")
                             
                         except Exception as e:
                             logger.error(f"下单过程出错: {str(e)}")

@@ -523,6 +523,8 @@ class HedgeTrader:
                     logger.warning(f"获取订单详情时出错: {str(e)}")
                     return None, None, False
 
+                logger.debug(f"订单执行结果 - Gate.io现货订单: {spot_order}")
+                logger.debug(f"订单执行结果 - Bybit合约订单: {contract_order}")
                 # 获取现货订单的实际成交结果
                 filled_amount = float(spot_order.get('filled', 0))
                 if filled_amount <= 0:
