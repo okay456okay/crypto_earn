@@ -567,9 +567,9 @@ async def main():
         
         try:
             # 执行指定次数的交易
-            attempt_count = 0
+            # attempt_count = 0
             while trader.completed_trades < total_count:
-                attempt_count += 1
+                # attempt_count += 1
                 # logger.info(f"开始第{attempt_count}次尝试 (已完成{trader.completed_trades}/{total_count}次交易)")
                 
                 try:
@@ -626,7 +626,7 @@ async def main():
                         await asyncio.sleep(3)
                 
                 except Exception as e:
-                    logger.error(f"执行第{attempt_count}次尝试过程中出错: {str(e)}")
+                    logger.error(f"执行过程出错: {str(e)}")
                     # 打印交易摘要并退出
                     trader.print_trade_summary(total_count, initial_position)
                     return 1
