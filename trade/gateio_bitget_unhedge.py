@@ -225,7 +225,7 @@ class UnhedgeTrader:
             bitget_ob = self.orderbooks['bitget']
 
             if not gateio_ob or not bitget_ob:
-                return
+                return None, None
 
             gateio_bid = Decimal(str(gateio_ob['bids'][0][0]))  # 现货卖出价(买1)
             gateio_bid_volume = Decimal(str(gateio_ob['bids'][0][1]))
@@ -289,6 +289,7 @@ class UnhedgeTrader:
 
             logger.debug(f"{self.symbol}交易条件不满足: 价差 {float(spread_percent) * 100:.4f}% < {self.min_spread * 100:.4f}% "
                        f"或数量不足")
+            return None, None
 
         except Exception as e:
             logger.error(f"执行交易时出错: {str(e)}")
@@ -595,11 +596,10 @@ async def main():
                 
                 # 执行交易
                 spot_order, contract_order = await trader.execute_trade_if_conditions_met()
-                if not (spot_order and contract_order):
-                    logger.error(f"第{i+1}次交易执行失败，订单结果无效")
-                    # 打印交易摘要并退出
-                    trader.print_trade_summary(total_count, initial_position)
-                    return 1
+                if spot_order is None or contract_order is None:
+                    logger.warning(f"第{i+1}次交易条件不满足，等待下一次机会")
+                    await asyncio.sleep(1)  # 等待1秒后继续
+                    continue
                     
                 logger.info(f"第{i+1}/{total_count}次交易完成")
                 
