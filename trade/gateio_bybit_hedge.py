@@ -928,7 +928,7 @@ def parse_arguments():
     parser.add_argument('-p', '--min-spread', type=float, default=-0.0001, help='最小价差要求，默认0.001 (0.1%%)')
     parser.add_argument('-l', '--leverage', type=int, help='合约杠杆倍数，如果不指定则使用交易所支持的最大杠杆倍数')
     parser.add_argument('-c', '--count', type=int, default=1, help='重复执行交易操作的次数，默认为1次')
-    parser.add_argument('-m', '--depth-multiplier', type=int, default=10, help='市场深度要求的乘数，默认为交易量的10倍')
+    parser.add_argument('-m', '--depth-multiplier', type=int, default=5, help='市场深度要求的乘数，默认为交易量的5倍')
     parser.add_argument('--test-earn', action='store_true', help='测试余币宝申购功能')
     parser.add_argument('-d', '--debug', action='store_true', help='启用调试日志')
     return parser.parse_args()

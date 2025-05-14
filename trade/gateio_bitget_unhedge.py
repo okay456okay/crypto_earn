@@ -525,7 +525,7 @@ def parse_arguments():
     parser.add_argument('-s', '--symbol', type=str, required=True, help='交易对符号，例如 ETH/USDT')
     parser.add_argument('-a', '--amount', type=float, required=True, help='卖出的现货数量')
     parser.add_argument('-p', '--min-spread', type=float, default=0.003, help='最小价差要求，默认0.003 (0.3%%)')
-    parser.add_argument('-m', '--depth-multiplier', type=float, default=2.0, help='订单簿中买一/卖一量至少是交易量的倍数，默认2倍')
+    parser.add_argument('-m', '--depth-multiplier', type=float, default=5.0, help='订单簿中买一/卖一量至少是交易量的倍数，默认5倍')
     parser.add_argument('-d', '--debug', action='store_true', help='启用调试日志模式')
     parser.add_argument('-c', '--count', type=int, help='重复交易次数，不指定则根据持仓自动计算')
     return parser.parse_args()
