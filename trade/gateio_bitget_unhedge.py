@@ -663,8 +663,8 @@ async def main():
                         logger.info(f"已完成 {i+1}/{total_count} 次交易，但无法继续执行剩余交易")
                         break
                     
-                    logger.info(f"等待0.3秒后继续下一次交易...")
-                    await asyncio.sleep(0.3)
+                    logger.info(f"等待3秒后继续下一次交易...")
+                    await asyncio.sleep(3)
             
             except Exception as e:
                 logger.error(f"执行第{i+1}次交易过程中出错: {str(e)}")
