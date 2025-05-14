@@ -563,10 +563,56 @@ class UnhedgeTrader:
                         logger.info(f"在Binance市价平空单 {contract_amount} {base_currency}")
 
                         # 等待一小段时间确保订单状态已更新
-                        await asyncio.sleep(1)
+                        await asyncio.sleep(2)
 
                         # 获取实际成交结果
                         try:
+                            # 获取Gate.io订单的最新状态
+                            spot_order_id = spot_order.get('id')
+                            if spot_order_id:
+                                logger.debug(f"获取Gate.io订单({spot_order_id})的最新状态")
+                                updated_spot_order = await self.gateio.fetch_order(spot_order_id, self.symbol)
+                                if updated_spot_order:
+                                    logger.debug(f"Gate.io订单状态更新为: {updated_spot_order.get('status')}")
+                                    spot_order = updated_spot_order
+                                else:
+                                    logger.warning(f"无法获取Gate.io订单({spot_order_id})的最新状态")
+                            
+                            # 获取Binance订单的最新状态
+                            contract_order_id = contract_order.get('id')
+                            if contract_order_id:
+                                logger.debug(f"获取Binance订单({contract_order_id})的最新状态")
+                                try:
+                                    updated_contract_order = await self.binance.fetch_order(contract_order_id, self.contract_symbol)
+                                    if updated_contract_order:
+                                        logger.debug(f"Binance订单状态更新为: {updated_contract_order.get('status')}")
+                                        contract_order = updated_contract_order
+                                    else:
+                                        logger.warning(f"无法获取Binance订单({contract_order_id})的最新状态")
+                                except Exception as e:
+                                    logger.warning(f"通过fetch_order获取Binance订单状态失败: {str(e)}")
+                                    # try:
+                                    #     # 尝试从已完成订单列表中查找
+                                    #     closed_orders = await self.binance.fetch_closed_orders(self.contract_symbol, limit=10)
+                                    #     for order in closed_orders:
+                                    #         if order.get('id') == contract_order_id:
+                                    #             logger.debug(f"从已完成订单列表获取到Binance订单状态: {order.get('status')}")
+                                    #             contract_order = order
+                                    #             break
+                                    # except Exception as e2:
+                                    #     logger.warning(f"通过fetch_closed_orders获取Binance订单状态失败: {str(e2)}")
+
+                            # 等待一小段时间确保订单状态已完全更新
+                            # await asyncio.sleep(1)
+                            logger.debug(f"Gate.io订单执行详情: {spot_order}")
+                            logger.debug(f"Binance订单执行详情: {contract_order}")
+
+                            # 记录详细的订单信息用于调试
+                            logger.debug(f"Gate.io订单详情: ID={spot_order.get('id')}, 状态={spot_order.get('status')}, "
+                                        f"成交量={spot_order.get('filled')}, 成交价={spot_order.get('price')}")
+                            logger.debug(f"Binance订单详情: ID={contract_order.get('id')}, 状态={contract_order.get('status')}, "
+                                        f"成交量={contract_order.get('filled')}, 成交价={contract_order.get('price')}")
+
                             filled_amount = float(spot_order.get('filled', 0))
                             spot_price = float(spot_order.get('price', 0)) if spot_order.get('price') else None
                             fees = spot_order.get('fees', [])
