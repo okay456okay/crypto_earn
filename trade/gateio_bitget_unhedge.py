@@ -243,11 +243,16 @@ class UnhedgeTrader:
                 bitget_ask_volume >= min_required_volume
             )
 
-            logger.debug(
-                f"{self.symbol}"
-                f"价格检查 - Gate.io买1: {float(gateio_bid)} (量: {float(gateio_bid_volume)}), "
-                f"Bitget卖1: {float(bitget_ask)} (量: {float(bitget_ask_volume)}), "
-                f"价差: {float(spread_percent) * 100:.4f}%")
+            # 始终打印价格检查信息
+            logger.info(
+                f"{self.symbol} "
+                f"价格检查 - Gate.io买1: {float(gateio_bid):.6f} (量: {float(gateio_bid_volume):.6f}), "
+                f"Bitget卖1: {float(bitget_ask):.6f} (量: {float(bitget_ask_volume):.6f}), "
+                f"价差: {float(spread_percent) * 100:.4f}%, "
+                f"最小要求: {self.min_spread * 100:.4f}%, "
+                f"数量条件: {'满足' if volume_condition_met else '不满足'} "
+                f"(最小要求: {float(min_required_volume):.6f})"
+            )
 
             if spread_percent >= self.min_spread and volume_condition_met:
                 logger.info(f"{self.symbol}交易条件满足：价差 {float(spread_percent) * 100:.4f}% >= {self.min_spread * 100:.4f}%, "
@@ -287,8 +292,6 @@ class UnhedgeTrader:
 
                 return spot_order, contract_order
 
-            logger.debug(f"{self.symbol}交易条件不满足: 价差 {float(spread_percent) * 100:.4f}% < {self.min_spread * 100:.4f}% "
-                       f"或数量不足")
             return None, None
 
         except Exception as e:
@@ -559,8 +562,10 @@ async def main():
         logger.info(f"计划执行交易次数: {total_count}次")
         
         # 执行指定次数的交易
-        for i in range(total_count):
-            logger.info(f"开始执行第{i+1}/{total_count}次交易")
+        attempt_count = 0
+        while trader.completed_trades < total_count:
+            attempt_count += 1
+            logger.info(f"开始第{attempt_count}次尝试 (已完成{trader.completed_trades}/{total_count}次交易)")
             
             try:
                 # 每次交易前重新检查持仓，确保有足够的资产
@@ -597,26 +602,26 @@ async def main():
                 # 执行交易
                 spot_order, contract_order = await trader.execute_trade_if_conditions_met()
                 if spot_order is None or contract_order is None:
-                    logger.warning(f"第{i+1}次交易条件不满足，等待下一次机会")
+                    logger.warning(f"第{attempt_count}次尝试交易条件不满足，等待下一次机会")
                     await asyncio.sleep(1)  # 等待1秒后继续
                     continue
                     
-                logger.info(f"第{i+1}/{total_count}次交易完成")
+                logger.info(f"第{trader.completed_trades}/{total_count}次交易完成")
                 
                 # 如果不是最后一次交易，等待几秒后再继续
-                if i < total_count - 1:
+                if trader.completed_trades < total_count:
                     # 检查是否还有足够的合约持仓继续交易
                     contract_position = trader.get_contract_position()
                     if contract_position < args.amount:
                         logger.warning(f"合约持仓不足以继续交易，当前持仓: {contract_position}，需要: {args.amount}")
-                        logger.info(f"已完成 {i+1}/{total_count} 次交易，但无法继续执行剩余交易")
+                        logger.info(f"已完成 {trader.completed_trades}/{total_count} 次交易，但无法继续执行剩余交易")
                         break
                     
                     logger.info(f"等待3秒后继续下一次交易...")
                     await asyncio.sleep(3)
             
             except Exception as e:
-                logger.error(f"执行第{i+1}次交易过程中出错: {str(e)}")
+                logger.error(f"执行第{attempt_count}次尝试过程中出错: {str(e)}")
                 # 打印交易摘要并退出
                 trader.print_trade_summary(total_count, initial_position)
                 return 1
