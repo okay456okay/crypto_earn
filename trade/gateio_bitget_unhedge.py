@@ -38,7 +38,7 @@ class UnhedgeTrader:
     现货-合约对冲平仓类，实现Gate.io现货卖出与Bitget合约平空单
     """
 
-    def __init__(self, symbol, spot_amount=None, min_spread=0.001):
+    def __init__(self, symbol, spot_amount=None, min_spread=0.001, depth_multiplier=2.0):
         """
         初始化基本属性
         
@@ -46,10 +46,12 @@ class UnhedgeTrader:
             symbol (str): 交易对，如 'ETH/USDT'
             spot_amount (float): 要卖出的现货数量
             min_spread (float): 最小价差要求，默认0.001 (0.1%)
+            depth_multiplier (float): 订单簿中买一/卖一量至少是交易量的倍数，默认2倍
         """
         self.symbol = symbol
         self.spot_amount = spot_amount
         self.min_spread = min_spread
+        self.depth_multiplier = depth_multiplier
 
         # 设置合约交易对
         base, quote = symbol.split('/')
@@ -234,12 +236,21 @@ class UnhedgeTrader:
             spread = gateio_bid - bitget_ask
             spread_percent = spread / bitget_ask
 
+            # 检查数量条件
+            min_required_volume = Decimal(str(self.spot_amount)) * Decimal(str(self.depth_multiplier))
+            volume_condition_met = (
+                gateio_bid_volume >= min_required_volume and
+                bitget_ask_volume >= min_required_volume
+            )
+
             spread_data = {
                 'spread_percent': float(spread_percent),
                 'gateio_bid': float(gateio_bid),
                 'bitget_ask': float(bitget_ask),
                 'gateio_bid_volume': float(gateio_bid_volume),
-                'bitget_ask_volume': float(bitget_ask_volume)
+                'bitget_ask_volume': float(bitget_ask_volume),
+                'min_required_volume': float(min_required_volume),
+                'volume_condition_met': volume_condition_met
             }
             await self.price_updates.put(spread_data)
 
@@ -260,6 +271,7 @@ class UnhedgeTrader:
                     )
 
                     spread_percent = spread_data['spread_percent']
+                    volume_condition_met = spread_data['volume_condition_met']
 
                     logger.debug(
                         f"{self.symbol}"
@@ -267,11 +279,14 @@ class UnhedgeTrader:
                         f"Bitget卖1: {spread_data['bitget_ask']} (量: {spread_data['bitget_ask_volume']}), "
                         f"价差: {spread_percent * 100:.4f}%")
 
-                    if spread_percent >= self.min_spread:
-                        logger.info(f"{self.symbol}价差条件满足: {spread_percent * 100:.4f}% >= {self.min_spread * 100:.4f}%")
+                    if spread_percent >= self.min_spread and volume_condition_met:
+                        logger.info(f"{self.symbol}交易条件满足：价差 {spread_percent * 100:.4f}% >= {self.min_spread * 100:.4f}%, "
+                                  f"Gate.io买1量 {spread_data['gateio_bid_volume']:.6f} >= {spread_data['min_required_volume']:.6f}, "
+                                  f"Bitget卖1量 {spread_data['bitget_ask_volume']:.6f} >= {spread_data['min_required_volume']:.6f}")
                         return spread_data
 
-                    logger.debug(f"{self.symbol}价差条件不满足: {spread_percent * 100:.4f}% < {self.min_spread * 100:.4f}%")
+                    logger.debug(f"{self.symbol}交易条件不满足: 价差 {spread_percent * 100:.4f}% < {self.min_spread * 100:.4f}% "
+                               f"或数量不足")
 
                 except asyncio.TimeoutError:
                     logger.warning(f"{self.symbol}等待价差数据超时，重新订阅订单簿")
@@ -427,11 +442,19 @@ class UnhedgeTrader:
             spot_amount = float(spot_order.get('amount', 0))
             spot_fill_percent = (spot_filled / spot_amount * 100) if spot_amount > 0 else 0
             
+            # 计算Gate.io平均成交价格
+            spot_cost = float(spot_order.get('cost', 0))
+            spot_avg_price = spot_cost / spot_filled if spot_filled > 0 else 0
+            
             # 详细分析Bitget合约订单
             contract_status = contract_order.get('status')
             contract_filled = float(contract_order.get('filled', 0))
             contract_amount = float(contract_order.get('amount', 0))
             contract_fill_percent = (contract_filled / contract_amount * 100) if contract_amount > 0 else 0
+            
+            # 计算Bitget平均成交价格
+            contract_cost = float(contract_order.get('cost', 0))
+            contract_avg_price = contract_cost / contract_filled if contract_filled > 0 else 0
             
             # 确保订单状态正确
             valid_statuses = ['closed', 'filled']
@@ -467,9 +490,25 @@ class UnhedgeTrader:
             spot_fees = spot_order.get('fees', [])
             quote_fee = sum(float(fee['cost']) for fee in spot_fees if fee['currency'] == 'USDT')
             
-            logger.info(f"Gate.io实际成交数量: {spot_filled} {base_currency}, "
-                        f"手续费: {quote_fee} USDT")
-            logger.info(f"Bitget实际成交数量: {contract_filled} {base_currency}")
+            # 获取预期价格（从订单簿数据）
+            expected_spot_price = float(self.orderbooks['gateio']['bids'][0][0])
+            expected_contract_price = float(self.orderbooks['bitget']['asks'][0][0])
+            
+            # 计算滑点
+            spot_slippage = (spot_avg_price - expected_spot_price) / expected_spot_price
+            contract_slippage = (expected_contract_price - contract_avg_price) / expected_contract_price
+            
+            # 计算实际价差和预期价差
+            expected_spread = (expected_spot_price - expected_contract_price) / expected_contract_price
+            actual_spread = (spot_avg_price - contract_avg_price) / contract_avg_price
+            spread_slippage = actual_spread - expected_spread
+            
+            logger.info(f"Gate.io实际成交数量: {spot_filled} {base_currency}, 平均价格: {spot_avg_price:.5f}, 手续费: {quote_fee} USDT")
+            logger.info(f"Bitget实际成交数量: {contract_filled} {base_currency}, 平均价格: {contract_avg_price:.5f}")
+            
+            logger.info(f"Gate.io滑点: 预期价格 {expected_spot_price:.5f}, 实际成交价 {spot_avg_price:.5f}, 滑点率 {spot_slippage*100:.4f}%")
+            logger.info(f"Bitget滑点: 预期价格 {expected_contract_price:.5f}, 实际成交价 {contract_avg_price:.5f}, 滑点率 {contract_slippage*100:.4f}%")
+            logger.info(f"价差滑点: 预期价差 {expected_spread*100:.4f}%, 实际价差 {actual_spread*100:.4f}%, 价差损失 {spread_slippage*100:.4f}%")
             
             # 检查数量是否匹配（允许1%的误差）
             diff_percent = abs(spot_filled - contract_filled) / max(spot_filled, contract_filled)
@@ -484,7 +523,12 @@ class UnhedgeTrader:
                 'contract_filled': contract_filled,
                 'spot_order_id': spot_order['id'],
                 'contract_order_id': contract_order['id'],
-                'fee': quote_fee
+                'fee': quote_fee,
+                'spot_avg_price': spot_avg_price,
+                'contract_avg_price': contract_avg_price,
+                'spot_slippage': spot_slippage,
+                'contract_slippage': contract_slippage,
+                'spread_slippage': spread_slippage
             }
             self.trade_results.append(trade_result)
             
@@ -527,6 +571,7 @@ def parse_arguments():
     parser.add_argument('-s', '--symbol', type=str, required=True, help='交易对符号，例如 ETH/USDT')
     parser.add_argument('-a', '--amount', type=float, required=True, help='卖出的现货数量')
     parser.add_argument('-p', '--min-spread', type=float, default=0.0005, help='最小价差要求，默认0.001 (0.1%%)')
+    parser.add_argument('-m', '--depth-multiplier', type=float, default=2.0, help='订单簿中买一/卖一量至少是交易量的倍数，默认2倍')
     parser.add_argument('-d', '--debug', action='store_true', help='启用调试日志模式')
     parser.add_argument('-c', '--count', type=int, help='重复交易次数，不指定则根据持仓自动计算')
     return parser.parse_args()
@@ -547,7 +592,8 @@ async def main():
         trader = UnhedgeTrader(
             symbol=args.symbol,
             spot_amount=args.amount,
-            min_spread=args.min_spread
+            min_spread=args.min_spread,
+            depth_multiplier=args.depth_multiplier
         )
         
         # 初始化并获取当前合约持仓
