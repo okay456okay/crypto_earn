@@ -605,13 +605,15 @@ async def main():
                         return 1
                     
                     # 执行交易
-                    spot_order, contract_order = await trader.execute_trade_if_conditions_met()
-                    if spot_order is None or contract_order is None:
-                        logger.debug(f"交易条件不满足，等待下一次机会")
-                        await asyncio.sleep(0.1)  # 等待1秒后继续
-                        continue
-                        
-                    logger.info(f"第{trader.completed_trades}/{total_count}次交易完成")
+                    while True:
+                        spot_order, contract_order = await trader.execute_trade_if_conditions_met()
+                        if spot_order is None or contract_order is None:
+                            logger.debug(f"交易条件不满足，等待下一次机会")
+                            await asyncio.sleep(0.1)  # 等待1秒后继续
+                            continue
+                        else:
+                            logger.info(f"第{trader.completed_trades}/{total_count}次交易完成")
+                            break
                     
                     # 如果不是最后一次交易，等待几秒后再继续
                     if trader.completed_trades < total_count:
