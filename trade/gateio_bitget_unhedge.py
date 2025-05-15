@@ -127,12 +127,12 @@ class UnhedgeTrader:
             #                 raise Exception(f"Gate.io {base_currency}余额不足，需要 {self.spot_amount}，"
             #                                 f"当前可用 {self.gateio_balance[base_currency]['free']}")
             #
-            #     contract_position = self.get_contract_position()
+            contract_position = self.get_contract_position()
             #     if contract_position < self.spot_amount:
             #         raise Exception(f"Bitget合约空单持仓不足，需要 {self.spot_amount}，当前持仓 {contract_position}")
             #
             #     logger.info("持仓检查通过，可以执行平仓操作")
-            #     return contract_position
+            return contract_position
 
         except Exception as e:
             logger.error(f"初始化失败: {str(e)}")
