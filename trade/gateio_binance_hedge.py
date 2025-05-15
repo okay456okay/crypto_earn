@@ -242,7 +242,7 @@ class HedgeTrader:
                 # 记录找到的机会
                 opportunity_duration = 2.0  # 模拟等待时间
                 logger.info(f"{self.symbol}交易条件满足 (等待了 {opportunity_duration:.2f}秒):")
-                logger.info(f"价差: {spread_percent*100:.4f}% >= {self.min_spread*100:.4f}%")
+                logger.info(f"现货卖一:{gateio_ask}(买入价)，合约买一:{binance_bid}(卖出价), 价差: {spread_percent*100:.4f}% >= {self.min_spread*100:.4f}%")
                 logger.info(f"市场深度 - Gate.io卖1: {gateio_ask_volume} {base}, "
                           f"Binance买1: {binance_bid_volume} {base}")
                 logger.info(f"交易量: {self.spot_amount} {base}, "

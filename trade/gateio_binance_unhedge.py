@@ -302,7 +302,10 @@ class UnhedgeTrader:
                         if spread_percent >= self.min_spread and depth_satisfied:
                             logger.info(f"{self.symbol}交易条件满足：价差 {float(spread_percent) * 100:.4f}% >= {self.min_spread * 100:.4f}%, "
                                       f"Gate.io买1量 {float(gateio_bid_volume):.6f} >= {float(min_required_volume):.6f}, "
-                                      f"Binance卖1量 {float(binance_ask_volume):.6f} >= {float(min_required_volume):.6f}")
+                                      f"Binance卖1量 {float(binance_ask_volume):.6f} >= {float(min_required_volume):.6f}, "
+                                      f"Gate.io买1: {float(gateio_bid)} (量: {float(gateio_bid_volume)}), "
+                                      f"Binance卖1: {float(binance_ask)} (量: {float(binance_ask_volume)}"
+                                        )
                             
                             # 准备下单参数
                             trade_amount = self.spot_amount

@@ -284,6 +284,9 @@ class UnhedgeTrader:
                                                f"价差 {float(spread_percent) * 100:.4f}% >= {self.min_spread * 100:.4f}%, "
                                                f"Gate.io买1量 {float(gateio_bid_volume):.6f} >= {float(trade_amount * self.depth_multiplier):.6f}, "
                                                f"Bybit卖1量 {float(bybit_ask_volume):.6f} >= {float(float(contract_amount) * self.depth_multiplier):.6f}, "
+                                               f"Gate.io买1: {float(gateio_bid):.6f} (量: {float(gateio_bid_volume):.6f}), "
+                                               f"Bybit卖1: {float(bybit_ask):.6f} (量: {float(bybit_ask_volume):.6f}), "
+                                               f"价差: {float(spread_percent) * 100:.4f}%, "
                                                f"等待耗时: {wait_duration:.3f}秒")
                                     
                                     logger.info(f"时间统计 - 从最后价格更新到满足条件: {price_to_condition_interval * 1000:.2f}毫秒")
