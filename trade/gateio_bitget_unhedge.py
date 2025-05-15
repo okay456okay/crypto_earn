@@ -110,7 +110,11 @@ class UnhedgeTrader:
                         f"最小价差={self.min_spread * 100}%")
 
             # # 检查当前持仓情况
-            await self.check_positions()
+            # await self.check_positions()
+            self.gateio_balance, self.bitget_position = await asyncio.gather(
+                self.gateio.fetch_balance(),
+                self.bitget.fetch_positions([self.contract_symbol])
+            )
             # # 验证持仓是否满足交易条件
             # if self.spot_amount is not None:
             #     base_currency = self.symbol.split('/')[0]
