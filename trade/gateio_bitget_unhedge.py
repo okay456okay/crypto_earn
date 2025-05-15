@@ -109,30 +109,30 @@ class UnhedgeTrader:
             logger.info(f"初始化: 交易对={self.symbol}, 合约对={self.contract_symbol}, "
                         f"最小价差={self.min_spread * 100}%")
 
-            # 检查当前持仓情况
-            await self.check_positions()
-            # 验证持仓是否满足交易条件
-            if self.spot_amount is not None:
-                base_currency = self.symbol.split('/')[0]
-                current_amount = float(self.gateio_balance.get(base_currency, {}).get('free', 0))
-                if current_amount < self.spot_amount:
-                    # 如果现货持仓不足，自动从理财中赎回缺失的部分，然后再检查, +0.1是防止不太够
-                    need_spot_amount = self.spot_amount - current_amount + 0.1
-                    redeem_earn(base_currency, need_spot_amount)
-                    # 再检查余额是否够
-                    await self.check_positions()
-                    if self.spot_amount is not None:
-                        current_amount = float(self.gateio_balance.get(base_currency, {}).get('free', 0))
-                        if current_amount < self.spot_amount:
-                            raise Exception(f"Gate.io {base_currency}余额不足，需要 {self.spot_amount}，"
-                                            f"当前可用 {self.gateio_balance[base_currency]['free']}")
-
-                contract_position = self.get_contract_position()
-                if contract_position < self.spot_amount:
-                    raise Exception(f"Bitget合约空单持仓不足，需要 {self.spot_amount}，当前持仓 {contract_position}")
-
-                logger.info("持仓检查通过，可以执行平仓操作")
-                return contract_position
+            # # 检查当前持仓情况
+            # await self.check_positions()
+            # # 验证持仓是否满足交易条件
+            # if self.spot_amount is not None:
+            #     base_currency = self.symbol.split('/')[0]
+            #     current_amount = float(self.gateio_balance.get(base_currency, {}).get('free', 0))
+            #     if current_amount < self.spot_amount:
+            #         # 如果现货持仓不足，自动从理财中赎回缺失的部分，然后再检查, +0.1是防止不太够
+            #         need_spot_amount = self.spot_amount - current_amount + 0.1
+            #         redeem_earn(base_currency, need_spot_amount)
+            #         # 再检查余额是否够
+            #         await self.check_positions()
+            #         if self.spot_amount is not None:
+            #             current_amount = float(self.gateio_balance.get(base_currency, {}).get('free', 0))
+            #             if current_amount < self.spot_amount:
+            #                 raise Exception(f"Gate.io {base_currency}余额不足，需要 {self.spot_amount}，"
+            #                                 f"当前可用 {self.gateio_balance[base_currency]['free']}")
+            #
+            #     contract_position = self.get_contract_position()
+            #     if contract_position < self.spot_amount:
+            #         raise Exception(f"Bitget合约空单持仓不足，需要 {self.spot_amount}，当前持仓 {contract_position}")
+            #
+            #     logger.info("持仓检查通过，可以执行平仓操作")
+            #     return contract_position
 
         except Exception as e:
             logger.error(f"初始化失败: {str(e)}")
