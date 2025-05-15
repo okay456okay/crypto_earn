@@ -334,8 +334,8 @@ class UnhedgeTrader:
                                 logger.debug(f"下单总耗时: {order_time:.3f}秒")
                                 
                                 # 记录原始订单响应
-                                logger.debug(f"Gate.io订单提交详情: {spot_order}")
-                                logger.debug(f"Binance订单提交详情: {contract_order}")
+                                logger.info(f"Gate.io订单提交详情: {spot_order}")
+                                logger.info(f"Binance订单提交详情: {contract_order}")
                                 
                             except Exception as e:
                                 logger.error(f"下单过程出错: {str(e)}")
@@ -378,9 +378,8 @@ class UnhedgeTrader:
                                     except Exception as e:
                                         logger.warning(f"通过fetch_order获取Binance订单状态失败: {str(e)}")
 
-                                # 等待一小段时间确保订单状态已完全更新
-                                logger.debug(f"Gate.io订单执行详情: {spot_order}")
-                                logger.debug(f"Binance订单执行详情: {contract_order}")
+                                logger.info(f"Gate.io订单执行详情: {spot_order}")
+                                logger.info(f"Binance订单执行详情: {contract_order}")
 
                                 # 记录详细的订单信息用于调试
                                 logger.debug(f"Gate.io订单详情: ID={spot_order.get('id')}, 状态={spot_order.get('status')}, "

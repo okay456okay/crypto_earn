@@ -447,8 +447,8 @@ class HedgeTrader:
                     total_delay = (order_end_time - check_start_time) * 1000  # 毫秒
                     
                     logger.info(f"订单执行延迟: 下单耗时 {order_delay:.2f}ms, 总延迟 {total_delay:.2f}ms")
-                    logger.debug(f"订单提交结果 - Gate.io现货订单: {spot_order}")
-                    logger.debug(f"订单提交结果 - Bybit合约订单: {contract_order}")
+                    logger.info(f"订单提交详情 - Gate.io现货订单: {spot_order}")
+                    logger.info(f"订单提交详情 - Bybit合约订单: {contract_order}")
                     
                     # 立即验证订单是否成功提交
                     if not spot_order or not contract_order:
@@ -523,8 +523,8 @@ class HedgeTrader:
                     logger.warning(f"获取订单详情时出错: {str(e)}")
                     return None, None, False
 
-                logger.debug(f"订单执行结果 - Gate.io现货订单: {spot_order}")
-                logger.debug(f"订单执行结果 - Bybit合约订单: {contract_order}")
+                logger.info(f"订单执行详情 - Gate.io现货订单: {spot_order}")
+                logger.info(f"订单执行详情 - Bybit合约订单: {contract_order}")
                 # 获取现货订单的实际成交结果
                 filled_amount = float(spot_order.get('info', {}).get('filled_amount',0))
                 if filled_amount <= 0:

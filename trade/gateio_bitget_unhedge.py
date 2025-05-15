@@ -282,8 +282,8 @@ class UnhedgeTrader:
                 logger.info(f"在Gate.io市价卖出 {trade_amount} {base_currency}")
                 logger.info(f"在Bitget市价平空单 {contract_amount} {base_currency}")
 
-                logger.debug(f"Gate.io现货订单提交详情: {spot_order}")
-                logger.debug(f"Bitget合约订单提交详情: {contract_order}")
+                logger.info(f"Gate.io现货订单提交详情: {spot_order}")
+                logger.info(f"Bitget合约订单提交详情: {contract_order}")
 
                 # 检查交易结果
                 await self.verify_trade_result(spot_order, contract_order)
@@ -335,7 +335,7 @@ class UnhedgeTrader:
                     # 如果从已完成订单中未找到，直接查询单个订单
                     # if not updated_spot_order:
                     updated_spot_order = await self.gateio.fetch_order(spot_order_id, self.symbol)
-                    logger.debug(f"通过fetch_order获取Gate.io订单状态: {updated_spot_order.get('status')}, 订单执行详情: {updated_spot_order}")
+                    logger.debug(f"通过fetch_order获取Gate.io订单状态: {updated_spot_order.get('status')}")
                     
                     if updated_spot_order:
                         spot_order = updated_spot_order
@@ -390,8 +390,8 @@ class UnhedgeTrader:
                     logger.debug(f"获取Bitget订单错误堆栈: {traceback.format_exc()}")
                     
             # 记录订单详细信息
-            logger.debug(f"Gate.io订单执行详情: {spot_order}")
-            logger.debug(f"Bitget订单执行详情: {contract_order}")
+            logger.info(f"Gate.io订单执行详情: {spot_order}")
+            logger.info(f"Bitget订单执行详情: {contract_order}")
             
             # 详细分析Gate.io现货订单
             spot_status = spot_order.get('status')

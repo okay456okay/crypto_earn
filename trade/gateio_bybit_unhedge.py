@@ -320,8 +320,8 @@ class UnhedgeTrader:
                                     )
                                     execution_duration = time.time() - execution_start_time
 
-                                    logger.debug(f"订单提交结果 - Gate.io现货订单: {spot_order}")
-                                    logger.debug(f"订单提交结果 - Bybit合约订单: {contract_order}")
+                                    logger.info(f"订单提交详情 - Gate.io现货订单: {spot_order}")
+                                    logger.info(f"订单提交详情 - Bybit合约订单: {contract_order}")
                                     # 记录完整的时间链
                                     total_process_time = time.time() - start_wait_time
                                     logger.info(f"时间统计 - 完整流程:"
@@ -458,8 +458,8 @@ class UnhedgeTrader:
             else:
                 raise Exception("Bybit订单ID无效，无法验证订单状态")
 
-            logger.debug(f"订单执行结果 - Gate.io现货订单: {updated_spot_order}")
-            logger.debug(f"订单执行结果 - Bybit合约订单: {updated_contract_order}")
+            logger.info(f"订单执行详情 - Gate.io现货订单: {updated_spot_order}")
+            logger.info(f"订单执行详情 - Bybit合约订单: {updated_contract_order}")
             # 严格检查订单状态 - 必须是完成状态
             valid_statuses = ['closed', 'filled']
             spot_status = updated_spot_order.get('status')

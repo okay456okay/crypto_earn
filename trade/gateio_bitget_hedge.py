@@ -376,8 +376,8 @@ class HedgeTrader:
                             )
                             
                             # 详细打印订单信息到调试日志
-                            logger.debug(f"Gate.io现货订单提交详情: {spot_order}")
-                            logger.debug(f"Bitget合约订单提交详情: {contract_order}")
+                            logger.info(f"Gate.io现货订单提交详情: {spot_order}")
+                            logger.info(f"Bitget合约订单提交详情: {contract_order}")
                             
                             # 检查订单是否成功提交
                             if not spot_order or 'id' not in spot_order:
@@ -429,9 +429,9 @@ class HedgeTrader:
                                     return None, None
 
                                 if updated_spot_order:
-                                    logger.debug(f"获取到Gate.io订单执行详情: {updated_spot_order}")
                                     spot_order = updated_spot_order
-                                    
+                                    logger.info(f"获取到Gate.io订单执行详情: {spot_order}")
+
                                     # 检查订单状态和成交量
                                     spot_status = updated_spot_order.get('status')
                                     spot_filled = float(updated_spot_order.get('filled', 0))
@@ -461,9 +461,9 @@ class HedgeTrader:
                                 updated_contract_order = await self.bitget.fetch_order(contract_order_id, self.contract_symbol)
                                 
                                 if updated_contract_order:
-                                    logger.debug(f"获取到Bitget订单执行详情: {updated_contract_order}")
                                     contract_order = updated_contract_order
-                                    
+                                    logger.info(f"获取到Bitget订单执行详情: {contract_order}")
+
                                     # 检查订单状态和成交量
                                     contract_status = updated_contract_order.get('status')
                                     contract_filled = float(updated_contract_order.get('filled', 0))

@@ -337,8 +337,8 @@ class HedgeTrader:
                         logger.debug(f"[时序] ===从满足条件到订单发送完成共耗时: {(t2-t0)*1000:.3f}ms===")
                         
                         # 立即检查订单提交状态并记录订单详情到调试日志
-                        logger.debug(f"Gate.io现货订单提交详情: {spot_order}")
-                        logger.debug(f"Binance合约订单提交详情: {contract_order}")
+                        logger.info(f"Gate.io现货订单提交详情: {spot_order}")
+                        logger.info(f"Binance合约订单提交详情: {contract_order}")
                         
                         # 检查订单是否成功提交
                         if not spot_order or not contract_order:
@@ -373,17 +373,17 @@ class HedgeTrader:
                         try:
                             if spot_order_id:
                                 updated_spot_order = await self.gateio.fetch_order(spot_order_id, self.symbol)
-                                logger.debug(f"获取到Gate.io更新后的订单状态: {updated_spot_order.get('status')}, 详情: {updated_spot_order}")
                                 spot_order = updated_spot_order
                             
                             if contract_order_id:
                                 updated_contract_order = await self.binance.fetch_order(contract_order_id, self.contract_symbol)
-                                logger.debug(f"获取到Binance更新后的订单状态: {updated_contract_order.get('status')}, 详情: {updated_contract_order}")
                                 contract_order = updated_contract_order
                         except Exception as e:
                             logger.error(f"获取更新后的订单状态时出错: {str(e)}")
                             return None, None
 
+                        logger.info(f"Gate.io现货订单执行详情: {spot_order}")
+                        logger.info(f"Binance合约订单执行详情: {contract_order}")
                         # 验证订单执行状态
                         spot_status = spot_order.get('status', '')
                         contract_status = contract_order.get('status', '')
