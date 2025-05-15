@@ -263,6 +263,10 @@ class UnhedgeTrader:
                           f"Bitget卖1: {float(bitget_ask):.6f} (量: {float(bitget_ask_volume):.6f}"
                             )
 
+                # 记录预期价格（使用触发交易时的价格）
+                expected_spot_price = float(gateio_bid)
+                expected_contract_price = float(bitget_ask)
+
                 # 准备下单参数
                 trade_amount = self.spot_amount
                 contract_amount = self.bitget.amount_to_precision(self.contract_symbol, trade_amount)
@@ -284,18 +288,131 @@ class UnhedgeTrader:
                 logger.info(f"计划平仓数量: {trade_amount} {base_currency}")
                 logger.info(f"在Gate.io市价卖出 {trade_amount} {base_currency}")
                 logger.info(f"在Bitget市价平空单 {contract_amount} {base_currency}")
-
                 logger.info(f"Gate.io现货订单提交详情: {spot_order}")
                 logger.info(f"Bitget合约订单提交详情: {contract_order}")
 
-                # 检查交易结果
-                await self.verify_trade_result(spot_order, contract_order)
+                # 等待一秒，让API状态有时间更新
+                await asyncio.sleep(1)
+
+                # 获取订单最新状态
+                spot_order_id = spot_order.get('id')
+                contract_order_id = contract_order.get('id')
+                
+                # 获取Gate.io订单最新状态
+                updated_spot_order = None
+                if spot_order_id:
+                    try:
+                        updated_spot_order = await self.gateio.fetch_order(spot_order_id, self.symbol)
+                        logger.debug(f"通过fetch_order获取Gate.io订单状态: {updated_spot_order.get('status')}")
+                        if updated_spot_order:
+                            spot_order = updated_spot_order
+                    except Exception as e:
+                        logger.warning(f"获取Gate.io订单更新失败: {str(e)}")
+
+                # 获取Bitget订单最新状态
+                updated_contract_order = None
+                if contract_order_id:
+                    try:
+                        updated_contract_order = await self.bitget.fetch_order(contract_order_id, self.contract_symbol)
+                        if updated_contract_order:
+                            contract_order = updated_contract_order
+                    except Exception as e:
+                        logger.warning(f"获取Bitget订单更新失败: {str(e)}")
+
+                # 详细分析Gate.io现货订单
+                spot_status = spot_order.get('status')
+                spot_filled = float(spot_order.get('filled', 0))
+                spot_amount = float(spot_order.get('amount', 0))
+                spot_fill_percent = (spot_filled / spot_amount * 100) if spot_amount > 0 else 0
+                
+                # 计算Gate.io平均成交价格
+                spot_cost = float(spot_order.get('cost', 0))
+                spot_avg_price = spot_cost / spot_filled if spot_filled > 0 else 0
+                
+                # 详细分析Bitget合约订单
+                contract_status = contract_order.get('status')
+                contract_filled = float(contract_order.get('filled', 0))
+                contract_amount = float(contract_order.get('amount', 0))
+                contract_fill_percent = (contract_filled / contract_amount * 100) if contract_amount > 0 else 0
+                
+                # 计算Bitget平均成交价格
+                contract_cost = float(contract_order.get('cost', 0))
+                contract_avg_price = contract_cost / contract_filled if contract_filled > 0 else 0
+
+                # 确保订单状态正确
+                valid_statuses = ['closed', 'filled']
+                
+                # Gate.io订单验证标准
+                gate_verification_passed = (
+                    spot_status in valid_statuses or 
+                    spot_fill_percent >= 95 or
+                    spot_filled > 0
+                )
+                
+                # Bitget订单验证标准
+                bitget_verification_passed = (
+                    contract_status in valid_statuses or
+                    contract_fill_percent >= 95 or
+                    contract_filled > 0
+                )
+                
+                if not gate_verification_passed:
+                    raise Exception(f"Gate.io订单状态异常: {spot_status}, 成交量: {spot_filled}, 成交率: {spot_fill_percent:.2f}%")
+                    
+                if not bitget_verification_passed:
+                    raise Exception(f"Bitget订单状态异常: {contract_status}, 成交量: {contract_filled}, 成交率: {contract_fill_percent:.2f}%")
+
+                # 更新统计数据
+                self.total_spot_filled += spot_filled
+                self.total_contract_filled += contract_filled
+                
+                # 获取手续费
+                spot_fees = spot_order.get('fees', [])
+                quote_fee = sum(float(fee['cost']) for fee in spot_fees if fee['currency'] == 'USDT')
+                
+                # 计算滑点
+                spot_slippage = (spot_avg_price - expected_spot_price) / expected_spot_price
+                contract_slippage = (expected_contract_price - contract_avg_price) / expected_contract_price
+                
+                # 计算实际价差和预期价差
+                expected_spread = (expected_spot_price - expected_contract_price) / expected_contract_price
+                actual_spread = (spot_avg_price - contract_avg_price) / contract_avg_price
+                spread_slippage = actual_spread - expected_spread
+                
+                logger.info(f"Gate.io实际成交数量: {spot_filled} {base_currency}, 平均价格: {spot_avg_price:.5f}, 手续费: {quote_fee} USDT")
+                logger.info(f"Bitget实际成交数量: {contract_filled} {base_currency}, 平均价格: {contract_avg_price:.5f}")
+                
+                logger.info(f"Gate.io滑点: 预期价格 {expected_spot_price:.5f}, 实际成交价 {spot_avg_price:.5f}, 滑点率 {spot_slippage*100:.4f}%")
+                logger.info(f"Bitget滑点: 预期价格 {expected_contract_price:.5f}, 实际成交价 {contract_avg_price:.5f}, 滑点率 {contract_slippage*100:.4f}%")
+                logger.info(f"价差滑点: 预期价差 {expected_spread*100:.4f}%, 实际价差 {actual_spread*100:.4f}%, 价差损失 {spread_slippage*100:.4f}%")
+                
+                # 检查数量是否匹配（允许1%的误差）
+                diff_percent = abs(spot_filled - contract_filled) / max(spot_filled, contract_filled)
+                if diff_percent > 0.01:  # 误差超过1%
+                    raise Exception(f"交易数量不匹配: Gate.io {spot_filled}, Bitget {contract_filled}, "
+                                   f"误差: {diff_percent * 100:.2f}%")
+                                   
+                # 记录本次交易结果
+                trade_result = {
+                    'timestamp': time.time(),
+                    'spot_filled': spot_filled,
+                    'contract_filled': contract_filled,
+                    'spot_order_id': spot_order['id'],
+                    'contract_order_id': contract_order['id'],
+                    'fee': quote_fee,
+                    'spot_avg_price': spot_avg_price,
+                    'contract_avg_price': contract_avg_price,
+                    'spot_slippage': spot_slippage,
+                    'contract_slippage': contract_slippage,
+                    'spread_slippage': spread_slippage
+                }
+                self.trade_results.append(trade_result)
+                
+                logger.info(f"交易验证通过: 第{self.completed_trades+1}次, "
+                           f"Gate.io成交: {spot_filled}, Bitget成交: {contract_filled}")
                 
                 # 成功执行一次交易，更新计数器
                 self.completed_trades += 1
-
-                # 检查平仓后的持仓情况
-                # await self.check_positions()
 
                 return spot_order, contract_order
 
@@ -303,200 +420,6 @@ class UnhedgeTrader:
 
         except Exception as e:
             logger.error(f"执行交易时出错: {str(e)}")
-            raise
-
-    async def verify_trade_result(self, spot_order, contract_order):
-        """验证交易结果"""
-        try:
-            # 获取订单ID
-            spot_order_id = spot_order.get('id')
-            contract_order_id = contract_order.get('id')
-            base_currency = self.symbol.split('/')[0]
-            
-            logger.info(f"验证交易结果 - Gate.io订单ID: {spot_order_id}, Bitget订单ID: {contract_order_id}")
-            
-            # 获取最新的订单信息
-            # 先等待一秒，让API状态有时间更新
-            await asyncio.sleep(1)
-            
-            # 获取Gate.io订单最新状态
-            updated_spot_order = None
-            if spot_order_id:
-                try:
-                    # 尝试多种方式获取Gate.io订单状态
-                    # try:
-                    #     # 先尝试从已完成订单列表中获取
-                    #     closed_orders = await self.gateio.fetch_closed_orders(self.symbol, since=int(time.time() * 1000) - 60000)
-                    #     for order in closed_orders:
-                    #         if order.get('id') == spot_order_id:
-                    #             updated_spot_order = order
-                    #             logger.debug(f"从已完成订单中找到Gate.io订单: {order.get('id')}")
-                    #             break
-                    # except Exception as e:
-                    #     logger.debug(f"通过fetch_closed_orders获取Gate.io订单状态失败: {str(e)}")
-                    
-                    # 如果从已完成订单中未找到，直接查询单个订单
-                    # if not updated_spot_order:
-                    updated_spot_order = await self.gateio.fetch_order(spot_order_id, self.symbol)
-                    logger.debug(f"通过fetch_order获取Gate.io订单状态: {updated_spot_order.get('status')}")
-                    
-                    if updated_spot_order:
-                        spot_order = updated_spot_order
-                        logger.debug(f"获取到Gate.io最新订单状态: {spot_order.get('status')}")
-                except Exception as e:
-                    logger.warning(f"获取Gate.io订单更新失败: {str(e)}")
-                    import traceback
-                    logger.error(f"获取Gate.io订单错误堆栈: {traceback.format_exc()}", exc_info=True)
-            
-            # 获取Bitget订单最新状态
-            updated_contract_order = None
-            if contract_order_id:
-                try:
-                    # 多种方式尝试获取订单状态
-                    error_messages = []
-                    
-                    # 方法1: 尝试获取已完成订单信息
-                    # try:
-                    #     updated_contract_order = await self.bitget.fetch_closed_order(contract_order_id, self.contract_symbol)
-                    #     logger.debug("成功从fetch_closed_order获取Bitget订单")
-                    # except Exception as e:
-                    #     error_messages.append(f"fetch_closed_order失败: {str(e)}")
-                        
-                    # 方法2: 如果方法1失败，尝试获取普通订单
-                    if updated_contract_order is None:
-                        try:
-                            updated_contract_order = await self.bitget.fetch_order(contract_order_id, self.contract_symbol)
-                            logger.debug("成功从fetch_order获取Bitget订单")
-                        except Exception as e:
-                            error_messages.append(f"fetch_order失败: {str(e)}")
-                    
-                    # 方法3: 如果前两种方法都失败，尝试获取最近订单列表
-                    # if updated_contract_order is None:
-                    #     try:
-                    #         recent_orders = await self.bitget.fetch_orders(self.contract_symbol, limit=10)
-                    #         for order in recent_orders:
-                    #             if order.get('id') == contract_order_id:
-                    #                 updated_contract_order = order
-                    #                 logger.debug("成功从fetch_orders获取Bitget订单")
-                    #                 break
-                    #     except Exception as e:
-                    #         error_messages.append(f"fetch_orders失败: {str(e)}")
-                    
-                    if updated_contract_order:
-                        contract_order = updated_contract_order
-                        logger.debug(f"获取到Bitget最新订单状态: {contract_order.get('status')}")
-                    else:
-                        logger.warning(f"无法获取Bitget订单更新，尝试的方法都失败: {', '.join(error_messages)}")
-                except Exception as e:
-                    logger.warning(f"获取Bitget订单更新失败: {str(e)}")
-                    import traceback
-                    logger.debug(f"获取Bitget订单错误堆栈: {traceback.format_exc()}")
-                    
-            # 记录订单详细信息
-            logger.info(f"Gate.io订单执行详情: {spot_order}")
-            logger.info(f"Bitget订单执行详情: {contract_order}")
-            
-            # 详细分析Gate.io现货订单
-            spot_status = spot_order.get('status')
-            spot_filled = float(spot_order.get('filled', 0))
-            spot_amount = float(spot_order.get('amount', 0))
-            spot_fill_percent = (spot_filled / spot_amount * 100) if spot_amount > 0 else 0
-            
-            # 计算Gate.io平均成交价格
-            spot_cost = float(spot_order.get('cost', 0))
-            spot_avg_price = spot_cost / spot_filled if spot_filled > 0 else 0
-            
-            # 详细分析Bitget合约订单
-            contract_status = contract_order.get('status')
-            contract_filled = float(contract_order.get('filled', 0))
-            contract_amount = float(contract_order.get('amount', 0))
-            contract_fill_percent = (contract_filled / contract_amount * 100) if contract_amount > 0 else 0
-            
-            # 计算Bitget平均成交价格
-            contract_cost = float(contract_order.get('cost', 0))
-            contract_avg_price = contract_cost / contract_filled if contract_filled > 0 else 0
-            
-            # 确保订单状态正确
-            valid_statuses = ['closed', 'filled']
-            
-            # Gate.io订单验证标准：
-            # 1. 状态应该是已完成或已成交
-            # 2. 或者成交率应该达到95%以上（对于市价单，可能API反馈的状态不准确）
-            gate_verification_passed = (
-                spot_status in valid_statuses or 
-                spot_fill_percent >= 95 or
-                spot_filled > 0  # 只要有成交量就算通过
-            )
-            
-            # Bitget订单验证标准：
-            # 同样检查状态或成交率
-            bitget_verification_passed = (
-                contract_status in valid_statuses or
-                contract_fill_percent >= 95 or
-                contract_filled > 0  # 只要有成交量就算通过
-            )
-            
-            if not gate_verification_passed:
-                raise Exception(f"Gate.io订单状态异常: {spot_status}, 成交量: {spot_filled}, 成交率: {spot_fill_percent:.2f}%")
-                
-            if not bitget_verification_passed:
-                raise Exception(f"Bitget订单状态异常: {contract_status}, 成交量: {contract_filled}, 成交率: {contract_fill_percent:.2f}%")
-            
-            # 更新统计数据
-            self.total_spot_filled += spot_filled
-            self.total_contract_filled += contract_filled
-            
-            # 获取手续费
-            spot_fees = spot_order.get('fees', [])
-            quote_fee = sum(float(fee['cost']) for fee in spot_fees if fee['currency'] == 'USDT')
-            
-            # 获取预期价格（从订单簿数据）
-            expected_spot_price = float(self.orderbooks['gateio']['bids'][0][0])
-            expected_contract_price = float(self.orderbooks['bitget']['asks'][0][0])
-            
-            # 计算滑点
-            spot_slippage = (spot_avg_price - expected_spot_price) / expected_spot_price
-            contract_slippage = (expected_contract_price - contract_avg_price) / expected_contract_price
-            
-            # 计算实际价差和预期价差
-            expected_spread = (expected_spot_price - expected_contract_price) / expected_contract_price
-            actual_spread = (spot_avg_price - contract_avg_price) / contract_avg_price
-            spread_slippage = actual_spread - expected_spread
-            
-            logger.info(f"Gate.io实际成交数量: {spot_filled} {base_currency}, 平均价格: {spot_avg_price:.5f}, 手续费: {quote_fee} USDT")
-            logger.info(f"Bitget实际成交数量: {contract_filled} {base_currency}, 平均价格: {contract_avg_price:.5f}")
-            
-            logger.info(f"Gate.io滑点: 预期价格 {expected_spot_price:.5f}, 实际成交价 {spot_avg_price:.5f}, 滑点率 {spot_slippage*100:.4f}%")
-            logger.info(f"Bitget滑点: 预期价格 {expected_contract_price:.5f}, 实际成交价 {contract_avg_price:.5f}, 滑点率 {contract_slippage*100:.4f}%")
-            logger.info(f"价差滑点: 预期价差 {expected_spread*100:.4f}%, 实际价差 {actual_spread*100:.4f}%, 价差损失 {spread_slippage*100:.4f}%")
-            
-            # 检查数量是否匹配（允许1%的误差）
-            diff_percent = abs(spot_filled - contract_filled) / max(spot_filled, contract_filled)
-            if diff_percent > 0.01:  # 误差超过1%
-                raise Exception(f"交易数量不匹配: Gate.io {spot_filled}, Bitget {contract_filled}, "
-                               f"误差: {diff_percent * 100:.2f}%")
-                               
-            # 记录本次交易结果
-            trade_result = {
-                'timestamp': time.time(),
-                'spot_filled': spot_filled,
-                'contract_filled': contract_filled,
-                'spot_order_id': spot_order['id'],
-                'contract_order_id': contract_order['id'],
-                'fee': quote_fee,
-                'spot_avg_price': spot_avg_price,
-                'contract_avg_price': contract_avg_price,
-                'spot_slippage': spot_slippage,
-                'contract_slippage': contract_slippage,
-                'spread_slippage': spread_slippage
-            }
-            self.trade_results.append(trade_result)
-            
-            logger.info(f"交易验证通过: 第{self.completed_trades+1}次, "
-                       f"Gate.io成交: {spot_filled}, Bitget成交: {contract_filled}")
-                       
-        except Exception as e:
-            logger.error(f"交易结果验证失败: {str(e)}")
             raise
     
     def print_trade_summary(self, total_count, initial_position):
