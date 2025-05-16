@@ -677,27 +677,7 @@ async def main():
                             args.amount = quantity_result['quantity']
                             logger.info(f"自动计算交易数量: {args.amount} {base_currency} (预计金额: {quantity_result['estimated_amount']:.2f} USDT)")
                     else:
-                        logger.error(f"获取价格失败，API响应: {data}")
-                        # 尝试使用备用API
-                        backup_url = "https://api.bybit.com/v5/market/tickers"
-                        backup_params = {"category": "inverse", "symbol": f"{base_currency}USDT"}
-                        async with session.get(backup_url, params=backup_params, proxy=proxies.get('https')) as backup_response:
-                            if backup_response.status == 200:
-                                backup_data = await backup_response.json()
-                                if backup_data["retCode"] == 0 and "result" in backup_data and "list" in backup_data["result"]:
-                                    spot_price = float(backup_data["result"]["list"][0]["lastPrice"])
-                                    logger.info(f"使用备用API获取到{base_currency}当前价格: {spot_price} USDT")
-                                    
-                                    # 如果amount为-1，使用calculate_order_quantity计算数量
-                                    if args.amount == -1:
-                                        from tools.math import calculate_order_quantity
-                                        quantity_result = calculate_order_quantity(spot_price)
-                                        args.amount = quantity_result['quantity']
-                                        logger.info(f"自动计算交易数量: {args.amount} {base_currency} (预计金额: {quantity_result['estimated_amount']:.2f} USDT)")
-                                else:
-                                    raise Exception(f"备用API获取价格失败: {backup_data}")
-                            else:
-                                raise Exception(f"备用API请求失败: {backup_response.status}")
+                        raise Exception(f"获取价格失败，API响应: {data}")
                 else:
                     raise Exception(f"获取价格请求失败: {response.status}")
 
