@@ -199,6 +199,13 @@ class CryptoYieldMonitor:
         return 1 * leverage_ratio / (leverage_ratio + 1) * (apy + fundingRate / fundingIntervalHours * 24 * 365)
 
     def product_filter(self, all_products):
+        # 杀掉所有gateio_*_hedge.py进程
+        try:
+            subprocess.run(['pkill', '-f', 'gateio_.*_hedge.py'], check=False)
+            logger.info("已杀掉所有gateio hedge进程")
+        except Exception as e:
+            logger.error(f"杀掉gateio hedge进程失败: {str(e)}")
+
         # 筛选年化利率高于阈值的产品
         eligible_products = [p for p in all_products if
                              p["apy"] >= stability_buy_apy_threshold and p['volume_24h'] > volume_24h_threshold]
