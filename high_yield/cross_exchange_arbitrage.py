@@ -2,7 +2,7 @@
 跨交易所套利监控脚本
 
 该脚本用于监控不同交易所之间的价格差异，寻找套利机会。主要功能包括：
-1. 从Bitget和GateIO获取所有现货和合约交易对
+1. 从GateIO、Binance、Bybit和Bitget获取所有现货和合约交易对
 2. 获取每个交易对在不同交易所的现货和合约价格
 3. 计算价格差异，筛选出符合条件的套利机会
 4. 将套利机会发送到企业微信群机器人并保存到文件
@@ -15,6 +15,7 @@
     - price_diff_threshold: 价格差异阈值（默认0.2%）
     - volume_24h_threshold: 24小时最小交易量阈值（默认20万USDT）
     - arbitrage_webhook_url: 企业微信群机器人webhook地址
+    - min_token_price: 最小代币价格（默认0.001 USDT）
 
 作者：Raymon
 创建时间：2024-05-06
@@ -26,7 +27,13 @@ import requests
 import json
 from typing import List, Dict, Any, Set, Tuple
 from exchange import ExchangeAPI
-from config import arbitrage_webhook_url, price_diff_threshold, volume_24h_threshold, proxies
+from config import (
+    arbitrage_webhook_url, 
+    price_diff_threshold, 
+    volume_24h_threshold, 
+    proxies,
+    min_token_price
+)
 from tools.logger import logger
 import os
 
@@ -80,7 +87,7 @@ def make_bitget_request(url: str, params: Dict = None, proxies: Dict = None) -> 
 
 def get_all_trading_pairs() -> Set[str]:
     """
-    从Bitget和GateIO获取所有现货和合约交易对
+    从GateIO、Binance、Bybit和Bitget获取所有现货和合约交易对
     :return: 交易对集合
     """
     trading_pairs = set()
@@ -138,6 +145,60 @@ def get_all_trading_pairs() -> Set[str]:
         logger.info(f"从GateIO获取到{len(trading_pairs)}个交易对")
     except Exception as e:
         logger.error(f"获取GateIO交易对失败: {str(e)}")
+
+    # 获取Binance交易对
+    try:
+        logger.info("开始获取Binance交易对")
+        # 获取现货交易对
+        spot_url = "https://api.binance.com/api/v3/exchangeInfo"
+        spot_response = requests.get(spot_url, proxies=api.session.proxies)
+        if spot_response.status_code == 200:
+            spot_data = spot_response.json()
+            for symbol in spot_data["symbols"]:
+                if symbol["quoteAsset"] == "USDT" and symbol["status"] == "TRADING":
+                    trading_pairs.add(symbol["baseAsset"] + "USDT")
+        
+        # 获取合约交易对
+        futures_url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
+        futures_response = requests.get(futures_url, proxies=api.session.proxies)
+        if futures_response.status_code == 200:
+            futures_data = futures_response.json()
+            for symbol in futures_data["symbols"]:
+                if symbol["quoteAsset"] == "USDT" and symbol["status"] == "TRADING":
+                    trading_pairs.add(symbol["baseAsset"] + "USDT")
+        
+        logger.info(f"从Binance获取到{len(trading_pairs)}个交易对")
+    except Exception as e:
+        logger.error(f"获取Binance交易对失败: {str(e)}")
+
+    # 获取Bybit交易对
+    try:
+        logger.info("开始获取Bybit交易对")
+        # 获取现货交易对
+        spot_url = "https://api.bybit.com/v5/market/instruments-info"
+        spot_params = {"category": "spot"}
+        spot_response = requests.get(spot_url, params=spot_params, proxies=api.session.proxies)
+        if spot_response.status_code == 200:
+            spot_data = spot_response.json()
+            if spot_data["retCode"] == 0 and "result" in spot_data:
+                for item in spot_data["result"]["list"]:
+                    if item["quoteCoin"] == "USDT" and item["status"] == "Trading":
+                        trading_pairs.add(item["baseCoin"] + "USDT")
+        
+        # 获取合约交易对
+        futures_url = "https://api.bybit.com/v5/market/instruments-info"
+        futures_params = {"category": "linear"}
+        futures_response = requests.get(futures_url, params=futures_params, proxies=api.session.proxies)
+        if futures_response.status_code == 200:
+            futures_data = futures_response.json()
+            if futures_data["retCode"] == 0 and "result" in futures_data:
+                for item in futures_data["result"]["list"]:
+                    if item["quoteCoin"] == "USDT" and item["status"] == "Trading":
+                        trading_pairs.add(item["baseCoin"] + "USDT")
+        
+        logger.info(f"从Bybit获取到{len(trading_pairs)}个交易对")
+    except Exception as e:
+        logger.error(f"获取Bybit交易对失败: {str(e)}")
     
     return trading_pairs
 
@@ -164,11 +225,13 @@ def get_trading_pair_info(api: ExchangeAPI, token: str) -> Dict[str, Any]:
             spot_data = spot_response.json()
             if spot_data["code"] == "00000" and "data" in spot_data:
                 data = spot_data["data"]
-                if isinstance(data, dict):  # 确保data是字典类型
-                    result['spot']['Bitget'] = {
-                        'price': float(data["close"]),
-                        'volume': float(data["baseVol"]) * float(data["close"])
-                    }
+                if isinstance(data, dict):
+                    price = float(data["close"])
+                    if price >= min_token_price:  # 检查价格是否满足最小要求
+                        result['spot']['Bitget'] = {
+                            'price': price,
+                            'volume': float(data["baseVol"]) * price
+                        }
         
         # 获取合约价格、交易量和资金费率
         futures_url = "https://api.bitget.com/api/v2/mix/market/ticker"
@@ -178,11 +241,13 @@ def get_trading_pair_info(api: ExchangeAPI, token: str) -> Dict[str, Any]:
             futures_data = futures_response.json()
             if futures_data["code"] == "00000" and "data" in futures_data:
                 data = futures_data["data"]
-                if isinstance(data, dict):  # 确保data是字典类型
-                    result['futures']['Bitget'] = {
-                        'price': float(data["lastPr"]),
-                        'volume': float(data["usdtVol"])
-                    }
+                if isinstance(data, dict):
+                    price = float(data["lastPr"])
+                    if price >= min_token_price:  # 检查价格是否满足最小要求
+                        result['futures']['Bitget'] = {
+                            'price': price,
+                            'volume': float(data["usdtVol"])
+                        }
         
         # 获取资金费率
         funding_url = "https://api.bitget.com/api/v2/mix/market/current-fund-rate"
@@ -208,10 +273,12 @@ def get_trading_pair_info(api: ExchangeAPI, token: str) -> Dict[str, Any]:
             gate_io_token = token.replace('USDT', '_USDT')
             for ticker in spot_data:
                 if ticker['currency_pair'] == gate_io_token:
-                    result['spot']['GateIO'] = {
-                        'price': float(ticker['last']),
-                        'volume': float(ticker['base_volume']) * float(ticker['last'])
-                    }
+                    price = float(ticker['last'])
+                    if price >= min_token_price:  # 检查价格是否满足最小要求
+                        result['spot']['GateIO'] = {
+                            'price': price,
+                            'volume': float(ticker['base_volume']) * price
+                        }
                     break
         
         # 获取合约价格、交易量和资金费率
@@ -219,14 +286,86 @@ def get_trading_pair_info(api: ExchangeAPI, token: str) -> Dict[str, Any]:
         futures_response = requests.get(futures_url, proxies=api.session.proxies)
         if futures_response.status_code == 200:
             futures_data = futures_response.json()
-            if isinstance(futures_data, dict):  # 确保返回的是字典类型
-                result['futures']['GateIO'] = {
-                    'price': float(futures_data.get('mark_price', 0)),
-                    'volume': float(futures_data.get('volume_24h', 0))
-                }
-                result['funding_rates']['GateIO'] = float(futures_data.get('funding_rate', 0)) * 100
+            if isinstance(futures_data, dict):
+                price = float(futures_data.get('mark_price', 0))
+                if price >= min_token_price:  # 检查价格是否满足最小要求
+                    result['futures']['GateIO'] = {
+                        'price': price,
+                        'volume': float(futures_data.get('volume_24h', 0))
+                    }
+                    result['funding_rates']['GateIO'] = float(futures_data.get('funding_rate', 0)) * 100
     except Exception as e:
         logger.error(f"获取GateIO {token}信息失败: {str(e)}")
+
+    # 获取Binance信息
+    try:
+        # 获取现货价格和交易量
+        spot_url = "https://api.binance.com/api/v3/ticker/24hr"
+        spot_params = {"symbol": token}
+        spot_response = requests.get(spot_url, params=spot_params, proxies=api.session.proxies)
+        if spot_response.status_code == 200:
+            spot_data = spot_response.json()
+            price = float(spot_data['lastPrice'])
+            if price >= min_token_price:  # 检查价格是否满足最小要求
+                result['spot']['Binance'] = {
+                    'price': price,
+                    'volume': float(spot_data['volume']) * price
+                }
+        
+        # 获取合约价格、交易量和资金费率
+        futures_url = "https://fapi.binance.com/fapi/v1/ticker/24hr"
+        futures_params = {"symbol": token}
+        futures_response = requests.get(futures_url, params=futures_params, proxies=api.session.proxies)
+        if futures_response.status_code == 200:
+            futures_data = futures_response.json()
+            price = float(futures_data['lastPrice'])
+            if price >= min_token_price:  # 检查价格是否满足最小要求
+                result['futures']['Binance'] = {
+                    'price': price,
+                    'volume': float(futures_data['volume']) * price
+                }
+                result['funding_rates']['Binance'] = float(futures_data['lastFundingRate']) * 100
+    except Exception as e:
+        logger.error(f"获取Binance {token}信息失败: {str(e)}")
+
+    # 获取Bybit信息
+    try:
+        # 获取现货价格和交易量
+        spot_url = "https://api.bybit.com/v5/market/tickers"
+        spot_params = {"category": "spot"}
+        spot_response = requests.get(spot_url, params=spot_params, proxies=api.session.proxies)
+        if spot_response.status_code == 200:
+            spot_data = spot_response.json()
+            if spot_data["retCode"] == 0 and "result" in spot_data:
+                for item in spot_data["result"]["list"]:
+                    if item["symbol"] == token:
+                        price = float(item["lastPrice"])
+                        if price >= min_token_price:  # 检查价格是否满足最小要求
+                            result['spot']['Bybit'] = {
+                                'price': price,
+                                'volume': float(item["volume24h"]) * price
+                            }
+                        break
+        
+        # 获取合约价格、交易量和资金费率
+        futures_url = "https://api.bybit.com/v5/market/tickers"
+        futures_params = {"category": "linear"}
+        futures_response = requests.get(futures_url, params=futures_params, proxies=api.session.proxies)
+        if futures_response.status_code == 200:
+            futures_data = futures_response.json()
+            if futures_data["retCode"] == 0 and "result" in futures_data:
+                for item in futures_data["result"]["list"]:
+                    if item["symbol"] == token:
+                        price = float(item["lastPrice"])
+                        if price >= min_token_price:  # 检查价格是否满足最小要求
+                            result['futures']['Bybit'] = {
+                                'price': price,
+                                'volume': float(item["volume24h"]) * price
+                            }
+                            result['funding_rates']['Bybit'] = float(item["fundingRate"]) * 100
+                        break
+    except Exception as e:
+        logger.error(f"获取Bybit {token}信息失败: {str(e)}")
     
     return result
 
@@ -241,7 +380,7 @@ def find_arbitrage_opportunities(token_info: Dict[str, Any], token: str) -> List
     
     # 检查是否有足够的交易量
     has_valid_volume = False
-    for exchange in ['Bitget', 'GateIO']:
+    for exchange in ['Bitget', 'GateIO', 'Binance', 'Bybit']:
         if (exchange in token_info['futures'] and 
             token_info['futures'][exchange]['volume'] >= volume_24h_threshold):
             has_valid_volume = True
@@ -255,14 +394,14 @@ def find_arbitrage_opportunities(token_info: Dict[str, Any], token: str) -> List
         return opportunities
     
     # 检查资金费率
-    for exchange in ['Bitget', 'GateIO']:
+    for exchange in ['Bitget', 'GateIO', 'Binance', 'Bybit']:
         if (exchange in token_info['funding_rates'] and 
             token_info['funding_rates'][exchange] < 0):
             return opportunities
     
     # 检查合约价格差异
     futures_prices = {}
-    for exchange in ['Bitget', 'GateIO']:
+    for exchange in ['Bitget', 'GateIO', 'Binance', 'Bybit']:
         if exchange in token_info['futures']:
             futures_prices[exchange] = token_info['futures'][exchange]['price']
     
@@ -289,7 +428,7 @@ def find_arbitrage_opportunities(token_info: Dict[str, Any], token: str) -> List
                     })
     
     # 检查合约和现货价格差异
-    for futures_exchange in ['Bitget', 'GateIO']:
+    for futures_exchange in ['Bitget', 'GateIO', 'Binance', 'Bybit']:
         if futures_exchange in token_info['futures']:
             futures_price = token_info['futures'][futures_exchange]['price']
             
@@ -313,7 +452,7 @@ def find_arbitrage_opportunities(token_info: Dict[str, Any], token: str) -> List
                     })
             
             # 检查其他交易所的现货价格
-            for spot_exchange in ['Bitget', 'GateIO']:
+            for spot_exchange in ['Bitget', 'GateIO', 'Binance', 'Bybit']:
                 if spot_exchange != futures_exchange and spot_exchange in token_info['spot']:
                     spot_price = token_info['spot'][spot_exchange]['price']
                     # 计算价差百分比，保留符号
