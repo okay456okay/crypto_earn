@@ -13,6 +13,7 @@
 配置说明：
     在config.py中设置：
     - price_diff_threshold: 价格差异阈值（默认0.2%）
+    - max_price_diff_threshold: 最大价格差异阈值（默认10%）
     - volume_24h_threshold: 24小时最小交易量阈值（默认20万USDT）
     - arbitrage_webhook_url: 企业微信群机器人webhook地址
     - min_token_price: 最小代币价格（默认0.001 USDT）
@@ -30,6 +31,7 @@ from exchange import ExchangeAPI
 from config import (
     arbitrage_webhook_url, 
     price_diff_threshold, 
+    max_price_diff_threshold,
     volume_24h_threshold, 
     proxies,
     min_token_price
@@ -415,7 +417,8 @@ def find_arbitrage_opportunities(token_info: Dict[str, Any], token: str) -> List
                 price2 = futures_prices[exchange2]
                 price_diff = abs(price1 - price2) / min(price1, price2) * 100
                 
-                if price_diff > price_diff_threshold:
+                # 检查价差是否在合理范围内
+                if price_diff_threshold < price_diff <= max_price_diff_threshold:
                     opportunities.append({
                         'token': token,
                         'type': 'futures_cross_exchange',
@@ -438,8 +441,8 @@ def find_arbitrage_opportunities(token_info: Dict[str, Any], token: str) -> List
                 # 计算价差百分比，保留符号
                 price_diff = (futures_price - spot_price) / spot_price * 100
                 
-                # 只保留合约价格高于现货价格的机会
-                if price_diff > price_diff_threshold:
+                # 只保留合约价格高于现货价格且价差在合理范围内的机会
+                if price_diff_threshold < price_diff <= max_price_diff_threshold:
                     opportunities.append({
                         'token': token,
                         'type': 'futures_spot_same_exchange',
@@ -458,8 +461,8 @@ def find_arbitrage_opportunities(token_info: Dict[str, Any], token: str) -> List
                     # 计算价差百分比，保留符号
                     price_diff = (futures_price - spot_price) / spot_price * 100
                     
-                    # 只保留合约价格高于现货价格的机会
-                    if price_diff > price_diff_threshold:
+                    # 只保留合约价格高于现货价格且价差在合理范围内的机会
+                    if price_diff_threshold < price_diff <= max_price_diff_threshold:
                         opportunities.append({
                             'token': token,
                             'type': 'futures_spot_cross_exchange',
