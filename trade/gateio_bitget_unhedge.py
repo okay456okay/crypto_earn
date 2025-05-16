@@ -479,6 +479,30 @@ async def main():
         logger.setLevel(logging.INFO)
 
     try:
+        # 获取当前价格
+        base_currency = args.symbol.split('/')[0]
+        url = "https://api.bitget.com/api/spot/v1/market/ticker"
+        params = {"symbol": f"{base_currency}USDT_SPBL"}
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params, proxy=proxies.get('https')) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if data["code"] == "00000" and "data" in data:
+                        spot_price = float(data["data"]["close"])
+                        logger.info(f"获取到{base_currency}当前价格: {spot_price} USDT")
+                        
+                        # 如果amount为-1，使用calculate_order_quantity计算数量
+                        if args.amount == -1:
+                            from tools.math import calculate_order_quantity
+                            quantity_result = calculate_order_quantity(spot_price)
+                            args.amount = quantity_result['quantity']
+                            logger.info(f"自动计算交易数量: {args.amount} {base_currency} (预计金额: {quantity_result['estimated_amount']:.2f} USDT)")
+                    else:
+                        raise Exception(f"获取价格失败: {data}")
+                else:
+                    raise Exception(f"获取价格请求失败: {response.status}")
+
         trader = UnhedgeTrader(
             symbol=args.symbol,
             spot_amount=args.amount,
@@ -503,11 +527,7 @@ async def main():
         
         try:
             # 执行指定次数的交易
-            # attempt_count = 0
             while trader.completed_trades < total_count:
-                # attempt_count += 1
-                # logger.info(f"开始第{attempt_count}次尝试 (已完成{trader.completed_trades}/{total_count}次交易)")
-                
                 try:
                     # 每次交易前重新检查持仓，确保有足够的资产
                     await trader.check_positions()

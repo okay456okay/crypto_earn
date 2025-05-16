@@ -48,6 +48,6 @@ if [ "$debug_mode" = true ]; then
     debug_flag="-d"
 fi
 
-if ! ps auxww|grep -v grep| grep -q "gateio_${exchange}_unhedge.py"; then
+if ! ps auxww|grep -v grep| grep "gateio_${exchange}_unhedge.py" |grep $token &>/dev/null; then
   nohup ${script_dir}/../venv/bin/python $script_dir/../trade/gateio_${exchange}_unhedge.py -s ${token}/USDT -p $price_diff $debug_flag &> $script_dir/../logs/${token}.log &
 fi

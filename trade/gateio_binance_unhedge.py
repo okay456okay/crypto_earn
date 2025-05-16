@@ -659,16 +659,27 @@ async def main():
     else:
         logger.setLevel(logging.INFO)
 
-    trader = None
-    success = False
-    count = 0  # 初始化计划执行次数
-    
     try:
-        logger.info("=" * 50)
-        logger.info(f"开始执行 Gate.io现货卖出与Binance合约平空单交易")
-        logger.info(f"交易对: {args.symbol}, 单次交易数量: {args.amount}, "
-                   f"最小价差: {args.min_spread * 100:.4f}%, 深度倍数: {args.depth_multiplier}")
+        # 获取当前价格
+        base_currency = args.symbol.split('/')[0]
+        url = f"https://api.binance.com/api/v3/ticker/price?symbol={base_currency}USDT"
         
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, proxy=proxies.get('https')) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    spot_price = float(data['price'])
+                    logger.info(f"获取到{base_currency}当前价格: {spot_price} USDT")
+                    
+                    # 如果amount为-1，使用calculate_order_quantity计算数量
+                    if args.amount == -1:
+                        from tools.math import calculate_order_quantity
+                        quantity_result = calculate_order_quantity(spot_price)
+                        args.amount = quantity_result['quantity']
+                        logger.info(f"自动计算交易数量: {args.amount} {base_currency} (预计金额: {quantity_result['estimated_amount']:.2f} USDT)")
+                else:
+                    raise Exception(f"获取价格请求失败: {response.status}")
+
         trader = UnhedgeTrader(
             symbol=args.symbol,
             spot_amount=args.amount,
