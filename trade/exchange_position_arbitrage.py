@@ -19,6 +19,8 @@ import signal
 from decimal import Decimal
 from datetime import datetime
 from collections import defaultdict
+from time import sleep
+
 import ccxt.pro as ccxtpro
 
 
@@ -460,6 +462,7 @@ class ExchangeArbitrageCalculator:
                             cmd = f"{project_root}/scripts/close.sh -e {max_short_exchange[0]} -s {token}"
                             logger.info(f"执行关闭仓位命令: {cmd}")
                             subprocess.run(cmd, shell=True, check=True)
+                            sleep(1)
                         except Exception as e:
                             logger.error(f"关闭仓位失败: {str(e)}")
 
