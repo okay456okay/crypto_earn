@@ -24,6 +24,7 @@ import os
 import argparse
 from decimal import Decimal
 import asyncio
+import aiohttp
 
 import ccxt.base.errors
 import ccxt.pro as ccxtpro  # 使用 ccxt pro 版本
@@ -305,13 +306,6 @@ class HedgeTrader:
                     bitget_bid_volume = Decimal(str(bitget_ob['bids'][0][1]))
                     bitget_ask = Decimal(str(bitget_ob['asks'][0][0])) if bitget_ob['asks'] else Decimal('0')
                     bitget_ask_volume = Decimal(str(bitget_ob['asks'][0][1])) if bitget_ob['asks'] else Decimal('0')
-                    
-                    # 如果amount为-1，使用calculate_order_quantity计算数量
-                    if self.spot_amount == -1:
-                        from tools.math import calculate_order_quantity
-                        quantity_result = calculate_order_quantity(float(gateio_ask))
-                        self.spot_amount = quantity_result['quantity']
-                        logger.info(f"自动计算交易数量: {self.spot_amount} {self.symbol.split('/')[0]} (预计金额: {quantity_result['estimated_amount']:.2f} USDT)")
                     
                     # 计算价差 - bitget买一（卖出）- gateio卖一（买入）
                     spread = bitget_bid - gateio_ask
@@ -862,6 +856,32 @@ async def main():
             logger.info("进入余币宝测试模式")
             await test_earn_subscription()
             return 0
+
+        # 获取当前价格
+        base_currency = args.symbol.split('/')[0]
+        url = "https://api.bitget.com/api/spot/v1/market/ticker"
+        params = {"symbol": f"{base_currency}USDT_SPBL"}
+        
+        logger.info(f"开始获取{base_currency}当前价格，当前amount参数值: {args.amount}")
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params, proxy=proxies.get('https')) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if data["code"] == "00000" and "data" in data:
+                        spot_price = float(data["data"]["close"])
+                        logger.info(f"获取到{base_currency}当前价格: {spot_price} USDT")
+                        
+                        # 如果amount为-1，使用calculate_order_quantity计算数量
+                        if args.amount == -1:
+                            from tools.math import calculate_order_quantity
+                            quantity_result = calculate_order_quantity(spot_price)
+                            args.amount = quantity_result['quantity']
+                            logger.info(f"自动计算交易数量: {args.amount} {base_currency} (预计金额: {quantity_result['estimated_amount']:.2f} USDT)")
+                    else:
+                        raise Exception(f"获取价格失败: {data}")
+                else:
+                    raise Exception(f"获取价格请求失败: {response.status}")
 
         # 创建并初始化交易器
         trader = HedgeTrader(
