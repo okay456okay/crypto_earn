@@ -12,6 +12,7 @@ import time
 from datetime import datetime
 import sys
 import os
+import subprocess
 
 # import traceback
 
@@ -27,7 +28,7 @@ from high_yield.token_manager import TokenManager
 from tools.proxy import get_proxy_ip
 from config import leverage_ratio, yield_percentile, stability_buy_apy_threshold, sell_apy_threshold, \
     future_percentile, highyield_buy_apy_threshold, stability_buy_webhook_url, highyield_buy_webhook_url, \
-    highyield_checkpoints, volume_24h_threshold, subscribed_webhook_url
+    highyield_checkpoints, volume_24h_threshold, subscribed_webhook_url, project_root
 from tools.logger import logger
 
 
@@ -232,7 +233,7 @@ class CryptoYieldMonitor:
                 i['markPrice'] > 0.0001 and  # 币值大于某个值
                 i['volume_24h'] > volume_24h_threshold  # 合约交易额大于某个值
             ]
-            illegible_funding_rate = [i for i in futures_results if i['fundingRate'] < -0.1]
+            illegible_funding_rate = [i for i in futures_results if i['fundingRate'] < -0.01]
             # if len(eligible_funding_rate) == 0:
             if len(eligible_funding_rate) == 0 or len(illegible_funding_rate) > 0:
                 continue
@@ -265,6 +266,30 @@ class CryptoYieldMonitor:
                 'apy'] >= highyield_buy_apy_threshold:
                 logger.debug(f"add {product} to highyield_product_notifications, future results: {futures_results}")
                 highyield_product_notifications.append(notification)
+                
+                # 如果是GateIO的产品，执行对冲开仓
+                if product["exchange"] == "GateIO":
+                    # 筛选出Binance/Bitget/Bybit的合约信息
+                    valid_exchanges = [i for i in futures_results if i['exchange'] in ['Binance', 'Bitget', 'Bybit']]
+                    if valid_exchanges:
+                        # 找出价格最高的交易所
+                        highest_price_exchange = max(valid_exchanges, key=lambda x: x['markPrice'])
+                        logger.info(f"找到价格最高的交易所: {highest_price_exchange['exchange']}, 价格: {highest_price_exchange['markPrice']}")
+                        
+                        # 计算count值
+                        count = int((product['max_purchase'] - product['min_purchase']) / 50 * highest_price_exchange['markPrice'] / 8)
+                        logger.info(f"计算得到的count值: {count}")
+                        
+                        # 执行open.sh脚本
+                        try:
+                            cmd = f"{project_root}/scripts/open.sh -e {highest_price_exchange['exchange'].lower()} -s {token} -c {count}"
+                            logger.info(f"执行对冲开仓命令: {cmd}")
+                            subprocess.run(cmd, shell=True, check=True)
+                            logger.info(f"对冲开仓命令执行成功: {token} on {highest_price_exchange['exchange']}")
+                        except subprocess.CalledProcessError as e:
+                            logger.error(f"执行对冲开仓命令失败: {str(e)}, 命令: {cmd}")
+                        except Exception as e:
+                            logger.error(f"执行对冲开仓命令时发生错误: {str(e)}, 命令: {cmd}")
 
         # 发送通知
         if highyield_product_notifications:
