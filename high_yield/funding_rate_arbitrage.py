@@ -321,10 +321,8 @@ def get_24h_volume(api: ExchangeAPI, exchange: str, token: str) -> Dict[str, Any
             ticker = exchange.fetch_ticker(symbol)
             future_price = float(ticker['last'])
         
-        # 获取现货交易量（从所有交易所获取，取最大值）
-        spot_volume = 0
-        spot_price = 0
-        spot_exchange = ''
+        # 获取所有交易所的现货交易量和价格
+        spot_data = {}
         spot_token = token.replace('USDT', '')
         
         # 获取所有交易所的现货交易量
@@ -339,92 +337,84 @@ def get_24h_volume(api: ExchangeAPI, exchange: str, token: str) -> Dict[str, Any
         if not api.okx_volumes:
             api.get_okx_volumes()
         
-        # 从所有交易所中获取最大的现货交易量
-        spot_volumes = {
-            'Binance': api.binance_volumes.get(spot_token, 0),
-            'Bitget': api.bitget_volumes.get(spot_token, 0),
-            'Bybit': api.bybit_volumes.get(spot_token, 0),
-            'GateIO': api.gateio_volumes.get(spot_token, 0),
-            'OKX': api.okx_volumes.get(spot_token, 0)
-        }
-        
-        # 获取最大交易量对应的交易所
-        spot_exchange = max(spot_volumes.items(), key=lambda x: x[1])[0]
-        spot_volume = spot_volumes[spot_exchange]
-        
-        # 获取最大交易量交易所的现货价格
-        if spot_exchange == 'Binance':
-            url = f"https://api.binance.com/api/v3/ticker/price?symbol={spot_token}USDT"
-            response = requests.get(url, proxies=api.session.proxies)
-            if response.status_code == 200:
-                spot_price = float(response.json()['price'])
-        elif spot_exchange == 'Bitget':
-            url = "https://api.bitget.com/api/spot/v1/market/ticker"
-            params = {"symbol": f"{spot_token}USDT_SPBL"}
-            response = make_bitget_request(url, params=params, proxies=api.session.proxies)
-            if response.status_code == 200:
-                data = response.json()
-                if data["code"] == "00000" and "data" in data:
-                    spot_price = float(data["data"]["close"])
-        elif spot_exchange == 'Bybit':
-            url = "https://api.bybit.com/v5/market/tickers"
-            params = {"category": "spot", "symbol": f"{spot_token}USDT"}
-            response = requests.get(url, params=params, proxies=api.session.proxies)
-            if response.status_code == 200:
-                data = response.json()
-                if data["retCode"] == 0 and "result" in data and "list" in data["result"]:
-                    spot_price = float(data["result"]["list"][0]["lastPrice"])
-        elif spot_exchange == 'GateIO':
-            url = "https://api.gateio.ws/api/v4/spot/tickers"
-            response = requests.get(url, proxies=api.session.proxies)
-            if response.status_code == 200:
-                data = response.json()
-                gate_io_token = spot_token + '_USDT'
-                for ticker in data:
-                    if ticker['currency_pair'] == gate_io_token:
-                        spot_price = float(ticker['last'])
-                        break
-        elif spot_exchange == 'OKX':
-            url = f"https://www.okx.com/api/v5/market/ticker?instId={spot_token}-USDT"
-            response = requests.get(url, proxies=api.session.proxies)
-            if response.status_code == 200:
-                data = response.json()
-                if data["code"] == "0" and "data" in data:
-                    spot_price = float(data["data"][0]["last"])
-        
-        # 计算价差
-        price_diff = 0
-        if spot_price > 0:
-            price_diff = (future_price - spot_price) / spot_price * 100
+        # 获取每个交易所的现货数据
+        for spot_exchange in ['Binance', 'Bitget', 'Bybit', 'GateIO', 'OKX']:
+            spot_volume = 0
+            spot_price = 0
+            price_diff = 0
+            
+            if spot_exchange == 'Binance':
+                spot_volume = api.binance_volumes.get(spot_token, 0)
+                url = f"https://api.binance.com/api/v3/ticker/price?symbol={spot_token}USDT"
+                response = requests.get(url, proxies=api.session.proxies)
+                if response.status_code == 200:
+                    spot_price = float(response.json()['price'])
+            elif spot_exchange == 'Bitget':
+                spot_volume = api.bitget_volumes.get(spot_token, 0)
+                url = "https://api.bitget.com/api/spot/v1/market/ticker"
+                params = {"symbol": f"{spot_token}USDT_SPBL"}
+                response = make_bitget_request(url, params=params, proxies=api.session.proxies)
+                if response.status_code == 200:
+                    data = response.json()
+                    if data["code"] == "00000" and "data" in data:
+                        spot_price = float(data["data"]["close"])
+            elif spot_exchange == 'Bybit':
+                spot_volume = api.bybit_volumes.get(spot_token, 0)
+                url = "https://api.bybit.com/v5/market/tickers"
+                params = {"category": "spot", "symbol": f"{spot_token}USDT"}
+                response = requests.get(url, params=params, proxies=api.session.proxies)
+                if response.status_code == 200:
+                    data = response.json()
+                    if data["retCode"] == 0 and "result" in data and "list" in data["result"]:
+                        spot_price = float(data["result"]["list"][0]["lastPrice"])
+            elif spot_exchange == 'GateIO':
+                spot_volume = api.gateio_volumes.get(spot_token, 0)
+                url = "https://api.gateio.ws/api/v4/spot/tickers"
+                response = requests.get(url, proxies=api.session.proxies)
+                if response.status_code == 200:
+                    data = response.json()
+                    gate_io_token = spot_token + '_USDT'
+                    for ticker in data:
+                        if ticker['currency_pair'] == gate_io_token:
+                            spot_price = float(ticker['last'])
+                            break
+            elif spot_exchange == 'OKX':
+                spot_volume = api.okx_volumes.get(spot_token, 0)
+                url = f"https://www.okx.com/api/v5/market/ticker?instId={spot_token}-USDT"
+                response = requests.get(url, proxies=api.session.proxies)
+                if response.status_code == 200:
+                    data = response.json()
+                    if data["code"] == "0" and "data" in data:
+                        spot_price = float(data["data"][0]["last"])
+            
+            # 计算价差
+            if spot_price > 0:
+                price_diff = (future_price - spot_price) / spot_price * 100
+            
+            spot_data[spot_exchange] = {
+                'volume': spot_volume,
+                'price': spot_price,
+                'price_diff': price_diff
+            }
         
         # 记录日志，显示每个交易所的现货交易量
         logger.info(f"{token} 24小时交易量:")
         logger.info(f"合约({exchange}): {future_volume:.2f} USDT")
         logger.info(f"现货交易量:")
-        logger.info(f"- Binance: {spot_volumes['Binance']:.2f} USDT")
-        logger.info(f"- Bitget: {spot_volumes['Bitget']:.2f} USDT")
-        logger.info(f"- Bybit: {spot_volumes['Bybit']:.2f} USDT")
-        logger.info(f"- GateIO: {spot_volumes['GateIO']:.2f} USDT")
-        logger.info(f"- OKX: {spot_volumes['OKX']:.2f} USDT")
-        logger.info(f"最大现货交易量: {spot_volume:.2f} USDT (来自{spot_exchange})")
+        for spot_exchange, data in spot_data.items():
+            logger.info(f"- {spot_exchange}: {data['volume']:.2f} USDT")
         
         return {
             'future_volume': future_volume,
-            'spot_volume': spot_volume,
-            'spot_exchange': spot_exchange,
             'future_price': future_price,
-            'spot_price': spot_price,
-            'price_diff': price_diff
+            'spot_data': spot_data
         }
     except Exception as e:
         logger.error(f"获取{token} 24小时交易量失败: {str(e)}")
         return {
             'future_volume': 0,
-            'spot_volume': 0,
-            'spot_exchange': '',
             'future_price': 0,
-            'spot_price': 0,
-            'price_diff': 0
+            'spot_data': {}
         }
 
 def send_to_wechat_robot(data: List[Dict[str, Any]]):
@@ -449,12 +439,22 @@ def send_to_wechat_robot(data: List[Dict[str, Any]]):
         message += f"- 下次结算时间: {next_settlement}\n"
         message += f"- 当前年化收益率: {item['current_yield']:.2f}%\n"
         message += f"- 近1天平均年化收益率: {item['avg_yield_1d']:.2f}%\n"
-        message += f"- 近3天平均年化收益率: {item['avg_yield_3d']:.2f}%\n"
+        message += f"- 近7天平均年化收益率: {item['avg_yield_7d']:.2f}%\n"
+        message += f"- 近30天平均年化收益率: {item['avg_yield_30d']:.2f}%\n"
         message += f"- 24小时合约交易量: {item['future_volume']:,.2f} USDT\n"
-        message += f"- 24小时现货交易量({item['spot_exchange']}): {item['spot_volume']:,.2f} USDT\n"
         message += f"- 合约价格: {item['future_price']:.4f} USDT\n"
-        message += f"- 现货价格({item['spot_exchange']}): {item['spot_price']:.4f} USDT\n"
-        message += f"- 价差: {item['price_diff']:.2f}%\n\n"
+        message += f"- 符合条件的现货交易所:\n"
+        
+        # 按总收益率排序
+        sorted_exchanges = sorted(item['valid_spot_exchanges'], key=lambda x: x['total_yield'], reverse=True)
+        for spot in sorted_exchanges:
+            message += f"  * {spot['exchange']}:\n"
+            message += f"    - 24小时交易量: {spot['volume']:,.2f} USDT\n"
+            message += f"    - 现货价格: {spot['price']:.4f} USDT\n"
+            message += f"    - 价差: {spot['price_diff']:.2f}%\n"
+            # message += f"    - 价差+资金费率: {spot['total_yield']:.4f}%\n"
+        
+        message += "\n"
     
     # 发送到企业微信群机器人
     payload = {
@@ -666,29 +666,55 @@ def main():
             
             # 获取24小时交易量
             volumes = get_24h_volume(api, rate['exchange'], rate['token'])
-            if volumes['future_volume'] < volume_24h_threshold or volumes['spot_volume'] < volume_24h_threshold:
-                logger.info(f"{rate['exchange']} {rate['token']}现货交易量:{volumes['spot_volume']}、合约交易量:{volumes['future_volume']}不足 {volume_24h_threshold}，跳过")
+            if volumes['future_volume'] < volume_24h_threshold:
+                logger.info(f"{rate['exchange']} {rate['token']}合约交易量:{volumes['future_volume']}不足 {volume_24h_threshold}，跳过")
                 continue
             
-            # 获取1天和3天的历史数据
+            # 检查是否有任何现货交易所的交易量达到阈值
+            has_valid_spot_volume = False
+            for spot_exchange, spot_data in volumes['spot_data'].items():
+                if spot_data['volume'] >= volume_24h_threshold:
+                    has_valid_spot_volume = True
+                    break
+            
+            if not has_valid_spot_volume:
+                logger.info(f"{rate['exchange']} {rate['token']}所有现货交易所交易量都不足 {volume_24h_threshold}，跳过")
+                continue
+            
+            # 获取1天、7天和30天的历史数据
             history_1d = get_funding_rate_history(rate['exchange'], rate['token'], 1)
-            history_3d = get_funding_rate_history(rate['exchange'], rate['token'], 3)
+            history_7d = get_funding_rate_history(rate['exchange'], rate['token'], 7)
+            history_30d = get_funding_rate_history(rate['exchange'], rate['token'], 30)
             
             # 计算平均年化收益率
             avg_yield_1d = calculate_average_annual_yield(history_1d, rate['fundingIntervalHours'])
-            avg_yield_3d = calculate_average_annual_yield(history_3d, rate['fundingIntervalHours'])
+            avg_yield_7d = calculate_average_annual_yield(history_7d, rate['fundingIntervalHours'])
+            avg_yield_30d = calculate_average_annual_yield(history_30d, rate['fundingIntervalHours'])
             
             # 检查平均年化收益率是否达到阈值
-            if avg_yield_1d < min_avg_yield_threshold or avg_yield_3d < min_avg_yield_threshold:
+            if avg_yield_1d < min_avg_yield_threshold or avg_yield_7d < min_avg_yield_threshold or avg_yield_30d < min_avg_yield_threshold:
                 logger.info(f"{rate['exchange']} {rate['token']}平均年化收益率不足{min_avg_yield_threshold}%，跳过")
                 continue
             
-            # 检查价差+资金费率是否超过阈值
-            if volumes['price_diff'] + rate['fundingRate'] <= 0.16:
-                logger.info(f"{rate['exchange']} {rate['token']}价差({volumes['price_diff']:.2f}%) + 资金费率({rate['fundingRate']:.4f}%) = {volumes['price_diff'] + rate['fundingRate']:.4f}% <= 0.16%，跳过")
+            # 检查每个现货交易所的价差+资金费率
+            valid_spot_exchanges = []
+            for spot_exchange, spot_data in volumes['spot_data'].items():
+                if spot_data['volume'] >= volume_24h_threshold:
+                    # total_yield = spot_data['price_diff'] + rate['fundingRate']
+                    if spot_data['price_diff'] > -0.1:
+                        valid_spot_exchanges.append({
+                            'exchange': spot_exchange,
+                            'volume': spot_data['volume'],
+                            'price': spot_data['price'],
+                            'price_diff': spot_data['price_diff'],
+                            # 'total_yield': total_yield
+                        })
+            
+            if not valid_spot_exchanges:
+                logger.info(f"{rate['exchange']} {rate['token']}所有现货交易所的价差+资金费率都不超过0.16%，跳过")
                 continue
             
-            logger.info(f"{rate['exchange']} {rate['token']} 平均年化收益率: 1天={avg_yield_1d:.2f}%, 3天={avg_yield_3d:.2f}%, 价差+资金费率={volumes['price_diff'] + rate['fundingRate']:.4f}%")
+            logger.info(f"{rate['exchange']} {rate['token']} 平均年化收益率: 1天={avg_yield_1d:.2f}%, 7天={avg_yield_7d:.2f}%, 30天={avg_yield_30d:.2f}%")
             
             filtered_rates.append({
                 'exchange': rate['exchange'],
@@ -697,13 +723,11 @@ def main():
                 'interval_hours': rate['fundingIntervalHours'],
                 'current_yield': current_yield,
                 'avg_yield_1d': avg_yield_1d,
-                'avg_yield_3d': avg_yield_3d,
+                'avg_yield_7d': avg_yield_7d,
+                'avg_yield_30d': avg_yield_30d,
                 'future_volume': volumes['future_volume'],
-                'spot_volume': volumes['spot_volume'],
-                'spot_exchange': volumes['spot_exchange'],
                 'future_price': volumes['future_price'],
-                'spot_price': volumes['spot_price'],
-                'price_diff': volumes['price_diff'],
+                'valid_spot_exchanges': valid_spot_exchanges,
                 'fundingTime': rate['fundingTime']  # 添加下次结算时间
             })
     
