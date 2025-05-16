@@ -163,10 +163,12 @@ def get_trading_pair_info(api: ExchangeAPI, token: str) -> Dict[str, Any]:
         if spot_response.status_code == 200:
             spot_data = spot_response.json()
             if spot_data["code"] == "00000" and "data" in spot_data:
-                result['spot']['Bitget'] = {
-                    'price': float(spot_data["data"]["close"]),
-                    'volume': float(spot_data["data"]["baseVol"]) * float(spot_data["data"]["close"])
-                }
+                data = spot_data["data"]
+                if isinstance(data, dict):  # 确保data是字典类型
+                    result['spot']['Bitget'] = {
+                        'price': float(data["close"]),
+                        'volume': float(data["baseVol"]) * float(data["close"])
+                    }
         
         # 获取合约价格、交易量和资金费率
         futures_url = "https://api.bitget.com/api/v2/mix/market/ticker"
@@ -175,10 +177,12 @@ def get_trading_pair_info(api: ExchangeAPI, token: str) -> Dict[str, Any]:
         if futures_response.status_code == 200:
             futures_data = futures_response.json()
             if futures_data["code"] == "00000" and "data" in futures_data:
-                result['futures']['Bitget'] = {
-                    'price': float(futures_data["data"]["lastPr"]),
-                    'volume': float(futures_data["data"]["usdtVol"])
-                }
+                data = futures_data["data"]
+                if isinstance(data, dict):  # 确保data是字典类型
+                    result['futures']['Bitget'] = {
+                        'price': float(data["lastPr"]),
+                        'volume': float(data["usdtVol"])
+                    }
         
         # 获取资金费率
         funding_url = "https://api.bitget.com/api/v2/mix/market/current-fund-rate"
@@ -215,11 +219,12 @@ def get_trading_pair_info(api: ExchangeAPI, token: str) -> Dict[str, Any]:
         futures_response = requests.get(futures_url, proxies=api.session.proxies)
         if futures_response.status_code == 200:
             futures_data = futures_response.json()
-            result['futures']['GateIO'] = {
-                'price': float(futures_data['mark_price']),
-                'volume': float(futures_data['volume_24h'])
-            }
-            result['funding_rates']['GateIO'] = float(futures_data['funding_rate']) * 100
+            if isinstance(futures_data, dict):  # 确保返回的是字典类型
+                result['futures']['GateIO'] = {
+                    'price': float(futures_data.get('mark_price', 0)),
+                    'volume': float(futures_data.get('volume_24h', 0))
+                }
+                result['funding_rates']['GateIO'] = float(futures_data.get('funding_rate', 0)) * 100
     except Exception as e:
         logger.error(f"获取GateIO {token}信息失败: {str(e)}")
     
