@@ -536,11 +536,11 @@ def send_to_wechat_robot(opportunities: List[Dict[str, Any]]):
         message += f"- 套利类型: {opp['type']}\n"
         
         if opp['type'] == 'futures_cross_exchange':
-            message += f"- 交易所1: {opp['exchange1']} (合约价格: {opp['price1']:.4f} USDT)\n"
-            message += f"- 交易所2: {opp['exchange2']} (合约价格: {opp['price2']:.4f} USDT)\n"
+            message += f"- 交易所1: {opp['exchange1']} (合约价格: {opp['price1']:.6f} USDT)\n"
+            message += f"- 交易所2: {opp['exchange2']} (合约价格: {opp['price2']:.6f} USDT)\n"
         else:
-            message += f"- 合约交易所: {opp['futures_exchange']} (价格: {opp['futures_price']:.4f} USDT)\n"
-            message += f"- 现货交易所: {opp['spot_exchange']} (价格: {opp['spot_price']:.4f} USDT)\n"
+            message += f"- 合约交易所: {opp['futures_exchange']} (价格: {opp['futures_price']:.6f} USDT)\n"
+            message += f"- 现货交易所: {opp['spot_exchange']} (价格: {opp['spot_price']:.6f} USDT)\n"
         
         message += f"- 价差: {opp['price_diff']:+.2f}%\n"  # 添加+号显示正价差
         message += f"- 触发条件: {opp['condition']}\n\n"
