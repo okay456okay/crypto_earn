@@ -417,8 +417,8 @@ class ExchangeAPI:
             "apy": apy_day[-2]['apy'],
             'apy_day': apy_day,
             'apy_month': apy_month,
-            "min_purchase": "无",
-            "max_purchase": "无",
+            "min_purchase": 0,
+            "max_purchase": 0,
             "volume_24h": self.gateio_volumes.get(token, 0)
         }
         return product
@@ -508,8 +508,8 @@ class ExchangeAPI:
                         'apy_day': apy_day,
                         # "apy_percentile": apy_percentile,
                         'apy_month': apy_month,
-                        "min_purchase": f"{float(item.get('total_lend_available', 0))}(total_lend_available-可借总额)",
-                        "max_purchase": f"{float(item.get('total_lend_all_amount', 0))}(total_lend_all_amount-借出总额)",
+                        "min_purchase": float(item.get('total_lend_available', 0)),
+                        "max_purchase": float(item.get('total_lend_all_amount', 0)),
                         "volume_24h": self.gateio_volumes.get(token, 0)
                     }
                     products.append(product)
@@ -589,8 +589,8 @@ class ExchangeAPI:
                             # "apy_percentile": apy_percentile*(1-okx_earn_insurance_keep_ratio),
                             'apy_day': apy_day,
                             'apy_month': apy_month,
-                            "min_purchase": '无',
-                            "max_purchase": '无',
+                            "min_purchase": 0,
+                            "max_purchase": 0,
                             "volume_24h": self.okx_volumes.get(token, 0)
                         }
                         products.append(product)
