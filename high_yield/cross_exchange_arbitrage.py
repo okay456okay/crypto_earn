@@ -347,11 +347,16 @@ def get_trading_pair_info(api: ExchangeAPI, token: str) -> Dict[str, Any]:
         if futures_response.status_code == 200:
             futures_data = futures_response.json()
             if isinstance(futures_data, dict):
+                # 检查合约是否在退市
+                if futures_data.get('in_delisting', False):
+                    debug_log(f"GateIO合约 {gate_io_token} 正在退市，跳过")
+                    return result
+                
                 price = float(futures_data.get('mark_price', 0))
                 if price >= min_token_price:  # 检查价格是否满足最小要求
                     result['futures']['GateIO'] = {
                         'price': price,
-                        'volume': float(futures_data.get('volume_24h', 0))
+                        'volume': float(futures_data.get('trade_size', 0))  # 使用trade_size作为交易量
                     }
                     result['funding_rates']['GateIO'] = float(futures_data.get('funding_rate', 0)) * 100
     except Exception as e:
