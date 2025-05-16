@@ -1,3 +1,8 @@
+# coding=utf-8
+"""
+数学计算方式
+"""
+
 def calculate_order_quantity(price):
     """
     根据价格计算加密货币下单数量，确保下单金额在6-9 USDT之间，且下单数量尽量取整
