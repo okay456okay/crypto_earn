@@ -20,6 +20,7 @@ from decimal import Decimal
 import asyncio
 import ccxt.pro as ccxtpro  # 使用 ccxt pro 版本
 import time
+import aiohttp
 
 # 添加项目根目录到系统路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -234,13 +235,6 @@ class HedgeTrader:
                 spread = binance_bid - gateio_ask
                 spread_percent = spread / gateio_ask
                 
-                # 如果amount为-1，使用calculate_order_quantity计算数量
-                if self.spot_amount == -1:
-                    from tools.math import calculate_order_quantity
-                    quantity_result = calculate_order_quantity(float(gateio_ask))
-                    self.spot_amount = quantity_result['quantity']
-                    logger.info(f"自动计算交易数量: {self.spot_amount} {base} (预计金额: {quantity_result['estimated_amount']:.2f} USDT)")
-                
                 # 模拟足够的市场深度
                 depth_multiple = self.depth_multiplier * 2
                 gateio_ask_volume = self.spot_amount * depth_multiple
@@ -285,13 +279,6 @@ class HedgeTrader:
                     gateio_ask_volume = float(gateio_ob['asks'][0][1])
                     binance_bid = float(binance_ob['bids'][0][0])
                     binance_bid_volume = float(binance_ob['bids'][0][1])
-                    
-                    # 如果amount为-1，使用calculate_order_quantity计算数量
-                    if self.spot_amount == -1:
-                        from tools.math import calculate_order_quantity
-                        quantity_result = calculate_order_quantity(gateio_ask)
-                        self.spot_amount = quantity_result['quantity']
-                        logger.info(f"自动计算交易数量: {self.spot_amount} {self.symbol.split('/')[0]} (预计金额: {quantity_result['estimated_amount']:.2f} USDT)")
                     
                     # 计算价差
                     spread = binance_bid - gateio_ask
@@ -829,6 +816,45 @@ async def main():
     
     try:
         logger.info(f"计划执行 {args.count} 次交易操作")
+        
+        # 获取当前价格
+        base_currency = args.symbol.split('/')[0]
+        logger.info(f"开始获取{base_currency}当前价格，当前amount参数值: {args.amount}")
+        
+        # 尝试从Binance获取价格
+        try:
+            url = f"https://api.binance.com/api/v3/ticker/price?symbol={base_currency}USDT"
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, proxy=proxies.get('https')) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        spot_price = float(data['price'])
+                        logger.info(f"从Binance获取到{base_currency}当前价格: {spot_price} USDT")
+                    else:
+                        raise Exception(f"Binance API请求失败: {response.status}")
+        except Exception as e:
+            logger.warning(f"从Binance获取价格失败: {str(e)}，尝试从Gate.io获取")
+            # 如果Binance失败，尝试从Gate.io获取价格
+            try:
+                gateio = ccxtpro.gateio({
+                    'apiKey': gateio_api_key,
+                    'secret': gateio_api_secret,
+                    'enableRateLimit': True,
+                    'proxies': proxies,
+                })
+                ticker = await gateio.fetch_ticker(args.symbol)
+                spot_price = float(ticker['last'])
+                logger.info(f"从Gate.io获取到{base_currency}当前价格: {spot_price} USDT")
+                await gateio.close()
+            except Exception as e2:
+                raise Exception(f"从Gate.io获取价格也失败: {str(e2)}")
+
+        # 如果amount为-1，使用calculate_order_quantity计算数量
+        if args.amount == -1:
+            from tools.math import calculate_order_quantity
+            quantity_result = calculate_order_quantity(spot_price)
+            args.amount = quantity_result['quantity']
+            logger.info(f"自动计算交易数量: {args.amount} {base_currency} (预计金额: {quantity_result['estimated_amount']:.2f} USDT)")
         
         # 创建并初始化交易器
         trader = HedgeTrader(
