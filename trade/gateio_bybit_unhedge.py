@@ -248,14 +248,14 @@ class UnhedgeTrader:
                                 bybit_ask = Decimal(str(bybit_ob['asks'][0][0]))  # 合约买入价(卖1)
                                 bybit_ask_volume = Decimal(str(bybit_ob['asks'][0][1]))  # 合约卖1量
 
-                                # 如果amount为-1，使用calculate_order_quantity计算数量
-                                if self.spot_amount == -1:
-                                    from tools.math import calculate_order_quantity
-                                    quantity_result = calculate_order_quantity(float(gateio_bid))
-                                    self.spot_amount = quantity_result['quantity']
-                                    trade_amount = self.spot_amount
-                                    contract_amount = self.bybit.amount_to_precision(self.contract_symbol, trade_amount)
-                                    logger.info(f"自动计算交易数量: {self.spot_amount} {base_currency} (预计金额: {quantity_result['estimated_amount']:.2f} USDT)")
+                                # # 如果amount为-1，使用calculate_order_quantity计算数量
+                                # if self.spot_amount == -1:
+                                #     from tools.math import calculate_order_quantity
+                                #     quantity_result = calculate_order_quantity(float(gateio_bid))
+                                #     self.spot_amount = quantity_result['quantity']
+                                #     trade_amount = self.spot_amount
+                                #     contract_amount = self.bybit.amount_to_precision(self.contract_symbol, trade_amount)
+                                #     logger.info(f"自动计算交易数量: {self.spot_amount} {base_currency} (预计金额: {quantity_result['estimated_amount']:.2f} USDT)")
                                 
                                 # 计算价差
                                 spread = gateio_bid - bybit_ask

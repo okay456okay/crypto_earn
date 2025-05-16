@@ -235,11 +235,11 @@ class UnhedgeTrader:
             bitget_ask_volume = Decimal(str(bitget_ob['asks'][0][1]))
 
             # 如果amount为-1，使用calculate_order_quantity计算数量
-            if self.spot_amount == -1:
-                from tools.math import calculate_order_quantity
-                quantity_result = calculate_order_quantity(float(gateio_bid))
-                self.spot_amount = quantity_result['quantity']
-                logger.info(f"自动计算交易数量: {self.spot_amount} {self.symbol.split('/')[0]} (预计金额: {quantity_result['estimated_amount']:.2f} USDT)")
+            # if self.spot_amount == -1:
+            #     from tools.math import calculate_order_quantity
+            #     quantity_result = calculate_order_quantity(float(gateio_bid))
+            #     self.spot_amount = quantity_result['quantity']
+            #     logger.info(f"自动计算交易数量: {self.spot_amount} {self.symbol.split('/')[0]} (预计金额: {quantity_result['estimated_amount']:.2f} USDT)")
 
             spread = gateio_bid - bitget_ask
             spread_percent = spread / bitget_ask
@@ -278,6 +278,11 @@ class UnhedgeTrader:
                 trade_amount = self.spot_amount
                 contract_amount = self.bitget.amount_to_precision(self.contract_symbol, trade_amount)
 
+                base_currency = self.symbol.split('/')[0]
+                logger.info(f"计划平仓数量: {trade_amount} {base_currency}")
+                logger.info(f"在Gate.io市价卖出 {trade_amount} {base_currency}")
+                logger.info(f"在Bitget市价平空单 {contract_amount} {base_currency}")
+
                 # 执行交易
                 spot_order, contract_order = await asyncio.gather(
                     self.gateio.create_market_sell_order(
@@ -291,10 +296,6 @@ class UnhedgeTrader:
                     )
                 )
 
-                base_currency = self.symbol.split('/')[0]
-                logger.info(f"计划平仓数量: {trade_amount} {base_currency}")
-                logger.info(f"在Gate.io市价卖出 {trade_amount} {base_currency}")
-                logger.info(f"在Bitget市价平空单 {contract_amount} {base_currency}")
                 logger.info(f"Gate.io现货订单提交详情: {spot_order}")
                 logger.info(f"Bitget合约订单提交详情: {contract_order}")
 

@@ -287,11 +287,11 @@ class UnhedgeTrader:
                         binance_ask_volume = Decimal(str(binance_ob['asks'][0][1]))
 
                         # 如果amount为-1，使用calculate_order_quantity计算数量
-                        if self.spot_amount == -1:
-                            from tools.math import calculate_order_quantity
-                            quantity_result = calculate_order_quantity(float(gateio_bid))
-                            self.spot_amount = quantity_result['quantity']
-                            logger.info(f"自动计算交易数量: {self.spot_amount} {self.symbol.split('/')[0]} (预计金额: {quantity_result['estimated_amount']:.2f} USDT)")
+                        # if self.spot_amount == -1:
+                        #     from tools.math import calculate_order_quantity
+                        #     quantity_result = calculate_order_quantity(float(gateio_bid))
+                        #     self.spot_amount = quantity_result['quantity']
+                        #     logger.info(f"自动计算交易数量: {self.spot_amount} {self.symbol.split('/')[0]} (预计金额: {quantity_result['estimated_amount']:.2f} USDT)")
 
                         spread = gateio_bid - binance_ask
                         spread_percent = spread / binance_ask
@@ -322,7 +322,12 @@ class UnhedgeTrader:
 
                             # 记录下单开始时间
                             order_start_time = time.time()
-                            
+
+                            base_currency = self.symbol.split('/')[0]
+                            logger.info(f"计划平仓数量: {trade_amount} {base_currency}")
+                            logger.info(f"在Gate.io市价卖出 {trade_amount} {base_currency}")
+                            logger.info(f"在Binance市价平空单 {contract_amount} {base_currency}")
+
                             # 执行交易
                             try:
                                 spot_order, contract_order = await asyncio.gather(
@@ -353,10 +358,6 @@ class UnhedgeTrader:
                                 logger.debug(f"下单错误的堆栈:\n{traceback.format_exc()}")
                                 return None, None, False
 
-                            base_currency = self.symbol.split('/')[0]
-                            logger.info(f"计划平仓数量: {trade_amount} {base_currency}")
-                            logger.info(f"在Gate.io市价卖出 {trade_amount} {base_currency}")
-                            logger.info(f"在Binance市价平空单 {contract_amount} {base_currency}")
 
                             # 等待一小段时间确保订单状态已更新
                             await asyncio.sleep(2)
