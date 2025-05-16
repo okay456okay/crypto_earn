@@ -443,16 +443,15 @@ def send_to_wechat_robot(data: List[Dict[str, Any]]):
         message += f"- 近30天平均年化收益率: {item['avg_yield_30d']:.2f}%\n"
         message += f"- 24小时合约交易量: {item['future_volume']:,.2f} USDT\n"
         message += f"- 合约价格: {item['future_price']:.4f} USDT\n"
-        message += f"- 符合条件的现货交易所:\n"
+        message += f"- 现货交易所参考价差:\n"
         
-        # 按总收益率排序
-        sorted_exchanges = sorted(item['valid_spot_exchanges'], key=lambda x: x['total_yield'], reverse=True)
+        # 按交易所名称排序
+        sorted_exchanges = sorted(item['valid_spot_exchanges'], key=lambda x: x['exchange'])
         for spot in sorted_exchanges:
             message += f"  * {spot['exchange']}:\n"
             message += f"    - 24小时交易量: {spot['volume']:,.2f} USDT\n"
             message += f"    - 现货价格: {spot['price']:.4f} USDT\n"
             message += f"    - 价差: {spot['price_diff']:.2f}%\n"
-            # message += f"    - 价差+资金费率: {spot['total_yield']:.4f}%\n"
         
         message += "\n"
     
