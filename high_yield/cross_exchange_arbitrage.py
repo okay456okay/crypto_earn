@@ -296,8 +296,10 @@ def find_arbitrage_opportunities(token_info: Dict[str, Any], token: str) -> List
             # 检查同一交易所的现货价格
             if futures_exchange in token_info['spot']:
                 spot_price = token_info['spot'][futures_exchange]['price']
-                price_diff = abs(futures_price - spot_price) / min(futures_price, spot_price) * 100
+                # 计算价差百分比，保留符号
+                price_diff = (futures_price - spot_price) / spot_price * 100
                 
+                # 只保留合约价格高于现货价格的机会
                 if price_diff > price_diff_threshold:
                     opportunities.append({
                         'token': token,
@@ -314,8 +316,10 @@ def find_arbitrage_opportunities(token_info: Dict[str, Any], token: str) -> List
             for spot_exchange in ['Bitget', 'GateIO']:
                 if spot_exchange != futures_exchange and spot_exchange in token_info['spot']:
                     spot_price = token_info['spot'][spot_exchange]['price']
-                    price_diff = abs(futures_price - spot_price) / min(futures_price, spot_price) * 100
+                    # 计算价差百分比，保留符号
+                    price_diff = (futures_price - spot_price) / spot_price * 100
                     
+                    # 只保留合约价格高于现货价格的机会
                     if price_diff > price_diff_threshold:
                         opportunities.append({
                             'token': token,
@@ -353,7 +357,7 @@ def send_to_wechat_robot(opportunities: List[Dict[str, Any]]):
             message += f"- 合约交易所: {opp['futures_exchange']} (价格: {opp['futures_price']:.4f} USDT)\n"
             message += f"- 现货交易所: {opp['spot_exchange']} (价格: {opp['spot_price']:.4f} USDT)\n"
         
-        message += f"- 价差: {opp['price_diff']:.2f}%\n"
+        message += f"- 价差: {opp['price_diff']:+.2f}%\n"  # 添加+号显示正价差
         message += f"- 触发条件: {opp['condition']}\n\n"
     
     # 发送到企业微信群机器人
@@ -391,9 +395,9 @@ def send_to_wechat_robot(opportunities: List[Dict[str, Any]]):
             f.write(message)
             f.write("\n\n")
         
-        # 写入合并文件（覆盖之前内容）
+        # 追加到合并文件
         combined_file = os.path.join(log_dir, 'cross_exchange_arbitrage')
-        with open(combined_file, 'w', encoding='utf-8') as f:
+        with open(combined_file, 'a', encoding='utf-8') as f:
             f.write(f"=== {now.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
             f.write(message)
             f.write("\n\n")
@@ -405,6 +409,18 @@ def send_to_wechat_robot(opportunities: List[Dict[str, Any]]):
 def main():
     logger.info("开始执行跨交易所套利监控")
     api = ExchangeAPI()
+    
+    # 清空合并文件
+    try:
+        log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'trade', 'reports')
+        os.makedirs(log_dir, exist_ok=True)
+        combined_file = os.path.join(log_dir, 'cross_exchange_arbitrage')
+        with open(combined_file, 'w', encoding='utf-8') as f:
+            f.write(f"=== {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===\n")
+            f.write("开始新的监控周期\n\n")
+        logger.info(f"已清空合并文件: {combined_file}")
+    except Exception as e:
+        logger.error(f"清空合并文件时出错: {str(e)}")
     
     # 获取所有交易对
     trading_pairs = get_all_trading_pairs()
