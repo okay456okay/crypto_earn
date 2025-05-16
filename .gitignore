@@ -165,3 +165,5 @@ logs/
 
 /config.py
 /scripts/reports/
+/trade/logs
+/trade/reports/
