@@ -14,6 +14,8 @@
 import sys
 import os
 import asyncio
+import subprocess
+import signal
 from decimal import Decimal
 from datetime import datetime
 from collections import defaultdict
@@ -28,7 +30,8 @@ from config import (
     binance_api_key, binance_api_secret,
     bybit_api_key, bybit_api_secret,
     bitget_api_key, bitget_api_secret, bitget_api_passphrase,
-    proxies
+    proxies,
+    project_root
 )
 from high_yield.exchange import ExchangeAPI
 
@@ -433,6 +436,25 @@ class ExchangeArbitrageCalculator:
                     'total_lend_available': total_lend_available
                 })
 
+                # 检查是否需要关闭仓位
+                if last_rate_year < 5 and funding_rate_apy < 12:
+                    # 找出空仓持仓量最大的交易所
+                    exchange_shorts = {
+                        'binance': binance_short,
+                        'bybit': bybit_short,
+                        'bitget': bitget_short
+                    }
+                    max_short_exchange = max(exchange_shorts.items(), key=lambda x: x[1])
+                    
+                    if max_short_exchange[1] > 0:  # 如果有空仓
+                        try:
+                            # 运行close.sh脚本
+                            cmd = f"{project_root}/scripts/close.sh -e {max_short_exchange[0]} -t {token}"
+                            logger.info(f"执行关闭仓位命令: {cmd}")
+                            subprocess.run(cmd, shell=True, check=True)
+                        except Exception as e:
+                            logger.error(f"关闭仓位失败: {str(e)}")
+
         # 按理财金额降序排序
         arbitrage_summary.sort(key=lambda x: x['earn_value'], reverse=True)
 
@@ -520,6 +542,13 @@ class ExchangeArbitrageCalculator:
 async def main():
     """主函数"""
     try:
+        # 杀掉所有gateio_*_unhedge.py进程
+        try:
+            subprocess.run(['pkill', '-f', 'gateio_.*_unhedge.py'], check=False)
+            logger.info("已杀掉所有gateio unhedge进程")
+        except Exception as e:
+            logger.error(f"杀掉gateio unhedge进程失败: {str(e)}")
+
         get_proxy_ip()
         calculator = ExchangeArbitrageCalculator()
         await calculator.run()
