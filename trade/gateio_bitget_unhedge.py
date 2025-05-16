@@ -486,8 +486,20 @@ async def main():
         logger.info(f"开始获取{base_currency}当前价格，当前amount参数值: {args.amount}")
         
         try:
+            # 创建临时Gate.io实例获取价格
+            temp_gateio = ccxtpro.gateio({
+                'apiKey': gateio_api_key,
+                'secret': gateio_api_secret,
+                'enableRateLimit': True,
+                'proxies': proxies,
+                'aiohttp_proxy': proxies.get('https', None),
+                'ws_proxy': proxies.get('https', None),
+                'wss_proxy': proxies.get('https', None),
+                'ws_socks_proxy': proxies.get('https', None),
+            })
+            
             # 使用Gate.io的API获取价格
-            orderbook = await trader.gateio.fetch_order_book(args.symbol)
+            orderbook = await temp_gateio.fetch_order_book(args.symbol)
             if not orderbook or not orderbook['bids']:
                 raise Exception("无法从Gate.io获取有效的订单簿数据")
                 
@@ -500,6 +512,10 @@ async def main():
                 quantity_result = calculate_order_quantity(spot_price)
                 args.amount = quantity_result['quantity']
                 logger.info(f"自动计算交易数量: {args.amount} {base_currency} (预计金额: {quantity_result['estimated_amount']:.2f} USDT)")
+                
+            # 关闭临时实例
+            await temp_gateio.close()
+            
         except Exception as e:
             logger.error(f"获取价格失败: {str(e)}")
             raise
