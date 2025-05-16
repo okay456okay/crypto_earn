@@ -277,6 +277,7 @@ class CryptoYieldMonitor:
                         logger.info(f"找到价格最高的交易所: {highest_price_exchange['exchange']}, 价格: {highest_price_exchange['markPrice']}")
                         
                         # 计算count值
+                        logger.info(f"111111111: {product}, {highest_price_exchange}")
                         buy_usdt = min((product['max_purchase'] - product['min_purchase']) / 100 * highest_price_exchange['markPrice'], 500)
                         count = int(buy_usdt / 8)
                         logger.info(f"计算得到的count值: {count}, 购买金额: {buy_usdt}")
