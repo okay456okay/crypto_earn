@@ -658,7 +658,9 @@ async def main():
         # 获取当前价格
         base_currency = args.symbol.split('/')[0]
         url = "https://api.bybit.com/v5/market/tickers"
-        params = {"category": "spot", "symbol": f"{base_currency}USDT"}
+        params = {"category": "linear", "symbol": f"{base_currency}USDT"}
+        
+        logger.info(f"开始获取{base_currency}当前价格，当前amount参数值: {args.amount}")
         
         async with aiohttp.ClientSession() as session:
             async with session.get(url, params=params, proxy=proxies.get('https')) as response:
@@ -675,7 +677,27 @@ async def main():
                             args.amount = quantity_result['quantity']
                             logger.info(f"自动计算交易数量: {args.amount} {base_currency} (预计金额: {quantity_result['estimated_amount']:.2f} USDT)")
                     else:
-                        raise Exception(f"获取价格失败: {data}")
+                        logger.error(f"获取价格失败，API响应: {data}")
+                        # 尝试使用备用API
+                        backup_url = "https://api.bybit.com/v5/market/tickers"
+                        backup_params = {"category": "inverse", "symbol": f"{base_currency}USDT"}
+                        async with session.get(backup_url, params=backup_params, proxy=proxies.get('https')) as backup_response:
+                            if backup_response.status == 200:
+                                backup_data = await backup_response.json()
+                                if backup_data["retCode"] == 0 and "result" in backup_data and "list" in backup_data["result"]:
+                                    spot_price = float(backup_data["result"]["list"][0]["lastPrice"])
+                                    logger.info(f"使用备用API获取到{base_currency}当前价格: {spot_price} USDT")
+                                    
+                                    # 如果amount为-1，使用calculate_order_quantity计算数量
+                                    if args.amount == -1:
+                                        from tools.math import calculate_order_quantity
+                                        quantity_result = calculate_order_quantity(spot_price)
+                                        args.amount = quantity_result['quantity']
+                                        logger.info(f"自动计算交易数量: {args.amount} {base_currency} (预计金额: {quantity_result['estimated_amount']:.2f} USDT)")
+                                else:
+                                    raise Exception(f"备用API获取价格失败: {backup_data}")
+                            else:
+                                raise Exception(f"备用API请求失败: {backup_response.status}")
                 else:
                     raise Exception(f"获取价格请求失败: {response.status}")
 
@@ -691,12 +713,17 @@ async def main():
         
         # 如果未指定count，则根据合约持仓计算
         if args.count is None:
+            logger.info(f"自动计算交易次数 - 当前合约持仓: {trader.current_contract_position} {base_currency}, 单次交易数量: {args.amount}")
+            if args.amount <= 0:
+                raise Exception(f"交易数量必须大于0，当前值: {args.amount}")
+            
+            # 计算可以执行的次数，保留1个单位的持仓作为缓冲
             max_executions = int(trader.current_contract_position / args.amount) - 1
             total_count = max(0, max_executions)
-            logger.info(f"未指定执行次数，根据当前持仓计算为: {total_count} 次")
+            logger.info(f"计算得出可执行次数: {total_count} (总持仓: {trader.current_contract_position}, 单次数量: {args.amount}, 保留1个单位缓冲)")
         else:
             total_count = args.count
-            logger.info(f"计划执行交易次数: {total_count}")
+            logger.info(f"使用用户指定的交易次数: {total_count}")
             
         # 输出交易参数
         logger.info(f"交易参数 - 交易对: {args.symbol}, 数量: {args.amount}, 最小价差: {args.min_spread * 100:.4f}%, "

@@ -484,6 +484,8 @@ async def main():
         url = "https://api.bitget.com/api/spot/v1/market/ticker"
         params = {"symbol": f"{base_currency}USDT_SPBL"}
         
+        logger.info(f"开始获取{base_currency}当前价格，当前amount参数值: {args.amount}")
+        
         async with aiohttp.ClientSession() as session:
             async with session.get(url, params=params, proxy=proxies.get('https')) as response:
                 if response.status == 200:
@@ -516,9 +518,16 @@ async def main():
         # 计算总交易次数
         if args.count is not None:
             total_count = args.count
+            logger.info(f"使用用户指定的交易次数: {total_count}")
         else:
             # 根据合约持仓和单次交易数额计算总次数
+            logger.info(f"自动计算交易次数 - 当前合约持仓: {initial_position} {base_currency}, 单次交易数量: {args.amount}")
+            if args.amount <= 0:
+                raise Exception(f"交易数量必须大于0，当前值: {args.amount}")
+            
+            # 计算可以执行的次数，保留1个单位的持仓作为缓冲
             total_count = max(0, int(initial_position / args.amount) - 1)
+            logger.info(f"计算得出可执行次数: {total_count} (总持仓: {initial_position}, 单次数量: {args.amount}, 保留1个单位缓冲)")
         
         logger.info(f"计划执行交易次数: {total_count}次")
         

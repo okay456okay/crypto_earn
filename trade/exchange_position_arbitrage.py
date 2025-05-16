@@ -439,11 +439,17 @@ class ExchangeArbitrageCalculator:
                 # 检查是否需要关闭仓位
                 if last_rate_year < 5 and funding_rate_apy < 12:
                     # 找出空仓持仓量最大的交易所
+                    binance_short = sum(p['contracts'] for p in self.positions['binance'] if p['token'] == token and p['side'] == 'short')
+                    bybit_short = sum(p['contracts'] for p in self.positions['bybit'] if p['token'] == token and p['side'] == 'short')
+                    bitget_short = sum(p['contracts'] for p in self.positions['bitget'] if p['token'] == token and p['side'] == 'short')
+                    
                     exchange_shorts = {
-                        'binance': sum(p['contracts'] for p in self.positions['binance'] if p['token'] == token and p['side'] == 'short'),
-                        'bybit': sum(p['contracts'] for p in self.positions['bybit'] if p['token'] == token and p['side'] == 'short'),
-                        'bitget': sum(p['contracts'] for p in self.positions['bitget'] if p['token'] == token and p['side'] == 'short')
+                        'binance': binance_short,
+                        'bybit': bybit_short,
+                        'bitget': bitget_short
                     }
+                    
+                    logger.info(f"代币 {token} 各交易所空仓持仓量: Binance={binance_short}, Bybit={bybit_short}, Bitget={bitget_short}")
                     
                     # 找出空仓持仓量最大的交易所
                     max_short_exchange = max(exchange_shorts.items(), key=lambda x: x[1])

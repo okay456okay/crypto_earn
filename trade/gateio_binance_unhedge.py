@@ -659,26 +659,46 @@ async def main():
     else:
         logger.setLevel(logging.INFO)
 
+    trader = None
     try:
         # 获取当前价格
         base_currency = args.symbol.split('/')[0]
-        url = f"https://api.binance.com/api/v3/ticker/price?symbol={base_currency}USDT"
+        logger.info(f"开始获取{base_currency}当前价格，当前amount参数值: {args.amount}")
         
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, proxy=proxies.get('https')) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    spot_price = float(data['price'])
-                    logger.info(f"获取到{base_currency}当前价格: {spot_price} USDT")
-                    
-                    # 如果amount为-1，使用calculate_order_quantity计算数量
-                    if args.amount == -1:
-                        from tools.math import calculate_order_quantity
-                        quantity_result = calculate_order_quantity(spot_price)
-                        args.amount = quantity_result['quantity']
-                        logger.info(f"自动计算交易数量: {args.amount} {base_currency} (预计金额: {quantity_result['estimated_amount']:.2f} USDT)")
-                else:
-                    raise Exception(f"获取价格请求失败: {response.status}")
+        # 尝试从Binance获取价格
+        try:
+            url = f"https://api.binance.com/api/v3/ticker/price?symbol={base_currency}USDT"
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, proxy=proxies.get('https')) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        spot_price = float(data['price'])
+                        logger.info(f"从Binance获取到{base_currency}当前价格: {spot_price} USDT")
+                    else:
+                        raise Exception(f"Binance API请求失败: {response.status}")
+        except Exception as e:
+            logger.warning(f"从Binance获取价格失败: {str(e)}，尝试从Gate.io获取")
+            # 如果Binance失败，尝试从Gate.io获取价格
+            try:
+                gateio = ccxtpro.gateio({
+                    'apiKey': gateio_api_key,
+                    'secret': gateio_api_secret,
+                    'enableRateLimit': True,
+                    'proxies': proxies,
+                })
+                ticker = await gateio.fetch_ticker(args.symbol)
+                spot_price = float(ticker['last'])
+                logger.info(f"从Gate.io获取到{base_currency}当前价格: {spot_price} USDT")
+                await gateio.close()
+            except Exception as e2:
+                raise Exception(f"从Gate.io获取价格也失败: {str(e2)}")
+
+        # 如果amount为-1，使用calculate_order_quantity计算数量
+        if args.amount == -1:
+            from tools.math import calculate_order_quantity
+            quantity_result = calculate_order_quantity(spot_price)
+            args.amount = quantity_result['quantity']
+            logger.info(f"自动计算交易数量: {args.amount} {base_currency} (预计金额: {quantity_result['estimated_amount']:.2f} USDT)")
 
         trader = UnhedgeTrader(
             symbol=args.symbol,
@@ -697,6 +717,10 @@ async def main():
         
         # 计算默认重复次数
         if args.count is None:
+            logger.info(f"自动计算交易次数 - 当前合约持仓: {contract_position} {base_currency}, 单次交易数量: {args.amount}")
+            if args.amount <= 0:
+                raise Exception(f"交易数量必须大于0，当前值: {args.amount}")
+            
             # 计算最大可交易次数：合约持仓/单次交易数额-1 (保留一次手动操作的空间)
             if contract_position <= args.amount:
                 # 如果合约持仓小于等于单次交易数量，则只能执行一次
@@ -707,8 +731,7 @@ async def main():
                 max_possible = int(contract_position / args.amount)
                 # 保留一次手动操作的空间，但不低于1
                 count = max(1, max_possible - 1)
-                logger.info(f"未指定重复次数，自动计算次数: {count} (合约持仓: {contract_position}, "
-                           f"单次数量: {args.amount}, 最大可执行: {max_possible})")
+                logger.info(f"计算得出可执行次数: {count} (总持仓: {contract_position}, 单次数量: {args.amount}, 最大可执行: {max_possible})")
         else:
             count = args.count
             # 检查指定的次数是否超过了实际可执行的最大次数
@@ -718,7 +741,7 @@ async def main():
                               f"将自动调整为: {max_possible}")
                 count = max_possible
             
-            logger.info(f"计划执行交易次数: {count}")
+            logger.info(f"使用用户指定的交易次数: {count}")
         
         # 检查是否有足够的合约持仓进行操作
         if contract_position < args.amount:
