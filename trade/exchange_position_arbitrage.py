@@ -449,7 +449,7 @@ class ExchangeArbitrageCalculator:
                     if max_short_exchange[1] > 0:  # 如果有空仓
                         try:
                             # 运行close.sh脚本
-                            cmd = f"{project_root}/scripts/close.sh -e {max_short_exchange[0]} -t {token}"
+                            cmd = f"{project_root}/scripts/close.sh -e {max_short_exchange[0]} -s {token}"
                             logger.info(f"执行关闭仓位命令: {cmd}")
                             subprocess.run(cmd, shell=True, check=True)
                         except Exception as e:
