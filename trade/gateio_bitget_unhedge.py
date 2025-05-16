@@ -234,6 +234,13 @@ class UnhedgeTrader:
             bitget_ask = Decimal(str(bitget_ob['asks'][0][0]))  # 合约买入价(卖1)
             bitget_ask_volume = Decimal(str(bitget_ob['asks'][0][1]))
 
+            # 如果amount为-1，使用calculate_order_quantity计算数量
+            if self.spot_amount == -1:
+                from tools.math import calculate_order_quantity
+                quantity_result = calculate_order_quantity(float(gateio_bid))
+                self.spot_amount = quantity_result['quantity']
+                logger.info(f"自动计算交易数量: {self.spot_amount} {self.symbol.split('/')[0]} (预计金额: {quantity_result['estimated_amount']:.2f} USDT)")
+
             spread = gateio_bid - bitget_ask
             spread_percent = spread / bitget_ask
 
@@ -452,7 +459,7 @@ def parse_arguments():
     """解析命令行参数"""
     parser = argparse.ArgumentParser(description='Gate.io现货卖出与Bitget合约平空单交易')
     parser.add_argument('-s', '--symbol', type=str, required=True, help='交易对符号，例如 ETH/USDT')
-    parser.add_argument('-a', '--amount', type=float, required=True, help='卖出的现货数量')
+    parser.add_argument('-a', '--amount', type=float, default=-1, help='卖出的现货数量，默认为-1表示自动计算')
     parser.add_argument('-p', '--min-spread', type=float, default=0.003, help='最小价差要求，默认0.003 (0.3%%)')
     parser.add_argument('-m', '--depth-multiplier', type=float, default=5.0, help='订单簿中买一/卖一量至少是交易量的倍数，默认5倍')
     parser.add_argument('-d', '--debug', action='store_true', help='启用调试日志模式')

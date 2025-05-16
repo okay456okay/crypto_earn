@@ -306,6 +306,13 @@ class HedgeTrader:
                     bitget_ask = Decimal(str(bitget_ob['asks'][0][0])) if bitget_ob['asks'] else Decimal('0')
                     bitget_ask_volume = Decimal(str(bitget_ob['asks'][0][1])) if bitget_ob['asks'] else Decimal('0')
                     
+                    # 如果amount为-1，使用calculate_order_quantity计算数量
+                    if self.spot_amount == -1:
+                        from tools.math import calculate_order_quantity
+                        quantity_result = calculate_order_quantity(float(gateio_ask))
+                        self.spot_amount = quantity_result['quantity']
+                        logger.info(f"自动计算交易数量: {self.spot_amount} {self.symbol.split('/')[0]} (预计金额: {quantity_result['estimated_amount']:.2f} USDT)")
+                    
                     # 计算价差 - bitget买一（卖出）- gateio卖一（买入）
                     spread = bitget_bid - gateio_ask
                     spread_percent = spread / gateio_ask
@@ -805,7 +812,7 @@ def parse_arguments():
     """
     parser = argparse.ArgumentParser(description='Gate.io现货与Bitget合约对冲交易')
     parser.add_argument('-s', '--symbol', type=str, required=True, help='交易对符号，例如 ETH/USDT')
-    parser.add_argument('-a', '--amount', type=float, required=True, help='购买的现货数量')
+    parser.add_argument('-a', '--amount', type=float, default=-1, help='购买的现货数量，默认为-1表示自动计算')
     parser.add_argument('-p', '--min-spread', type=float, default=-0.0001, help='最小价差要求，默认0.001 (0.1%%)')
     parser.add_argument('-l', '--leverage', type=int, help='合约杠杆倍数，如果不指定则使用该交易对支持的最大杠杆倍数')
     parser.add_argument('-c', '--count', type=int, default=1, help='重复执行交易的次数，默认为1次')
