@@ -859,29 +859,27 @@ async def main():
 
         # 获取当前价格
         base_currency = args.symbol.split('/')[0]
-        url = "https://api.bitget.com/api/spot/v1/market/ticker"
-        params = {"symbol": f"{base_currency}USDT_SPBL"}
         
         logger.info(f"开始获取{base_currency}当前价格，当前amount参数值: {args.amount}")
         
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params, proxy=proxies.get('https')) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    if data["code"] == "00000" and "data" in data:
-                        spot_price = float(data["data"]["close"])
-                        logger.info(f"获取到{base_currency}当前价格: {spot_price} USDT")
-                        
-                        # 如果amount为-1，使用calculate_order_quantity计算数量
-                        if args.amount == -1:
-                            from tools.math import calculate_order_quantity
-                            quantity_result = calculate_order_quantity(spot_price)
-                            args.amount = quantity_result['quantity']
-                            logger.info(f"自动计算交易数量: {args.amount} {base_currency} (预计金额: {quantity_result['estimated_amount']:.2f} USDT)")
-                    else:
-                        raise Exception(f"获取价格失败: {data}")
-                else:
-                    raise Exception(f"获取价格请求失败: {response.status}")
+        try:
+            # 使用Gate.io的API获取价格
+            orderbook = await trader.gateio.fetch_order_book(args.symbol)
+            if not orderbook or not orderbook['asks']:
+                raise Exception("无法从Gate.io获取有效的订单簿数据")
+                
+            spot_price = float(orderbook['asks'][0][0])
+            logger.info(f"获取到{base_currency}当前价格: {spot_price} USDT")
+            
+            # 如果amount为-1，使用calculate_order_quantity计算数量
+            if args.amount == -1:
+                from tools.math import calculate_order_quantity
+                quantity_result = calculate_order_quantity(spot_price)
+                args.amount = quantity_result['quantity']
+                logger.info(f"自动计算交易数量: {args.amount} {base_currency} (预计金额: {quantity_result['estimated_amount']:.2f} USDT)")
+        except Exception as e:
+            logger.error(f"获取价格失败: {str(e)}")
+            raise
 
         # 创建并初始化交易器
         trader = HedgeTrader(
