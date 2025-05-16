@@ -410,9 +410,6 @@ def main():
     trading_pairs = get_all_trading_pairs()
     logger.info(f"共获取到{len(trading_pairs)}个交易对")
     
-    # 存储所有套利机会
-    all_opportunities = []
-    
     # 遍历每个交易对
     for token in trading_pairs:
         try:
@@ -422,16 +419,14 @@ def main():
             # 找出套利机会
             opportunities = find_arbitrage_opportunities(token_info, token)
             if opportunities:
-                all_opportunities.extend(opportunities)
-                logger.info(f"发现{token}的{len(opportunities)}个套利机会")
+                # 按价差排序
+                opportunities.sort(key=lambda x: x['price_diff'], reverse=True)
+                # 立即发送通知
+                send_to_wechat_robot(opportunities)
+                logger.info(f"发现并发送{token}的{len(opportunities)}个套利机会")
         except Exception as e:
             logger.error(f"处理{token}时出错: {str(e)}")
     
-    # 按价差排序
-    all_opportunities.sort(key=lambda x: x['price_diff'], reverse=True)
-    
-    # 发送到企业微信群机器人
-    send_to_wechat_robot(all_opportunities)
     logger.info("跨交易所套利监控执行完成")
 
 if __name__ == "__main__":
