@@ -387,12 +387,15 @@ class UnhedgeTrader:
                 actual_spread = (spot_avg_price - contract_avg_price) / contract_avg_price
                 spread_slippage = actual_spread - expected_spread
                 
-                logger.info(f"Gate.io实际成交数量: {spot_filled} {base_currency}, 平均价格: {spot_avg_price:.5f}, 手续费: {quote_fee} USDT")
-                logger.info(f"Bitget实际成交数量: {contract_filled} {base_currency}, 平均价格: {contract_avg_price:.5f}")
-                
-                logger.info(f"Gate.io滑点: 预期价格 {expected_spot_price:.5f}, 实际成交价 {spot_avg_price:.5f}, 滑点率 {spot_slippage*100:.4f}%")
-                logger.info(f"Bitget滑点: 预期价格 {expected_contract_price:.5f}, 实际成交价 {contract_avg_price:.5f}, 滑点率 {contract_slippage*100:.4f}%")
-                logger.info(f"价差滑点: 预期价差 {expected_spread*100:.4f}%, 实际价差 {actual_spread*100:.4f}%, 价差损失 {spread_slippage*100:.4f}%")
+                # 记录详细的成交信息
+                logger.info("=" * 50)
+                logger.info(f"【成交详情】订单执行情况:")
+                logger.info(f"{self.symbol} Gate.io滑点: 预期价格 {float(gateio_bid):.5f}, 实际成交价 {spot_avg_price:.5f}, 滑点率 {(spot_avg_price - float(gateio_bid)) / float(gateio_bid) * 100:.4f}%")
+                logger.info(f"{self.symbol} Bitget滑点: 预期价格 {float(bitget_ask):.5f}, 实际成交价 {contract_avg_price:.5f}, 滑点率 {(contract_avg_price - float(bitget_ask)) / float(bitget_ask) * 100:.4f}%")
+                logger.info(f"{self.symbol} 价差滑点: 预期价差 {float(spread_percent) * 100:.4f}%, 实际价差 {(spot_avg_price - contract_avg_price) / contract_avg_price * 100:.4f}%, 价差损失 {((spot_avg_price - contract_avg_price) / contract_avg_price - float(spread_percent)) * 100:.4f}%")
+                logger.info(f"【成交详情】Gate.io实际成交: {spot_filled} {base_currency}, 手续费: {quote_fee} {base_currency}, 实际持仓: {spot_amount} {base_currency}")
+                logger.info(f"【成交详情】Bitget合约实际成交: {contract_filled} {base_currency}")
+                logger.info("=" * 50)
                 
                 # 检查数量是否匹配（允许1%的误差）
                 diff_percent = abs(spot_filled - contract_filled) / max(spot_filled, contract_filled)

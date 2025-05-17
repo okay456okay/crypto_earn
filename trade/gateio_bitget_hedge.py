@@ -503,8 +503,9 @@ class HedgeTrader:
                         # 记录详细的成交信息
                         logger.info("=" * 50)
                         logger.info(f"【成交详情】订单执行情况:")
-                        logger.info(f"【成交详情】Gate.io卖1价格: {float(gateio_ask):.8f}, 实际成交价格: {spot_avg_price:.8f}, 价差: {(spot_avg_price - float(gateio_ask)):.8f} ({(spot_avg_price - float(gateio_ask)) / float(gateio_ask) * 100:.4f}%)")
-                        logger.info(f"【成交详情】Bitget买1价格: {float(bitget_bid):.8f}, 实际成交价格: {contract_avg_price:.8f}, 价差: {(contract_avg_price - float(bitget_bid)):.8f} ({(contract_avg_price - float(bitget_bid)) / float(bitget_bid) * 100:.4f}%)")
+                        logger.info(f"{self.symbol} Gate.io滑点: 预期价格 {float(gateio_ask):.5f}, 实际成交价 {spot_avg_price:.5f}, 滑点率 {(spot_avg_price - float(gateio_ask)) / float(gateio_ask) * 100:.4f}%")
+                        logger.info(f"{self.symbol} Bitget滑点: 预期价格 {float(bitget_bid):.5f}, 实际成交价 {contract_avg_price:.5f}, 滑点率 {(contract_avg_price - float(bitget_bid)) / float(bitget_bid) * 100:.4f}%")
+                        logger.info(f"{self.symbol} 价差滑点: 预期价差 {float(spread_percent) * 100:.4f}%, 实际价差 {(contract_avg_price - spot_avg_price) / spot_avg_price * 100:.4f}%, 价差损失 {((contract_avg_price - spot_avg_price) / spot_avg_price - float(spread_percent)) * 100:.4f}%")
                         logger.info(f"【成交详情】Gate.io实际成交: {filled_amount} {base_currency}, 手续费: {base_fee} {base_currency}, 实际持仓: {actual_position} {base_currency}")
                         logger.info(f"【成交详情】Bitget合约实际成交: {contract_filled} {base_currency}")
                         logger.info("=" * 50)

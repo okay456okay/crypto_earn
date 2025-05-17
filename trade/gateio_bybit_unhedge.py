@@ -587,6 +587,16 @@ class UnhedgeTrader:
             logger.info(f"交易结果验证通过: Gate.io成交量 {spot_filled}, Bybit成交量 {contract_filled}, "
                        f"误差: {difference_percent * 100:.2f}% <= 5.00%")
                 
+            # 记录详细的成交信息
+            logger.info("=" * 50)
+            logger.info(f"【成交详情】订单执行情况:")
+            logger.info(f"{self.symbol} Gate.io滑点: 预期价格 {float(gateio_bid):.5f}, 实际成交价 {spot_price:.5f}, 滑点率 {(spot_price - float(gateio_bid)) / float(gateio_bid) * 100:.4f}%")
+            logger.info(f"{self.symbol} Bybit滑点: 预期价格 {float(bybit_ask):.5f}, 实际成交价 {contract_price:.5f}, 滑点率 {(contract_price - float(bybit_ask)) / float(bybit_ask) * 100:.4f}%")
+            logger.info(f"{self.symbol} 价差滑点: 预期价差 {float(spread_percent) * 100:.4f}%, 实际价差 {(spot_price - contract_price) / contract_price * 100:.4f}%, 价差损失 {((spot_price - contract_price) / contract_price - float(spread_percent)) * 100:.4f}%")
+            logger.info(f"【成交详情】Gate.io实际成交: {filled_amount} {base_currency}, 手续费: {base_fee} {base_currency}, 实际持仓: {actual_position} {base_currency}")
+            logger.info(f"【成交详情】Bybit合约实际成交: {contract_filled} {base_currency}")
+            logger.info("=" * 50)
+                
         except Exception as e:
             logger.error(f"交易结果验证失败: {str(e)}")
             raise

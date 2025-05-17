@@ -489,6 +489,16 @@ class HedgeTrader:
                             except Exception as e:
                                 logger.error(f"余币宝申购失败，但不影响主要交易流程: {str(e)}")
                         
+                        # 记录详细的成交信息
+                        logger.info("=" * 50)
+                        logger.info(f"【成交详情】订单执行情况:")
+                        logger.info(f"{self.symbol} Gate.io滑点: 预期价格 {float(gateio_ask):.5f}, 实际成交价 {spot_actual_price:.5f}, 滑点率 {(spot_actual_price - float(gateio_ask)) / float(gateio_ask) * 100:.4f}%")
+                        logger.info(f"{self.symbol} Binance滑点: 预期价格 {float(binance_bid):.5f}, 实际成交价 {contract_actual_price:.5f}, 滑点率 {(contract_actual_price - float(binance_bid)) / float(binance_bid) * 100:.4f}%")
+                        logger.info(f"{self.symbol} 价差滑点: 预期价差 {float(spread_percent) * 100:.4f}%, 实际价差 {(contract_actual_price - spot_actual_price) / spot_actual_price * 100:.4f}%, 价差损失 {((contract_actual_price - spot_actual_price) / spot_actual_price - float(spread_percent)) * 100:.4f}%")
+                        logger.info(f"【成交详情】Gate.io实际成交: {spot_filled_amount} {self.symbol.split('/')[0]}, 手续费: {spot_base_fee} {self.symbol.split('/')[0]}, 实际持仓: {spot_actual_position} {self.symbol.split('/')[0]}")
+                        logger.info(f"【成交详情】Binance合约实际成交: {contract_filled_amount} {self.symbol.split('/')[0]}")
+                        logger.info("=" * 50)
+                        
                         return spot_order, contract_order
                     
                     # 不满足条件时，继续下一次轮询，避免打印过多日志

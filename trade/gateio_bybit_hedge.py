@@ -605,6 +605,16 @@ class HedgeTrader:
                 except Exception as e:
                     logger.error(f"余币宝申购失败: {str(e)}")
 
+                # 记录详细的成交信息
+                logger.info("=" * 50)
+                logger.info(f"【成交详情】订单执行情况:")
+                logger.info(f"{self.symbol} Gate.io滑点: 预期价格 {float(gateio_ask):.5f}, 实际成交价 {spot_avg_price:.5f}, 滑点率 {(spot_avg_price - float(gateio_ask)) / float(gateio_ask) * 100:.4f}%")
+                logger.info(f"{self.symbol} Bybit滑点: 预期价格 {float(bybit_bid):.5f}, 实际成交价 {contract_avg_price:.5f}, 滑点率 {(contract_avg_price - float(bybit_bid)) / float(bybit_bid) * 100:.4f}%")
+                logger.info(f"{self.symbol} 价差滑点: 预期价差 {float(spread_percent) * 100:.4f}%, 实际价差 {(contract_avg_price - spot_avg_price) / spot_avg_price * 100:.4f}%, 价差损失 {((contract_avg_price - spot_avg_price) / spot_avg_price - float(spread_percent)) * 100:.4f}%")
+                logger.info(f"【成交详情】Gate.io实际成交: {filled_amount} {self.base_currency}, 手续费: {base_fee} {self.base_currency}, 实际持仓: {actual_position} {self.base_currency}")
+                logger.info(f"【成交详情】Bybit合约实际成交: {contract_filled} {self.base_currency}")
+                logger.info("=" * 50)
+
                 # 交易成功，返回订单信息（不再设置ws_running=False，由外层函数控制）
                 return spot_order, contract_order, True
             else:
