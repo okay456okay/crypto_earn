@@ -352,7 +352,145 @@ class UnhedgeTrader:
                                     await asyncio.sleep(1)
                                     
                                     # 验证交易结果并计算滑点
-                                    await self.verify_trade_result(spot_order, contract_order, pre_trade_prices)
+                                    try:
+                                        # 获取订单ID
+                                        spot_order_id = spot_order.get('id')
+                                        contract_order_id = contract_order.get('id')
+                                        
+                                        logger.info(f"验证交易结果 - Gate.io订单ID: {spot_order_id}, Bybit订单ID: {contract_order_id}")
+                                        
+                                        # 获取最新的订单信息
+                                        updated_spot_order = spot_order
+                                        updated_contract_order = contract_order
+                                        
+                                        # 获取Gate.io订单最新状态 - 必须获取成功
+                                        if spot_order_id:
+                                            try:
+                                                updated_spot_order = await self.gateio.fetch_order(spot_order_id, self.symbol)
+                                                logger.debug(f"获取到最新Gate.io订单信息: {updated_spot_order}")
+                                            except Exception as e:
+                                                logger.error(f"获取Gate.io订单详情失败: {str(e)}")
+                                                raise Exception(f"无法获取Gate.io订单状态，验证失败: {str(e)}")
+                                        else:
+                                            raise Exception("Gate.io订单ID无效，无法验证订单状态")
+                                        
+                                        # 获取Bybit订单最新状态 - 必须获取成功
+                                        if contract_order_id:
+                                            bybit_order_found = False
+                                            try:
+                                                # 首先查找已关闭的订单
+                                                closed_orders = await self.bybit.fetch_closed_orders(self.contract_symbol, limit=20)
+                                                for order in closed_orders:
+                                                    if order.get('id') == contract_order_id:
+                                                        updated_contract_order = order
+                                                        bybit_order_found = True
+                                                        logger.debug(f"从已关闭订单中获取到Bybit订单信息: {updated_contract_order}")
+                                                        break
+                                                
+                                                if not bybit_order_found:
+                                                    raise Exception(f"无法找到Bybit订单 {contract_order_id} 的最新状态")
+                                                    
+                                            except Exception as e:
+                                                logger.error(f"获取Bybit订单详情失败: {str(e)}")
+                                                raise Exception(f"无法获取Bybit订单状态，验证失败: {str(e)}")
+                                        else:
+                                            raise Exception("Bybit订单ID无效，无法验证订单状态")
+
+                                        logger.info(f"订单执行详情 - Gate.io现货订单: {updated_spot_order}")
+                                        logger.info(f"订单执行详情 - Bybit合约订单: {updated_contract_order}")
+                                        
+                                        # 严格检查订单状态 - 必须是完成状态
+                                        valid_statuses = ['closed', 'filled']
+                                        spot_status = updated_spot_order.get('status')
+                                        contract_status = updated_contract_order.get('status')
+                                        
+                                        logger.info(f"订单状态检查 - Gate.io: {spot_status}, Bybit: {contract_status}")
+                                        
+                                        if spot_status not in valid_statuses:
+                                            raise Exception(f"Gate.io现货订单未完成，当前状态: {spot_status}")
+                                        
+                                        # Bybit有时可能返回None作为状态，我们需要进一步验证
+                                        if contract_status not in valid_statuses:
+                                            if contract_status is None:
+                                                logger.warning("Bybit返回订单状态为None，将检查filled字段确认是否成功")
+                                                if not updated_contract_order.get('filled'):
+                                                    raise Exception("Bybit订单状态为None且无成交量，验证失败")
+                                            else:
+                                                raise Exception(f"Bybit合约订单未完成，当前状态: {contract_status}")
+                                        
+                                        # 获取成交数量和价格 - 必须有成交
+                                        spot_filled = float(updated_spot_order.get('filled', 0))
+                                        spot_price = float(updated_spot_order.get('average', 0))
+                                        contract_filled = float(updated_contract_order.get('filled', 0))
+                                        contract_price = float(updated_contract_order.get('average', 0))
+                                        
+                                        # 直接检查成交量，如果为0则报错退出
+                                        if spot_filled <= 0:
+                                            raise Exception(f"Gate.io成交量为0，交易可能未成功")
+                                            
+                                        if contract_filled <= 0:
+                                            raise Exception(f"Bybit成交量为0，交易可能未成功")
+                                        
+                                        # 打印成交信息
+                                        spot_fees = updated_spot_order.get('fees', [])
+                                        spot_quote_fee = sum(float(fee.get('cost', 0)) for fee in spot_fees if fee.get('currency') == 'USDT')
+                                        logger.info(f"Gate.io实际成交数量: {spot_filled} {base_currency}, 平均价格: {spot_price}, 手续费: {spot_quote_fee} USDT")
+                                        
+                                        contract_fees = updated_contract_order.get('fees', [])
+                                        contract_quote_fee = sum(float(fee.get('cost', 0)) for fee in contract_fees if fee.get('currency') == 'USDT')
+                                        logger.info(f"Bybit实际成交数量: {contract_filled} {base_currency}, 平均价格: {contract_price}, 手续费: {contract_quote_fee} USDT")
+                                        
+                                        # 计算交易滑点 - 如果有预期价格数据
+                                        if pre_trade_prices:
+                                            # Gate.io卖出滑点 - 实际成交价比预期价格低的比例
+                                            gateio_expected_price = pre_trade_prices['gateio_bid']
+                                            if spot_price > 0 and gateio_expected_price > 0:
+                                                gateio_slippage = (gateio_expected_price - spot_price) / gateio_expected_price
+                                                self.slippage_stats['gateio'].append(gateio_slippage)
+                                                logger.info(f"Gate.io滑点: 预期价格 {gateio_expected_price:.6f}, 实际成交价 {spot_price:.6f}, "
+                                                           f"滑点率 {gateio_slippage * 100:.4f}%")
+                                            
+                                            # Bybit买入滑点 - 实际成交价比预期价格高的比例
+                                            bybit_expected_price = pre_trade_prices['bybit_ask']
+                                            if contract_price > 0 and bybit_expected_price > 0:
+                                                bybit_slippage = (contract_price - bybit_expected_price) / bybit_expected_price
+                                                self.slippage_stats['bybit'].append(bybit_slippage)
+                                                logger.info(f"Bybit滑点: 预期价格 {bybit_expected_price:.6f}, 实际成交价 {contract_price:.6f}, "
+                                                           f"滑点率 {bybit_slippage * 100:.4f}%")
+                                            
+                                            # 总滑点 - 原始价差与实际价差的差异
+                                            expected_spread = pre_trade_prices['spread_percent']
+                                            actual_spread = 0
+                                            if contract_price > 0:
+                                                actual_spread = (spot_price - contract_price) / contract_price
+                                                
+                                            spread_diff = expected_spread - actual_spread
+                                            logger.info(f"价差滑点: 预期价差 {expected_spread * 100:.4f}%, 实际价差 {actual_spread * 100:.4f}%, "
+                                                       f"价差损失 {spread_diff * 100:.4f}%")
+                                        
+                                        # 严格检查成交数量是否一致（允许5%的误差）
+                                        difference_percent = abs(spot_filled - contract_filled) / max(spot_filled, contract_filled)
+                                        
+                                        if difference_percent > 0.05:  # 超过5%的误差
+                                            raise Exception(f"交易数量不一致: Gate.io成交量 {spot_filled}, Bybit成交量 {contract_filled}, "
+                                                           f"误差: {difference_percent * 100:.2f}% > 5.00%")
+                                        
+                                        logger.info(f"交易结果验证通过: Gate.io成交量 {spot_filled}, Bybit成交量 {contract_filled}, "
+                                                   f"误差: {difference_percent * 100:.2f}% <= 5.00%")
+                                            
+                                        # 记录详细的成交信息
+                                        logger.info("=" * 50)
+                                        logger.info(f"【成交详情】订单执行情况:")
+                                        logger.info(f"{self.symbol} Gate.io滑点: 预期价格 {float(gateio_bid):.5f}, 实际成交价 {spot_price:.5f}, 滑点率 {(spot_price - float(gateio_bid)) / float(gateio_bid) * 100:.4f}%")
+                                        logger.info(f"{self.symbol} Bybit滑点: 预期价格 {float(bybit_ask):.5f}, 实际成交价 {contract_price:.5f}, 滑点率 {(contract_price - float(bybit_ask)) / float(bybit_ask) * 100:.4f}%")
+                                        logger.info(f"{self.symbol} 价差滑点: 预期价差 {float(spread_percent) * 100:.4f}%, 实际价差 {(spot_price - contract_price) / contract_price * 100:.4f}%, 价差损失 {((spot_price - contract_price) / contract_price - float(spread_percent)) * 100:.4f}%")
+                                        logger.info(f"【成交详情】Gate.io实际成交: {spot_filled} {base_currency}, 手续费: {spot_quote_fee} USDT, 实际持仓: {spot_filled} {base_currency}")
+                                        logger.info(f"【成交详情】Bybit合约实际成交: {contract_filled} {base_currency}")
+                                        logger.info("=" * 50)
+                                        
+                                    except Exception as e:
+                                        logger.error(f"交易结果验证失败: {str(e)}")
+                                        raise
                                     
                                     # 检查平仓后的持仓情况
                                     await self.check_positions()
@@ -390,216 +528,6 @@ class UnhedgeTrader:
                 )
             except:
                 pass
-
-    async def verify_trade_result(self, spot_order, contract_order, pre_trade_prices=None):
-        """
-        验证交易结果是否符合预期，并计算交易滑点
-        
-        Args:
-            spot_order: Gate.io现货订单结果
-            contract_order: Bybit合约订单结果
-            pre_trade_prices: 交易前的价格数据，用于计算滑点
-        
-        Raises:
-            Exception: 如果订单状态异常或交易数量不一致
-        """
-        try:
-            # 获取订单ID
-            spot_order_id = spot_order.get('id')
-            contract_order_id = contract_order.get('id')
-            base_currency = self.symbol.split('/')[0]
-            
-            logger.info(f"验证交易结果 - Gate.io订单ID: {spot_order_id}, Bybit订单ID: {contract_order_id}")
-            
-            # 获取最新的订单信息
-            updated_spot_order = spot_order
-            updated_contract_order = contract_order
-            
-            # 获取Gate.io订单最新状态 - 必须获取成功
-            if spot_order_id:
-                try:
-                    updated_spot_order = await self.gateio.fetch_order(spot_order_id, self.symbol)
-                    logger.debug(f"获取到最新Gate.io订单信息: {updated_spot_order}")
-                except Exception as e:
-                    logger.error(f"获取Gate.io订单详情失败: {str(e)}")
-                    raise Exception(f"无法获取Gate.io订单状态，验证失败: {str(e)}")
-            else:
-                raise Exception("Gate.io订单ID无效，无法验证订单状态")
-            
-            # 获取Bybit订单最新状态 - 必须获取成功
-            if contract_order_id:
-                bybit_order_found = False
-                try:
-                    # 首先查找已关闭的订单
-                    closed_orders = await self.bybit.fetch_closed_orders(self.contract_symbol, limit=20)
-                    for order in closed_orders:
-                        if order.get('id') == contract_order_id:
-                            updated_contract_order = order
-                            bybit_order_found = True
-                            logger.debug(f"从已关闭订单中获取到Bybit订单信息: {updated_contract_order}")
-                            break
-                    
-                    # # 如果在关闭订单中没找到，查找未完成订单
-                    # if not bybit_order_found:
-                    #     open_orders = await self.bybit.fetch_open_orders(self.contract_symbol, limit=20)
-                    #     for order in open_orders:
-                    #         if order.get('id') == contract_order_id:
-                    #             updated_contract_order = order
-                    #             bybit_order_found = True
-                    #             logger.debug(f"从未完成订单中获取到Bybit订单信息: {updated_contract_order}")
-                    #             break
-                    
-                    # 如果两种方式都未找到订单，尝试直接查询
-                    # if not bybit_order_found:
-                    #     try:
-                    #         order_result = await self.bybit.fetch_order(contract_order_id, self.contract_symbol)
-                    #         if order_result:
-                    #             updated_contract_order = order_result
-                    #             bybit_order_found = True
-                    #             logger.debug(f"通过直接查询获取到Bybit订单信息: {updated_contract_order}")
-                    #     except Exception as e:
-                    #         logger.warning(f"直接查询Bybit订单失败: {str(e)}")
-                    
-                    # 如果所有方法都未找到订单
-                    # if not bybit_order_found:
-                    #     raise Exception(f"无法找到Bybit订单 {contract_order_id} 的最新状态")
-                        
-                except Exception as e:
-                    logger.error(f"获取Bybit订单详情失败: {str(e)}")
-                    raise Exception(f"无法获取Bybit订单状态，验证失败: {str(e)}")
-            else:
-                raise Exception("Bybit订单ID无效，无法验证订单状态")
-
-            logger.info(f"订单执行详情 - Gate.io现货订单: {updated_spot_order}")
-            logger.info(f"订单执行详情 - Bybit合约订单: {updated_contract_order}")
-            # 严格检查订单状态 - 必须是完成状态
-            valid_statuses = ['closed', 'filled']
-            spot_status = updated_spot_order.get('status')
-            contract_status = updated_contract_order.get('status')
-            
-            logger.info(f"订单状态检查 - Gate.io: {spot_status}, Bybit: {contract_status}")
-            
-            if spot_status not in valid_statuses:
-                raise Exception(f"Gate.io现货订单未完成，当前状态: {spot_status}")
-            
-            # Bybit有时可能返回None作为状态，我们需要进一步验证
-            if contract_status not in valid_statuses:
-                if contract_status is None:
-                    logger.warning("Bybit返回订单状态为None，将检查filled字段确认是否成功")
-                    if not updated_contract_order.get('filled'):
-                        raise Exception("Bybit订单状态为None且无成交量，验证失败")
-                else:
-                    raise Exception(f"Bybit合约订单未完成，当前状态: {contract_status}")
-            
-            # 获取成交数量和价格 - 必须有成交
-            spot_filled = float(updated_spot_order.get('filled', 0))
-            spot_price = float(updated_spot_order.get('average', 0))
-            contract_filled = float(updated_contract_order.get('filled', 0))
-            contract_price = float(updated_contract_order.get('average', 0))
-            
-            # 如果订单状态显示完成但成交量为0，尝试其他方式获取成交量
-            if spot_filled <= 0:
-                logger.warning("Gate.io订单状态为完成但成交量为0，尝试其他方式获取")
-                try:
-                    # 从余额变化获取
-                    current_balance = await self.gateio.fetch_balance()
-                    spot_balance = float(current_balance.get(base_currency, {}).get('free', 0))
-                    # 只能估算，因为这个时间点的余额可能已经包含了其他操作的影响
-                    # 我们使用订单中的amount字段作为估计值
-                    spot_filled = float(updated_spot_order.get('amount', 0))
-                    logger.info(f"使用订单amount估算Gate.io成交量: {spot_filled} {base_currency}")
-                except Exception as e:
-                    logger.error(f"无法获取Gate.io成交量: {str(e)}")
-                    raise Exception(f"Gate.io成交量获取失败，无法验证交易结果: {str(e)}")
-            
-            if contract_filled <= 0:
-                logger.warning("Bybit订单状态为完成但成交量为0，尝试从持仓信息获取")
-                try:
-                    # 从持仓变化获取
-                    positions = await self.bybit.fetch_positions([self.contract_symbol])
-                    position_found = False
-                    for position in positions:
-                        if position['info']['symbol'] == self.contract_symbol and position['side'] == 'short':
-                            contract_filled = abs(float(position.get('contracts', 0)))
-                            position_found = True
-                            logger.info(f"从持仓信息获取Bybit成交量: {contract_filled} {base_currency}")
-                            break
-                    
-                    if not position_found:
-                        # 如果找不到持仓，可能是已经完全平仓，使用订单中的amount作为估计值
-                        contract_filled = float(updated_contract_order.get('amount', 0))
-                        logger.info(f"使用订单amount估算Bybit成交量: {contract_filled} {base_currency}")
-                except Exception as e:
-                    logger.error(f"无法获取Bybit成交量: {str(e)}")
-                    raise Exception(f"Bybit成交量获取失败，无法验证交易结果: {str(e)}")
-            
-            # 确保有成交量数据
-            if spot_filled <= 0:
-                raise Exception(f"Gate.io成交量为0，交易可能未成功")
-                
-            if contract_filled <= 0:
-                raise Exception(f"Bybit成交量为0，交易可能未成功")
-            
-            # 打印成交信息
-            spot_fees = updated_spot_order.get('fees', [])
-            spot_quote_fee = sum(float(fee.get('cost', 0)) for fee in spot_fees if fee.get('currency') == 'USDT')
-            logger.info(f"Gate.io实际成交数量: {spot_filled} {base_currency}, 平均价格: {spot_price}, 手续费: {spot_quote_fee} USDT")
-            
-            contract_fees = updated_contract_order.get('fees', [])
-            contract_quote_fee = sum(float(fee.get('cost', 0)) for fee in contract_fees if fee.get('currency') == 'USDT')
-            logger.info(f"Bybit实际成交数量: {contract_filled} {base_currency}, 平均价格: {contract_price}, 手续费: {contract_quote_fee} USDT")
-            
-            # 计算交易滑点 - 如果有预期价格数据
-            if pre_trade_prices:
-                # Gate.io卖出滑点 - 实际成交价比预期价格低的比例
-                gateio_expected_price = pre_trade_prices['gateio_bid']
-                if spot_price > 0 and gateio_expected_price > 0:
-                    gateio_slippage = (gateio_expected_price - spot_price) / gateio_expected_price
-                    self.slippage_stats['gateio'].append(gateio_slippage)
-                    logger.info(f"Gate.io滑点: 预期价格 {gateio_expected_price:.6f}, 实际成交价 {spot_price:.6f}, "
-                               f"滑点率 {gateio_slippage * 100:.4f}%")
-                
-                # Bybit买入滑点 - 实际成交价比预期价格高的比例
-                bybit_expected_price = pre_trade_prices['bybit_ask']
-                if contract_price > 0 and bybit_expected_price > 0:
-                    bybit_slippage = (contract_price - bybit_expected_price) / bybit_expected_price
-                    self.slippage_stats['bybit'].append(bybit_slippage)
-                    logger.info(f"Bybit滑点: 预期价格 {bybit_expected_price:.6f}, 实际成交价 {contract_price:.6f}, "
-                               f"滑点率 {bybit_slippage * 100:.4f}%")
-                
-                # 总滑点 - 原始价差与实际价差的差异
-                expected_spread = pre_trade_prices['spread_percent']
-                actual_spread = 0
-                if contract_price > 0:
-                    actual_spread = (spot_price - contract_price) / contract_price
-                    
-                spread_diff = expected_spread - actual_spread
-                logger.info(f"价差滑点: 预期价差 {expected_spread * 100:.4f}%, 实际价差 {actual_spread * 100:.4f}%, "
-                           f"价差损失 {spread_diff * 100:.4f}%")
-            
-            # 严格检查成交数量是否一致（允许5%的误差）
-            difference_percent = abs(spot_filled - contract_filled) / max(spot_filled, contract_filled)
-            
-            if difference_percent > 0.05:  # 超过5%的误差
-                raise Exception(f"交易数量不一致: Gate.io成交量 {spot_filled}, Bybit成交量 {contract_filled}, "
-                               f"误差: {difference_percent * 100:.2f}% > 5.00%")
-            
-            logger.info(f"交易结果验证通过: Gate.io成交量 {spot_filled}, Bybit成交量 {contract_filled}, "
-                       f"误差: {difference_percent * 100:.2f}% <= 5.00%")
-                
-            # 记录详细的成交信息
-            logger.info("=" * 50)
-            logger.info(f"【成交详情】订单执行情况:")
-            logger.info(f"{self.symbol} Gate.io滑点: 预期价格 {float(gateio_bid):.5f}, 实际成交价 {spot_price:.5f}, 滑点率 {(spot_price - float(gateio_bid)) / float(gateio_bid) * 100:.4f}%")
-            logger.info(f"{self.symbol} Bybit滑点: 预期价格 {float(bybit_ask):.5f}, 实际成交价 {contract_price:.5f}, 滑点率 {(contract_price - float(bybit_ask)) / float(bybit_ask) * 100:.4f}%")
-            logger.info(f"{self.symbol} 价差滑点: 预期价差 {float(spread_percent) * 100:.4f}%, 实际价差 {(spot_price - contract_price) / contract_price * 100:.4f}%, 价差损失 {((spot_price - contract_price) / contract_price - float(spread_percent)) * 100:.4f}%")
-            logger.info(f"【成交详情】Gate.io实际成交: {filled_amount} {base_currency}, 手续费: {base_fee} {base_currency}, 实际持仓: {actual_position} {base_currency}")
-            logger.info(f"【成交详情】Bybit合约实际成交: {contract_filled} {base_currency}")
-            logger.info("=" * 50)
-                
-        except Exception as e:
-            logger.error(f"交易结果验证失败: {str(e)}")
-            raise
 
     def print_trading_summary(self, count=None):
         """
