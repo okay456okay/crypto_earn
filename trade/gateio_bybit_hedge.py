@@ -341,12 +341,23 @@ class HedgeTrader:
             # 获取订单簿数据的时间戳，用于计算延迟
             check_start_time = time.time()
             
+            # 用于记录关键时间点
+            time_stats = {
+                "price_update": None,  # 接收到价格更新的时间
+                "condition_met": None,  # 满足交易条件的时间
+                "pre_order": None,  # 下单前的时间
+                "order_sent": None,  # 订单提交的时间
+            }
+            
             gateio_ob = self.orderbooks['gateio']
             bybit_ob = self.orderbooks['bybit']
 
             # 如果任一订单簿数据不存在，直接返回
             if not gateio_ob or not bybit_ob:
                 return None, None, False
+
+            # 记录收到价格更新的时间
+            time_stats["price_update"] = time.time()
 
             # 获取价格和数量
             gateio_ask = float(gateio_ob['asks'][0][0])
@@ -393,14 +404,12 @@ class HedgeTrader:
                 # 设置尝试执行交易的标志
                 self._trading_attempted = True
                 
-                # 记录获取到满足条件的订单簿到准备交易的时间
-                order_prep_time = time.time()
-                prep_delay = (order_prep_time - check_start_time) * 1000  # 毫秒
+                # 记录满足交易条件的时间点
+                time_stats["condition_met"] = time.time()
                 
                 # 记录交易前的市场状态
                 logger.info(f"【交易前市场状态】Gate.io - 卖一: {gateio_ask:.8f} (数量: {gateio_ask_volume:.8f}), 买一: {gateio_ob['bids'][0][0]:.8f} (数量: {gateio_ob['bids'][0][1]:.8f})")
                 logger.info(f"Bybit  - 买一: {bybit_bid:.8f} (数量: {bybit_bid_volume:.8f}), 卖一: {bybit_ob['asks'][0][0]:.8f} (数量: {bybit_ob['asks'][0][1]:.8f})")
-                logger.info(f"当前价差: {spread_percent * 100:.4f}% (满足条件到准备交易耗时: {prep_delay:.2f}ms)")
 
                 # 记录预期成交价格
                 spot_expected_price = gateio_ask
@@ -411,18 +420,19 @@ class HedgeTrader:
                 trade_amount = self.spot_amount
                 contract_amount = self.spot_amount
                 
-                # 计算买入所需的USDT金额（修复现货买入数量不准确的问题）
-                # 使用quoteOrderQty参数指定USDT金额而非数量，解决现货买入数量与预期不符的问题
+                # 计算买入所需的USDT金额
                 cost = trade_amount * gateio_ask
                 
                 # 记录实际下单参数
                 logger.debug(f"下单参数 - Gate.io：花费 {cost:.4f} USDT 购买 {trade_amount} {self.base_currency}，使用quoteOrderQty模式")
                 logger.debug(f"下单参数 - Bybit：卖出 {contract_amount} {self.base_currency} 合约")
                 
+                # 记录下单前的时间点
+                time_stats["pre_order"] = time.time()
+                
                 # 立即执行交易
                 spot_order = None
                 contract_order = None
-                order_start_time = time.time()
                 
                 try:
                     # 使用gather同时发送两个订单，最大限度减少时间差
@@ -443,13 +453,23 @@ class HedgeTrader:
                         )
                     )
                     
-                    order_end_time = time.time()
-                    order_delay = (order_end_time - order_start_time) * 1000  # 毫秒
-                    total_delay = (order_end_time - check_start_time) * 1000  # 毫秒
+                    # 记录订单提交时间
+                    time_stats["order_sent"] = time.time()
                     
-                    logger.info(f"订单执行延迟: 下单耗时 {order_delay:.2f}ms, 总延迟 {total_delay:.2f}ms")
                     logger.info(f"订单提交详情 - Gate.io现货订单: {spot_order}")
                     logger.info(f"订单提交详情 - Bybit合约订单: {contract_order}")
+                    
+                    # 在交易完成后输出时间统计
+                    if all(time_stats.values()):  # 确保所有时间点都已记录
+                        price_update_time = time.strftime('%Y-%m-%d %H:%M:%S,%f', time.localtime(time_stats["price_update"]))[:-3]
+                        condition_met_time = time.strftime('%Y-%m-%d %H:%M:%S,%f', time.localtime(time_stats["condition_met"]))[:-3]
+                        pre_order_time = time.strftime('%Y-%m-%d %H:%M:%S,%f', time.localtime(time_stats["pre_order"]))[:-3]
+                        order_sent_time = time.strftime('%Y-%m-%d %H:%M:%S,%f', time.localtime(time_stats["order_sent"]))[:-3]
+                        
+                        logger.info(f"{self.symbol} 时间统计 - 完整流程:")
+                        logger.info(f"{self.symbol} 时间统计 - 从接收到价格更新[{price_update_time}]到满足条件[{condition_met_time}]: {(time_stats['condition_met'] - time_stats['price_update']) * 1000:.1f}毫秒")
+                        logger.info(f"{self.symbol} 时间统计 - 从满足条件[{condition_met_time}]到下单前[{pre_order_time}]: {(time_stats['pre_order'] - time_stats['condition_met']) * 1000:.1f}毫秒")
+                        logger.info(f"{self.symbol} 时间统计 - 从下单前[{pre_order_time}]到订单提交[{order_sent_time}]: {(time_stats['order_sent'] - time_stats['pre_order']) * 1000:.1f}毫秒")
                     
                     # 立即验证订单是否成功提交
                     if not spot_order or not contract_order:

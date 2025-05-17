@@ -193,10 +193,10 @@ class UnhedgeTrader:
             
             # 用于记录关键时间点
             time_stats = {
-                "start_time": start_wait_time,
-                "last_price_update": 0,
-                "condition_met": 0,
-                "order_sent": 0
+                "price_update": None,  # 接收到价格更新的时间
+                "condition_met": None,  # 满足交易条件的时间
+                "pre_order": None,  # 下单前的时间
+                "order_sent": None,  # 订单提交的时间
             }
             
             # 订阅订单簿直到找到符合条件的价格
@@ -221,8 +221,7 @@ class UnhedgeTrader:
                             ob = task.result()
                             
                             # 记录收到价格更新的时间
-                            price_update_time = time.time()
-                            time_stats["last_price_update"] = price_update_time
+                            time_stats["price_update"] = time.time()
                             
                             if task == tasks[0]:
                                 self.orderbooks['gateio'] = ob
@@ -280,14 +279,10 @@ class UnhedgeTrader:
                                 # 如果所有条件都满足，立即执行交易
                                 if price_ok and gateio_volume_ok and bybit_volume_ok:
                                     # 记录满足交易条件的时间点
-                                    condition_met_time = time.time()
-                                    time_stats["condition_met"] = condition_met_time
-                                    
-                                    # 计算从最后价格更新到满足条件的时间间隔
-                                    price_to_condition_interval = condition_met_time - time_stats["last_price_update"]
+                                    time_stats["condition_met"] = time.time()
                                     
                                     # 记录等待时间
-                                    wait_duration = condition_met_time - start_wait_time
+                                    wait_duration = time_stats["condition_met"] - start_wait_time
                                     
                                     logger.info(f"{self.symbol}交易条件满足："
                                                f"价差 {float(spread_percent) * 100:.4f}% >= {self.min_spread * 100:.4f}%, "
@@ -297,8 +292,6 @@ class UnhedgeTrader:
                                                f"Bybit卖1: {float(bybit_ask):.6f} (量: {float(bybit_ask_volume):.6f}), "
                                                f"价差: {float(spread_percent) * 100:.4f}%, "
                                                f"等待耗时: {wait_duration:.3f}秒")
-                                    
-                                    logger.info(f"时间统计 - 从最后价格更新到满足条件: {price_to_condition_interval * 1000:.2f}毫秒")
                                     
                                     # 保存交易前的价格用于计算滑点
                                     pre_trade_prices = {
@@ -311,12 +304,10 @@ class UnhedgeTrader:
                                     self.ws_running = False
                                     
                                     # 执行交易 - 必须尽快，减少时间延迟
-                                    pre_order_time = time.time()
-                                    condition_to_order_interval = pre_order_time - time_stats["condition_met"]
-                                    logger.info(f"时间统计 - 从满足条件到准备下单: {condition_to_order_interval * 1000:.2f}毫秒")
+                                    time_stats["pre_order"] = time.time()
                                     
                                     # 记录下单开始时间
-                                    time_stats["order_sent"] = pre_order_time
+                                    time_stats["order_sent"] = time.time()
                                     
                                     execution_start_time = time.time()
                                     spot_order, contract_order = await asyncio.gather(
@@ -334,14 +325,18 @@ class UnhedgeTrader:
 
                                     logger.info(f"订单提交详情 - Gate.io现货订单: {spot_order}")
                                     logger.info(f"订单提交详情 - Bybit合约订单: {contract_order}")
-                                    # 记录完整的时间链
-                                    total_process_time = time.time() - start_wait_time
-                                    logger.info(f"时间统计 - 完整流程:"
-                                               f"\n- 总等待时间: {wait_duration:.3f}秒"
-                                               f"\n- 价格更新→满足条件: {price_to_condition_interval * 1000:.2f}毫秒"
-                                               f"\n- 满足条件→下单请求: {condition_to_order_interval * 1000:.2f}毫秒"
-                                               f"\n- 下单请求→完成下单: {execution_duration * 1000:.2f}毫秒"
-                                               f"\n- 总处理时间: {total_process_time:.3f}秒")
+                                    
+                                    # 在交易完成后输出时间统计
+                                    if all(time_stats.values()):  # 确保所有时间点都已记录
+                                        price_update_time = time.strftime('%Y-%m-%d %H:%M:%S,%f', time.localtime(time_stats["price_update"]))[:-3]
+                                        condition_met_time = time.strftime('%Y-%m-%d %H:%M:%S,%f', time.localtime(time_stats["condition_met"]))[:-3]
+                                        pre_order_time = time.strftime('%Y-%m-%d %H:%M:%S,%f', time.localtime(time_stats["pre_order"]))[:-3]
+                                        order_sent_time = time.strftime('%Y-%m-%d %H:%M:%S,%f', time.localtime(time_stats["order_sent"]))[:-3]
+                                        
+                                        logger.info(f"{self.symbol} 时间统计 - 完整流程:")
+                                        logger.info(f"{self.symbol} 时间统计 - 从接收到价格更新[{price_update_time}]到满足条件[{condition_met_time}]: {(time_stats['condition_met'] - time_stats['price_update']) * 1000:.1f}毫秒")
+                                        logger.info(f"{self.symbol} 时间统计 - 从满足条件[{condition_met_time}]到下单前[{pre_order_time}]: {(time_stats['pre_order'] - time_stats['condition_met']) * 1000:.1f}毫秒")
+                                        logger.info(f"{self.symbol} 时间统计 - 从下单前[{pre_order_time}]到订单提交[{order_sent_time}]: {(time_stats['order_sent'] - time_stats['pre_order']) * 1000:.1f}毫秒")
                                     
                                     # 记录下单耗时
                                     logger.info(f"下单执行耗时: {execution_duration:.3f}秒")
