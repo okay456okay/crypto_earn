@@ -102,6 +102,12 @@ class UnhedgeTrader:
         self.completed_trades = 0
         self.trade_results = []
 
+        # 新增：用于记录关键时间点
+        self.price_update_time = None  # 接收到价格更新的时间
+        self.condition_met_time = None  # 满足交易条件的时间
+        self.order_start_time = None  # 开始下单的时间
+        self.order_submit_time = None  # 订单提交完成的时间
+
     async def initialize(self):
         """
         异步初始化方法，执行需要网络请求的初始化操作
@@ -276,6 +282,9 @@ class UnhedgeTrader:
                             await asyncio.sleep(0.1)
                             continue
 
+                        # 记录接收到价格更新的时间
+                        self.price_update_time = time.time()
+
                         # 检查价差和深度
                         gateio_ob = self.orderbooks['gateio']
                         binance_ob = self.orderbooks['binance']
@@ -285,13 +294,6 @@ class UnhedgeTrader:
 
                         binance_ask = Decimal(str(binance_ob['asks'][0][0]))  # 合约买入价(卖1)
                         binance_ask_volume = Decimal(str(binance_ob['asks'][0][1]))
-
-                        # 如果amount为-1，使用calculate_order_quantity计算数量
-                        # if self.spot_amount == -1:
-                        #     from tools.math import calculate_order_quantity
-                        #     quantity_result = calculate_order_quantity(float(gateio_bid))
-                        #     self.spot_amount = quantity_result['quantity']
-                        #     logger.info(f"自动计算交易数量: {self.spot_amount} {self.symbol.split('/')[0]} (预计金额: {quantity_result['estimated_amount']:.2f} USDT)")
 
                         spread = gateio_bid - binance_ask
                         spread_percent = spread / binance_ask
@@ -307,6 +309,9 @@ class UnhedgeTrader:
                             f"价差: {float(spread_percent) * 100:.4f}%")
 
                         if spread_percent >= self.min_spread and depth_satisfied:
+                            # 记录满足条件的时间
+                            self.condition_met_time = time.time()
+
                             logger.info(f"{self.symbol}交易条件满足：价差 {float(spread_percent) * 100:.4f}% >= {self.min_spread * 100:.4f}%, "
                                       f"Gate.io买1量 {float(gateio_bid_volume):.6f} >= {float(min_required_volume):.6f}, "
                                       f"Binance卖1量 {float(binance_ask_volume):.6f} >= {float(min_required_volume):.6f}, "
@@ -320,8 +325,8 @@ class UnhedgeTrader:
                             
                             logger.debug(f"下单参数 - 现货卖出数量: {trade_amount}, 合约平仓数量: {contract_amount}")
 
-                            # 记录下单开始时间
-                            order_start_time = time.time()
+                            # 记录开始下单的时间
+                            self.order_start_time = time.time()
 
                             base_currency = self.symbol.split('/')[0]
                             logger.info(f"计划平仓数量: {trade_amount} {base_currency}")
@@ -344,9 +349,8 @@ class UnhedgeTrader:
                                     )
                                 )
                                 
-                                # 记录下单耗时
-                                order_time = time.time() - order_start_time
-                                logger.debug(f"下单总耗时: {order_time:.3f}秒")
+                                # 记录订单提交完成的时间
+                                self.order_submit_time = time.time()
                                 
                                 # 记录原始订单响应
                                 logger.info(f"Gate.io订单提交详情: {spot_order}")
@@ -444,6 +448,13 @@ class UnhedgeTrader:
                                 logger.info(f"【成交详情】Binance合约实际成交: {contract_filled} {base_currency}")
                                 logger.info("=" * 50)
 
+                                # 输出时间统计信息
+                                if self.price_update_time and self.condition_met_time and self.order_start_time and self.order_submit_time:
+                                    logger.info(f"{self.symbol} 时间统计 - 完整流程:")
+                                    logger.info(f"{self.symbol} 时间统计 - 从接收到价格更新[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.price_update_time))}]到满足条件[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.condition_met_time))}]: {(self.condition_met_time - self.price_update_time) * 1000:.1f}毫秒")
+                                    logger.info(f"{self.symbol} 时间统计 - 从满足条件[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.condition_met_time))}]到下单前[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.order_start_time))}]: {(self.order_start_time - self.condition_met_time) * 1000:.1f}毫秒")
+                                    logger.info(f"{self.symbol} 时间统计 - 从下单前[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.order_start_time))}]到订单提交[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.order_submit_time))}]: {(self.order_submit_time - self.order_start_time) * 1000:.1f}毫秒")
+
                             except Exception as e:
                                 logger.error(f"获取成交结果时出错: {str(e)}", exc_info=True)
                                 return None, None, False
@@ -467,7 +478,12 @@ class UnhedgeTrader:
                                 'spot_price': spot_price,
                                 'contract_price': contract_price,
                                 'spot_fee': quote_fee if 'quote_fee' in locals() else None,
-                                'trade_amount': trade_amount
+                                'trade_amount': trade_amount,
+                                # 新增：记录关键时间点
+                                'price_update_time': self.price_update_time,
+                                'condition_met_time': self.condition_met_time,
+                                'order_start_time': self.order_start_time,
+                                'order_submit_time': self.order_submit_time
                             })
                             
                             logger.info(f"交易成功完成 - 第 {self.completed_trades} 次交易")

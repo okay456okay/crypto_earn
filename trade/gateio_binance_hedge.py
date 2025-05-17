@@ -88,6 +88,12 @@ class HedgeTrader:
         self.trade_count = 0  # 交易计数
         self.trade_records = []  # 交易记录
 
+        # 新增：用于记录关键时间点
+        self.price_update_time = None  # 接收到价格更新的时间
+        self.condition_met_time = None  # 满足交易条件的时间
+        self.order_start_time = None  # 开始下单的时间
+        self.order_submit_time = None  # 订单提交完成的时间
+
     async def get_max_leverage(self):
         """
         获取Binance交易所支持的最大杠杆倍数
@@ -270,6 +276,8 @@ class HedgeTrader:
                     # 等待两个订单簿都更新
                     try:
                         gateio_ob, binance_ob = await asyncio.gather(gateio_task, binance_task)
+                        # 记录接收到价格更新的时间
+                        self.price_update_time = time.time()
                     except Exception as e:
                         logger.error(f"获取订单簿数据失败, 错误: {e}")
                         continue
@@ -292,10 +300,11 @@ class HedgeTrader:
                     
                     # 如果价差满足条件且市场深度足够，直接执行交易
                     if spread_percent >= self.min_spread and depth_sufficient:
-                        t0 = time.time()  # 记录满足交易条件的时间点
+                        # 记录满足条件的时间
+                        self.condition_met_time = time.time()
                         
                         # 记录找到的机会
-                        opportunity_duration = t0 - start_time
+                        opportunity_duration = self.condition_met_time - start_time
                         logger.info(f"{self.symbol}交易条件满足 (等待了 {opportunity_duration:.2f}秒):")
                         logger.info(f"价差: {spread_percent*100:.4f}% >= {self.min_spread*100:.4f}%")
                         logger.info(f"市场深度 - Gate.io卖1: {gateio_ask_volume} {self.symbol.split('/')[0]}, "
@@ -315,10 +324,11 @@ class HedgeTrader:
                             logger.info("测试模式: 不执行实际交易")
                             return None, None
                         
+                        # 记录开始下单的时间
+                        self.order_start_time = time.time()
+                        
                         # 立即执行交易
                         logger.info(f"执行交易 - 价差: {spread_percent*100:.4f}%, Gate.io: {gateio_ask}, Binance: {binance_bid}")
-                        t1 = time.time()
-                        logger.debug(f"[时序] 1.记录日志: {(t1-t0)*1000:.3f}ms")
                         
                         # 使用最新的订单簿数据直接执行交易，不再检查价格
                         spot_order, contract_order = await asyncio.gather(
@@ -334,8 +344,8 @@ class HedgeTrader:
                             )
                         )
                         
-                        t2 = time.time()
-                        logger.debug(f"[时序] ===从满足条件到订单发送完成共耗时: {(t2-t0)*1000:.3f}ms===")
+                        # 记录订单提交完成的时间
+                        self.order_submit_time = time.time()
                         
                         # 立即检查订单提交状态并记录订单详情到调试日志
                         logger.info(f"Gate.io现货订单提交详情: {spot_order}")
@@ -467,7 +477,12 @@ class HedgeTrader:
                             'market_depth_ratio_contract': float(binance_bid_volume) / self.spot_amount,
                             'cumulative_diff': self.cumulative_position_diff,
                             'cumulative_diff_usdt': self.cumulative_position_diff_usdt,
-                            'is_rebalance': False
+                            'is_rebalance': False,
+                            # 新增：记录关键时间点
+                            'price_update_time': self.price_update_time,
+                            'condition_met_time': self.condition_met_time,
+                            'order_start_time': self.order_start_time,
+                            'order_submit_time': self.order_submit_time
                         }
                         self.trade_records.append(trade_record)
                         
@@ -498,6 +513,13 @@ class HedgeTrader:
                         logger.info(f"【成交详情】Gate.io实际成交: {spot_filled_amount} {self.symbol.split('/')[0]}, 手续费: {spot_base_fee} {self.symbol.split('/')[0]}, 实际持仓: {spot_actual_position} {self.symbol.split('/')[0]}")
                         logger.info(f"【成交详情】Binance合约实际成交: {contract_filled_amount} {self.symbol.split('/')[0]}")
                         logger.info("=" * 50)
+                        
+                        # 输出时间统计信息
+                        if self.price_update_time and self.condition_met_time and self.order_start_time and self.order_submit_time:
+                            logger.info(f"{self.symbol} 时间统计 - 完整流程:")
+                            logger.info(f"{self.symbol} 时间统计 - 从接收到价格更新[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.price_update_time))}]到满足条件[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.condition_met_time))}]: {(self.condition_met_time - self.price_update_time) * 1000:.1f}毫秒")
+                            logger.info(f"{self.symbol} 时间统计 - 从满足条件[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.condition_met_time))}]到下单前[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.order_start_time))}]: {(self.order_start_time - self.condition_met_time) * 1000:.1f}毫秒")
+                            logger.info(f"{self.symbol} 时间统计 - 从下单前[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.order_start_time))}]到订单提交[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.order_submit_time))}]: {(self.order_submit_time - self.order_start_time) * 1000:.1f}毫秒")
                         
                         return spot_order, contract_order
                     

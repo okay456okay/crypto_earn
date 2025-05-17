@@ -99,6 +99,12 @@ class HedgeTrader:
         self.trade_count = 0  # 交易计数器
         self.rebalance_count = 0  # 平衡操作计数器
 
+        # 新增：用于记录关键时间点
+        self.price_update_time = None  # 接收到价格更新的时间
+        self.condition_met_time = None  # 满足交易条件的时间
+        self.order_start_time = None  # 开始下单的时间
+        self.order_submit_time = None  # 订单提交完成的时间
+
     async def initialize(self):
         """
         异步初始化方法，执行需要网络请求的初始化操作
@@ -293,6 +299,9 @@ class HedgeTrader:
                         logger.debug(f"订单簿数据可能已过时 - Gate.io: {gateio_age:.1f}秒, Bitget: {bitget_age:.1f}秒")
                         continue
                     
+                    # 记录接收到价格更新的时间
+                    self.price_update_time = time.time()
+                    
                     # 提取价格数据
                     gateio_ob = self.orderbooks['gateio']
                     bitget_ob = self.orderbooks['bitget']
@@ -330,6 +339,9 @@ class HedgeTrader:
                     # 检查价差和数量条件
                     required_depth = self.spot_amount * self.depth_multiplier
                     if spread_percent >= self.min_spread and gateio_ask_volume >= required_depth and bitget_bid_volume >= required_depth:
+                        # 记录满足条件的时间
+                        self.condition_met_time = time.time()
+                        
                         logger.info(f"【价差条件满足】价差: {float(spread_percent) * 100:.4f}% >= {self.min_spread * 100:.4f}%")
                         logger.info(f"【市场行情】Gate.io - 买1: {float(gateio_bid):.8f}(量:{float(gateio_bid_volume):.8f}), 卖1: {float(gateio_ask):.8f}(量:{float(gateio_ask_volume):.8f})")
                         logger.info(f"【市场行情】Bitget - 买1: {float(bitget_bid):.8f}(量:{float(bitget_bid_volume):.8f}), 卖1: {float(bitget_ask):.8f}(量:{float(bitget_ask_volume):.8f})")
@@ -344,6 +356,9 @@ class HedgeTrader:
 
                         # 停止WebSocket循环，进入交易执行
                         ws_running = False
+                        
+                        # 记录开始下单的时间
+                        self.order_start_time = time.time()
                         
                         # 立即执行交易
                         try:
@@ -375,6 +390,9 @@ class HedgeTrader:
                                     params={"reduceOnly": False}
                                 )
                             )
+                            
+                            # 记录订单提交完成的时间
+                            self.order_submit_time = time.time()
                             
                             # 详细打印订单信息到调试日志
                             logger.info(f"Gate.io现货订单提交详情: {spot_order}")
@@ -416,14 +434,6 @@ class HedgeTrader:
                                 updated_spot_order = None
                                 
                                 try:
-                                    # closed_orders = await self.gateio.fetch_closed_orders(self.symbol, since=int(time.time() * 1000) - 60000)
-                                    #
-                                    # for order in closed_orders:
-                                    #     if order.get('id') == spot_order_id:
-                                    #         updated_spot_order = order
-                                    #         break
-                                    #
-                                    # if not updated_spot_order:
                                     updated_spot_order = await self.gateio.fetch_order(spot_order_id, self.symbol)
                                 except Exception as e:
                                     logger.error(f"获取已完成订单失败: {str(e)}", exc_info=True)
@@ -508,6 +518,14 @@ class HedgeTrader:
                         logger.info(f"{self.symbol} 价差滑点: 预期价差 {float(spread_percent) * 100:.4f}%, 实际价差 {(contract_avg_price - spot_avg_price) / spot_avg_price * 100:.4f}%, 价差损失 {((contract_avg_price - spot_avg_price) / spot_avg_price - float(spread_percent)) * 100:.4f}%")
                         logger.info(f"【成交详情】Gate.io实际成交: {filled_amount} {base_currency}, 手续费: {base_fee} {base_currency}, 实际持仓: {actual_position} {base_currency}")
                         logger.info(f"【成交详情】Bitget合约实际成交: {contract_filled} {base_currency}")
+                        
+                        # 输出时间统计信息
+                        if self.price_update_time and self.condition_met_time and self.order_start_time and self.order_submit_time:
+                            logger.info(f"{self.symbol} 时间统计 - 完整流程:")
+                            logger.info(f"{self.symbol} 时间统计 - 从接收到价格更新[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.price_update_time))}]到满足条件[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.condition_met_time))}]: {(self.condition_met_time - self.price_update_time) * 1000:.1f}毫秒")
+                            logger.info(f"{self.symbol} 时间统计 - 从满足条件[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.condition_met_time))}]到下单前[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.order_start_time))}]: {(self.order_start_time - self.condition_met_time) * 1000:.1f}毫秒")
+                            logger.info(f"{self.symbol} 时间统计 - 从下单前[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.order_start_time))}]到订单提交[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.order_submit_time))}]: {(self.order_submit_time - self.order_start_time) * 1000:.1f}毫秒")
+                        
                         logger.info("=" * 50)
 
                         # 检查现货和合约成交量是否接近
@@ -550,7 +568,12 @@ class HedgeTrader:
                             'price_diff': float(contract_order.get('average', 0)) - float(spot_order.get('average', 0)),
                             'price_diff_percent': (float(contract_order.get('average', 0)) - float(spot_order.get('average', 0))) / float(spot_order.get('average', 0)) * 100 if float(spot_order.get('average', 0)) > 0 else 0,
                             'cumulative_diff': self.cumulative_position_diff,
-                            'cumulative_diff_usdt': self.cumulative_position_diff_usdt
+                            'cumulative_diff_usdt': self.cumulative_position_diff_usdt,
+                            # 新增：记录关键时间点
+                            'price_update_time': self.price_update_time,
+                            'condition_met_time': self.condition_met_time,
+                            'order_start_time': self.order_start_time,
+                            'order_submit_time': self.order_submit_time
                         }
                         self.trade_records.append(trade_record)
                         
