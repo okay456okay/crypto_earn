@@ -22,7 +22,7 @@ show_help() {
 }
 
 # 默认参数值
-count=50
+count=2
 price_diff=-0.0001
 debug_mode=false
 
@@ -51,6 +51,8 @@ debug_flag=""
 if [ "$debug_mode" = true ]; then
     debug_flag="-d"
 fi
+
+count=2
 
 if ! ps auxww|grep -v grep|grep "gateio_${exchange}_hedge.py" |grep $token &>/dev/null; then
   nohup ${script_dir}/../venv/bin/python $script_dir/../trade/gateio_${exchange}_hedge.py -s ${token}/USDT -c ${count} -p $price_diff $debug_flag &>> $script_dir/../logs/${token}_open.log &
