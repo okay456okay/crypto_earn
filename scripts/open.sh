@@ -8,6 +8,8 @@
 #   ./open_binance.sh -s BTC -a 10 -d           # 启用调试模式
 # 注意: 默认价格差异为-0.0001，表示在Gate.io开空单，在Binance开多单
 
+exit
+
 # 显示帮助信息
 show_help() {
     echo "Usage: $(basename $0) [OPTIONS]"

@@ -7,6 +7,8 @@
 #   ./close_binance.sh -s BTC -p 0.0002  # 指定价格差异为0.0002
 # 注意: 默认价格差异为0.0001，表示在Gate.io平空单，在Binance平多单
 
+exit
+
 # 显示帮助信息
 show_help() {
     echo "Usage: $(basename $0) [OPTIONS]"
