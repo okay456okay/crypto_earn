@@ -270,7 +270,7 @@ class HedgeTrader:
                                 self.orderbooks['bitget'] = ob
                                 logger.debug("收到Bitget订单簿更新")
                         except Exception as e:
-                            logger.debug(f"处理订单簿数据时出错: {str(e)}")
+                            logger.error(f"处理订单簿数据时出错: {str(e)}")
                             continue
 
                     # 取消未完成的任务
