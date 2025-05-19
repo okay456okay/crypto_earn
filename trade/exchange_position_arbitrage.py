@@ -33,7 +33,7 @@ from config import (
     bybit_api_key, bybit_api_secret,
     bitget_api_key, bitget_api_secret, bitget_api_passphrase,
     proxies,
-    project_root
+    project_root, earn_auto_sell
 )
 from high_yield.exchange import ExchangeAPI
 
@@ -456,7 +456,7 @@ class ExchangeArbitrageCalculator:
                     # 找出空仓持仓量最大的交易所
                     max_short_exchange = max(exchange_shorts.items(), key=lambda x: x[1])
                     
-                    if max_short_exchange[1] > 0:  # 如果有空仓
+                    if max_short_exchange[1] > 0 and earn_auto_sell:  # 如果有空仓
                         try:
                             # 运行close.sh脚本
                             cmd = f"{project_root}/scripts/close.sh -e {max_short_exchange[0]} -s {token}"

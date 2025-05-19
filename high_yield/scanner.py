@@ -28,7 +28,7 @@ from high_yield.token_manager import TokenManager
 from tools.proxy import get_proxy_ip
 from config import leverage_ratio, yield_percentile, stability_buy_apy_threshold, sell_apy_threshold, \
     future_percentile, highyield_buy_apy_threshold, stability_buy_webhook_url, highyield_buy_webhook_url, \
-    highyield_checkpoints, volume_24h_threshold, subscribed_webhook_url, project_root
+    highyield_checkpoints, volume_24h_threshold, subscribed_webhook_url, project_root, earn_auto_buy
 from tools.logger import logger
 
 
@@ -293,15 +293,16 @@ class CryptoYieldMonitor:
                         logger.info(f"计算得到的count值: {count}, 购买金额: {buy_usdt}")
                         
                         # 执行open.sh脚本
-                        try:
-                            cmd = f"{project_root}/scripts/open.sh -e {highest_price_exchange['exchange'].lower()} -s {token} -c {count}"
-                            logger.info(f"执行对冲开仓命令: {cmd}")
-                            subprocess.run(cmd, shell=True, check=True)
-                            logger.info(f"对冲开仓命令执行成功: {token} on {highest_price_exchange['exchange']}")
-                        except subprocess.CalledProcessError as e:
-                            logger.error(f"执行对冲开仓命令失败: {str(e)}, 命令: {cmd}")
-                        except Exception as e:
-                            logger.error(f"执行对冲开仓命令时发生错误: {str(e)}, 命令: {cmd}")
+                        if earn_auto_buy:
+                            try:
+                                cmd = f"{project_root}/scripts/open.sh -e {highest_price_exchange['exchange'].lower()} -s {token} -c {count}"
+                                logger.info(f"执行对冲开仓命令: {cmd}")
+                                subprocess.run(cmd, shell=True, check=True)
+                                logger.info(f"对冲开仓命令执行成功: {token} on {highest_price_exchange['exchange']}")
+                            except subprocess.CalledProcessError as e:
+                                logger.error(f"执行对冲开仓命令失败: {str(e)}, 命令: {cmd}")
+                            except Exception as e:
+                                logger.error(f"执行对冲开仓命令时发生错误: {str(e)}, 命令: {cmd}")
 
         # 发送通知
         if highyield_product_notifications:
