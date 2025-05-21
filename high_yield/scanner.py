@@ -179,10 +179,11 @@ class CryptoYieldMonitor:
                     f.write("\n\n")
                 
                 # 写入合并文件
-                with open(self.combined_file, 'a', encoding='utf-8') as f:
-                    f.write(f"=== {now_str} ({product_type}) ===\n")
-                    f.write(message)
-                    f.write("\n\n")
+                if product_type != 'subscribed':
+                    with open(self.combined_file, 'a', encoding='utf-8') as f:
+                        f.write(f"=== {now_str} ({product_type}) ===\n")
+                        f.write(message)
+                        f.write("\n\n")
                 
         logger.info(f"已发送{len(notifications)}条{product_type}加密货币通知，并写入日志文件: {log_file}")
 
