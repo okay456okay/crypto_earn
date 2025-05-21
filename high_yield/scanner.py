@@ -28,7 +28,8 @@ from high_yield.token_manager import TokenManager
 from tools.proxy import get_proxy_ip
 from config import leverage_ratio, yield_percentile, stability_buy_apy_threshold, sell_apy_threshold, \
     future_percentile, highyield_buy_apy_threshold, stability_buy_webhook_url, highyield_buy_webhook_url, \
-    highyield_checkpoints, volume_24h_threshold, subscribed_webhook_url, project_root, earn_auto_buy
+    highyield_checkpoints, volume_24h_threshold, subscribed_webhook_url, project_root, earn_auto_buy, \
+    illegal_funding_rate
 from tools.logger import logger
 
 
@@ -241,7 +242,7 @@ class CryptoYieldMonitor:
                 i['markPrice'] > 0.0001 and  # 币值大于某个值
                 i['volume_24h'] > volume_24h_threshold  # 合约交易额大于某个值
             ]
-            illegible_funding_rate = [i for i in futures_results if i['fundingRate'] < -0.01]
+            illegible_funding_rate = [i for i in futures_results if i['fundingRate'] < illegal_funding_rate]
             # if len(eligible_funding_rate) == 0:
             if len(eligible_funding_rate) == 0 or len(illegible_funding_rate) > 0:
                 continue
