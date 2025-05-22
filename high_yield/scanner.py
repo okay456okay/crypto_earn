@@ -225,6 +225,7 @@ class CryptoYieldMonitor:
         # 检查每个高收益产品是否满足合约交易条件
         stability_product_notifications = []
         highyield_product_notifications = []
+        fixedterm_product_notifications = []
 
         for product in eligible_products:
             token = product["token"]
@@ -271,10 +272,9 @@ class CryptoYieldMonitor:
                 "max_purchase": product["max_purchase"],
             }
             # 定期理财产品
-            fixedterm_product_notifications = []
             if product['apy'] > stability_buy_apy_threshold and product['duration'] > 0:
                 fixedterm_product_notifications.append(notification)
-            # 稳定收益： 24小时Pxx收益率达到最低k
+            # 稳定收益理财产品： 24小时Pxx收益率达到最低k
             if apy_percentile > stability_buy_apy_threshold:
                 logger.debug(f"add {product} to stability_product_notifications, future results: {futures_results}")
                 stability_product_notifications.append(notification)
