@@ -1152,14 +1152,14 @@ class ExchangeAPI:
 if __name__ == "__main__":
     api = ExchangeAPI()
     # print(api.get_binance_flexible_products())
-    print(api.get_gateio_flexible_products())
+    # print(api.get_gateio_flexible_products())
     # print(api.get_bitget_futures_funding_rate('ETHUSDT'))
     # print(api.get_bitget_futures_funding_rate('GMUSDT'))
     # # print(api.get_binance_futures_funding_rate('ETHUSDT'))
     # # print(api.get_binance_futures_funding_rate('LOOMUSDT'))
     # # print(api.get_binance_futures_funding_rate('ALPACAUSDT'))
-    # parser = argparse.ArgumentParser(description='获取指定代币在各交易所的合约资金费率信息')
-    # parser.add_argument('token', type=str, help='代币名称，例如：ETHUSDT, BTCUSDT')
-    # args = parser.parse_args()
-    #
-    # api.print_funding_rate_info(args.token)
+    parser = argparse.ArgumentParser(description='获取指定代币在各交易所的合约资金费率信息')
+    parser.add_argument('token', type=str, help='代币名称，例如：ETHUSDT, BTCUSDT')
+    args = parser.parse_args()
+
+    api.print_funding_rate_info(args.token)
