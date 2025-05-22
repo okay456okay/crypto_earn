@@ -467,6 +467,7 @@ class ExchangeAPI:
             "apy": apy_day[-2]['apy'],
             'apy_day': apy_day,
             'apy_month': apy_month,
+            'duration': 0,
             "min_purchase": 0,
             "max_purchase": 0,
             "volume_24h": self.gateio_volumes.get(token, 0)
