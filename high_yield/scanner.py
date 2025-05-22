@@ -355,6 +355,7 @@ class CryptoYieldMonitor:
                 "volume_24h": product["volume_24h"],
                 'apy_month': product['apy_month'],
                 "future_info": future_info_str,
+                'duration': product['duration'],
                 "min_purchase": product["min_purchase"],
                 "max_purchase": product["max_purchase"],
             }
