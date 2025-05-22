@@ -640,6 +640,7 @@ class ExchangeAPI:
                             # "apy_percentile": apy_percentile*(1-okx_earn_insurance_keep_ratio),
                             'apy_day': apy_day,
                             'apy_month': apy_month,
+                            'duration': 0,
                             "min_purchase": 0,
                             "max_purchase": 0,
                             "volume_24h": self.okx_volumes.get(token, 0)
