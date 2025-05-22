@@ -13,7 +13,7 @@ os.makedirs(logs_dir, exist_ok=True)
 
 # 创建logger
 logger = logging.getLogger("crypto")
-logger.setLevel(logging.DEBUG)  # 设置最低级别为DEBUG，让所有级别的日志都能被处理
+logger.setLevel(logging.INFO)  # 设置最低级别为DEBUG，让所有级别的日志都能被处理
 
 # 日志格式
 formatter = logging.Formatter("[%(asctime)-15s] %(levelname)s %(filename)s:%(lineno)d) %(message)s")

@@ -31,8 +31,8 @@ import requests
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
-import logging
-logger.setLevel(logging.DEBUG)
+# import logging
+# logger.setLevel(logging.DEBUG)
 
 class BinanceOpportunityFinder:
     """Binance交易机会发现器"""
@@ -264,7 +264,7 @@ class BinanceOpportunityFinder:
             
             logger.info(f"{symbol} 条件检查结果:")
             for condition, result in conditions.items():
-                logger.info(f"  {condition}: {'✓' if result else '✗'}")
+                logger.info(f"{symbol}  {condition}: {'✓' if result else '✗'}")
             
             if all(conditions.values()):
                 logger.info(f"{symbol} 符合交易机会条件!")
