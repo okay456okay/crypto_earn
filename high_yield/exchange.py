@@ -221,13 +221,15 @@ class ExchangeAPI:
                 products = []
                 for item in data["data"]['list']:
                     # 适配新的API返回结构
-                    if int(item['duration']) == 0:
-                        prouct_id = item['productId']
+                    prouct_id = item['productId']
+                    apy_month = []
+                    apy_day = []
+                    duration = int(item['duration'])
+                    token = item.get("asset", "")
+                    if duration == 0:
                         apy = float(item.get("highestApy", 0)) * 100
                         # apy_percentile = -1
                         startTime = int(time.time() * 1000) - 30 * 24 * 60 * 60 * 1000
-                        apy_month = []
-                        apy_day = []
                         try:
                             if apy > stability_buy_apy_threshold:
                                 url = f'https://www.binance.com/bapi/earn/v1/friendly/lending/daily/product/position-market-apr?productId={prouct_id}&startTime={startTime}'
@@ -243,18 +245,39 @@ class ExchangeAPI:
                             logger.error(f"binance get asset charts, url: {url}, error: {str(e)}")
                         product = {
                             "exchange": "Binance",
-                            "token": item.get("asset", ""),
+                            "token": token,
                             "apy": apy,
                             # 'apy_percentile': apy_percentile,
                             'apy_day': apy_day,
                             'apy_month': apy_month,
+                            "duration": duration,
                             "min_purchase": float(item.get('productDetailList', [])[0].get("minPurchaseAmount", 0)),
                             "max_purchase": float(
                                 item.get('productDetailList', [])[0].get("maxPurchaseAmountPerUser", 0)),
-                            "volume_24h": self.binance_volumes.get(item.get("asset", ""), 0)
+                            "volume_24h": self.binance_volumes.get(token, 0)
                         }
                         products.append(product)
                         sleep(0.1)
+                    elif duration > 0:
+                        for item_sub in item.get('productDetailList', []):
+                            if item_sub.get('productType') == 'POS_FIXED':
+                                apy = float(item_sub.get("apy", 0)) * 100
+                                duration = int(item_sub.get("duration", 0))
+                                # apy_percentile = -1
+                                product = {
+                                    "exchange": "Binance",
+                                    "token": token,
+                                    "apy": apy,
+                                    # 'apy_percentile': apy_percentile,
+                                    'apy_day': apy_day,
+                                    'apy_month': apy_month,
+                                    "duration": duration,
+                                    "min_purchase": float(item.get('productDetailList', [])[0].get("minPurchaseAmount", 0)),
+                                    "max_purchase": float(
+                                        item.get('productDetailList', [])[0].get("maxPurchaseAmountPerUser", 0)),
+                                    "volume_24h": self.binance_volumes.get(token, 0)
+                                }
+                                products.append(product)
                 return products
         except Exception as e:
             logger.error(f"获取Binance活期理财产品时出错: {str(e)}")
@@ -284,13 +307,15 @@ class ExchangeAPI:
             if data["code"] == "00000" and "data" in data:
                 products = []
                 for item in data["data"]:
-                    if item['periodType'] == 'flexible' and item['status'] == 'in_progress':
+                    duration = item.get('period') if item.get('period') else 0
+                    if item['status'] == 'in_progress':
                         product = {
                             "exchange": "Bitget",
                             "token": item["coin"],
                             "apy": float(item['apyList'][0]["currentApy"]),
                             'apy_month': [],
                             'apy_day': [],
+                            'duration': int(duration),
                             "min_purchase": int(float(item['apyList'][0]['minStepVal'])),
                             "max_purchase": int(float(item['apyList'][0]['maxStepVal'])),
                             "volume_24h": self.bitget_volumes.get(item["coin"], 0)
@@ -312,7 +337,32 @@ class ExchangeAPI:
             # 检查并获取交易量数据
             if not self.bybit_volumes:
                 self.get_bybit_volumes()
-            
+            r = requests.get('https://api2.bybit.com/s1/byfi/get-coins', proxies=proxies)
+            coins = {}
+            for coin in r.json().get('result', {}).get('coins', []):
+                coins[int(coin['coin'][0])] = coin['coin'][1]
+
+
+            # 定期理财产品
+            url = 'https://api2.bybit.com/s1/byfi/get-saving-homepage-product-cards'
+            data = {"product_area":[0],"page":1,"limit":20,"product_type":6,"coin_name":"","sort_apr":1,"match_user_asset":False,"show_available":False,"fixed_saving_version":1}
+            r = requests.post(url, json=data, proxies=proxies)
+            data = r.json()
+            for item in data['result']['coin_products']:
+                for item_sub in item.get('saving_products', []):
+                    product = {
+                        "exchange": "Bybit",
+                        "token": coins[item_sub['coin']],
+                        "apy": float(item_sub['apy'].replace('%','')),
+                        'apy_month': [],
+                        'apy_day': [],
+                        'duration': int(item_sub.get('staking_term')),
+                        "min_purchase": 0,
+                        "max_purchase": 0,
+                        "volume_24h": self.bybit_volumes.get(item_sub["coin"], 0)
+                    }
+                    products.append(product)
+            # 活期期理财产品
             # https://api.bybit.com/v5/earn/product?category=FlexibleSaving
             url = "https://api.bybit.com/v5/earn/product"
             params = {
@@ -508,6 +558,7 @@ class ExchangeAPI:
                         'apy_day': apy_day,
                         # "apy_percentile": apy_percentile,
                         'apy_month': apy_month,
+                        'duration': 0,
                         "min_purchase": float(item.get('total_lend_available', 0)),
                         "max_purchase": float(item.get('total_lend_all_amount', 0)),
                         "volume_24h": self.gateio_volumes.get(token, 0)
@@ -1098,13 +1149,15 @@ class ExchangeAPI:
 
 if __name__ == "__main__":
     api = ExchangeAPI()
-    print(api.get_bitget_futures_funding_rate('ETHUSDT'))
-    print(api.get_bitget_futures_funding_rate('GMUSDT'))
-    # print(api.get_binance_futures_funding_rate('ETHUSDT'))
-    # print(api.get_binance_futures_funding_rate('LOOMUSDT'))
-    # print(api.get_binance_futures_funding_rate('ALPACAUSDT'))
-    parser = argparse.ArgumentParser(description='获取指定代币在各交易所的合约资金费率信息')
-    parser.add_argument('token', type=str, help='代币名称，例如：ETHUSDT, BTCUSDT')
-    args = parser.parse_args()
-    
-    api.print_funding_rate_info(args.token)
+    # print(api.get_binance_flexible_products())
+    print(api.get_gateio_flexible_products())
+    # print(api.get_bitget_futures_funding_rate('ETHUSDT'))
+    # print(api.get_bitget_futures_funding_rate('GMUSDT'))
+    # # print(api.get_binance_futures_funding_rate('ETHUSDT'))
+    # # print(api.get_binance_futures_funding_rate('LOOMUSDT'))
+    # # print(api.get_binance_futures_funding_rate('ALPACAUSDT'))
+    # parser = argparse.ArgumentParser(description='获取指定代币在各交易所的合约资金费率信息')
+    # parser.add_argument('token', type=str, help='代币名称，例如：ETHUSDT, BTCUSDT')
+    # args = parser.parse_args()
+    #
+    # api.print_funding_rate_info(args.token)

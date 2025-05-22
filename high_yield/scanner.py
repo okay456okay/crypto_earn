@@ -29,7 +29,7 @@ from tools.proxy import get_proxy_ip
 from config import leverage_ratio, yield_percentile, stability_buy_apy_threshold, sell_apy_threshold, \
     future_percentile, highyield_buy_apy_threshold, stability_buy_webhook_url, highyield_buy_webhook_url, \
     highyield_checkpoints, volume_24h_threshold, subscribed_webhook_url, project_root, earn_auto_buy, \
-    illegal_funding_rate
+    illegal_funding_rate, fixedterm_webhook_url
 from tools.logger import logger
 
 
@@ -127,21 +127,23 @@ class CryptoYieldMonitor:
         end = int(now.timestamp() * 1000)
         d7start = end - 7 * 24 * 60 * 60 * 1000
         d30start = end - 30 * 24 * 60 * 60 * 1000
-        
+
         # 生成日志文件名
         timestamp = now.strftime("%Y%m%d%H%M")
         log_file = os.path.join(self.reports_dir, f'{product_type}_products_{timestamp}.log')
-        
+
         if product_type == 'stable':
             wechat_bot = WeChatWorkBot(stability_buy_webhook_url)
         elif product_type == 'highyield':
             wechat_bot = WeChatWorkBot(highyield_buy_webhook_url)
         elif product_type == 'subscribed':
             wechat_bot = WeChatWorkBot(subscribed_webhook_url)
+        elif product_type == 'fixedterm':
+            wechat_bot = WeChatWorkBot(fixedterm_webhook_url)
         else:
             logger.error("unknown product type")
             return
-        
+
         limit = 3
         for p in range(int(len(notifications) / limit) + 1):
             message = ''
@@ -159,6 +161,7 @@ class CryptoYieldMonitor:
                     f"**{idx + p * limit}. {notif['token']} ({notif['exchange']})** 💰\n"
                     f"   • 近24小时现货交易量: {notif['volume_24h'] / 10000:.2f}万USDT\n"
                     f"   • 最新收益率: {notif['apy']:.2f}%\n"
+                    f"   • 期限: {notif['duration']}天\n"
                     f"   • 近24小时P{yield_percentile}收益率: {notif['apy_percentile']:.2f}%\n"
                     f"   • 近7天P{yield_percentile}收益率: {d7apy_str}\n"
                     f"   • 近30天P{yield_percentile}收益率: {d30apy_str}\n"
@@ -172,20 +175,20 @@ class CryptoYieldMonitor:
                 # 发送到企业微信
                 wechat_message = f"📊交易所{product_type}活期理财产品监控 ({now_str})\n\n" + message
                 wechat_bot.send_message(wechat_message)
-                
+
                 # 写入单独的日志文件
                 with open(log_file, 'a', encoding='utf-8') as f:
                     f.write(f"=== {now_str} ===\n")
                     f.write(message)
                     f.write("\n\n")
-                
+
                 # 写入合并文件
                 if product_type != 'subscribed':
                     with open(self.combined_file, 'a', encoding='utf-8') as f:
                         f.write(f"=== {now_str} ({product_type}) ===\n")
                         f.write(message)
                         f.write("\n\n")
-                
+
         logger.info(f"已发送{len(notifications)}条{product_type}加密货币通知，并写入日志文件: {log_file}")
 
     def get_estimate_apy(self, apy, fundingRate, fundingIntervalHours, leverage_ratio=leverage_ratio):
@@ -262,49 +265,55 @@ class CryptoYieldMonitor:
                 "apy_percentile": apy_percentile,
                 "volume_24h": product["volume_24h"],
                 'apy_month': product['apy_month'],
+                "duration": product["duration"],
                 "future_info": future_info_str,
                 "min_purchase": product["min_purchase"],
                 "max_purchase": product["max_purchase"],
             }
+            # 定期理财产品
+            fixedterm_product_notifications = []
+            if product['apy'] > stability_buy_apy_threshold and product['duration'] > 0:
+                fixedterm_product_notifications.append(notification)
             # 稳定收益： 24小时Pxx收益率达到最低k
             if apy_percentile > stability_buy_apy_threshold:
                 logger.debug(f"add {product} to stability_product_notifications, future results: {futures_results}")
                 stability_product_notifications.append(notification)
-            if len([i for i in product['apy_day'][-3:] if
+            # 高收益产品
+            if len([i for i in product['apy_day'][0 - highyield_checkpoints:] if
                     i['apy'] >= highyield_buy_apy_threshold]) == highyield_checkpoints and product[
                 'apy'] >= highyield_buy_apy_threshold:
                 logger.debug(f"add {product} to highyield_product_notifications, future results: {futures_results}")
                 highyield_product_notifications.append(notification)
-                
+
                 # 如果是GateIO的产品，执行对冲开仓
-                if product["exchange"] == "GateIO":
+                valid_exchanges = [i for i in futures_results if i['exchange'] in ['Binance', 'Bitget', 'Bybit']]
+                if product["exchange"] == "GateIO" and earn_auto_buy and valid_exchanges:
                     # 筛选出Binance/Bitget/Bybit的合约信息
-                    valid_exchanges = [i for i in futures_results if i['exchange'] in ['Binance', 'Bitget', 'Bybit']]
-                    if valid_exchanges:
-                        # 找出价格最高的交易所
-                        highest_price_exchange = max(valid_exchanges, key=lambda x: x['markPrice'])
-                        logger.info(f"找到价格最高的交易所: {highest_price_exchange['exchange']}, 价格: {highest_price_exchange['markPrice']}")
-                        
-                        # 计算count值
-                        try:
-                            buy_usdt = min((product['max_purchase'] - product['min_purchase']) / 100 * highest_price_exchange['markPrice'], 500)
-                        except Exception as e:
-                            logger.info(f"get buy_usdt failed, product: {product}, {highest_price_exchange}")
-                            continue
-                        count = int(buy_usdt / 8)
-                        logger.info(f"计算得到的count值: {count}, 购买金额: {buy_usdt}")
-                        
-                        # 执行open.sh脚本
-                        if earn_auto_buy:
-                            try:
-                                cmd = f"{project_root}/scripts/open.sh -e {highest_price_exchange['exchange'].lower()} -s {token} -c {count}"
-                                logger.info(f"执行对冲开仓命令: {cmd}")
-                                subprocess.run(cmd, shell=True, check=True)
-                                logger.info(f"对冲开仓命令执行成功: {token} on {highest_price_exchange['exchange']}")
-                            except subprocess.CalledProcessError as e:
-                                logger.error(f"执行对冲开仓命令失败: {str(e)}, 命令: {cmd}")
-                            except Exception as e:
-                                logger.error(f"执行对冲开仓命令时发生错误: {str(e)}, 命令: {cmd}")
+                    # 找出价格最高的交易所
+                    highest_price_exchange = max(valid_exchanges, key=lambda x: x['markPrice'])
+                    logger.info(
+                        f"找到价格最高的交易所: {highest_price_exchange['exchange']}, 价格: {highest_price_exchange['markPrice']}")
+
+                    # 计算count值
+                    try:
+                        buy_usdt = min(
+                            (product['max_purchase'] - product['min_purchase']) / 100 * highest_price_exchange[
+                                'markPrice'], 500)
+                    except Exception as e:
+                        logger.info(f"get buy_usdt failed, product: {product}, {highest_price_exchange}")
+                        continue
+                    count = int(buy_usdt / 8)
+                    logger.info(f"计算得到的count值: {count}, 购买金额: {buy_usdt}")
+
+                    try:
+                        cmd = f"{project_root}/scripts/open.sh -e {highest_price_exchange['exchange'].lower()} -s {token} -c {count}"
+                        logger.info(f"执行对冲开仓命令: {cmd}")
+                        subprocess.run(cmd, shell=True, check=True)
+                        logger.info(f"对冲开仓命令执行成功: {token} on {highest_price_exchange['exchange']}")
+                    except subprocess.CalledProcessError as e:
+                        logger.error(f"执行对冲开仓命令失败: {str(e)}, 命令: {cmd}")
+                    except Exception as e:
+                        logger.error(f"执行对冲开仓命令时发生错误: {str(e)}, 命令: {cmd}")
 
         # 发送通知
         if highyield_product_notifications:
@@ -313,9 +322,13 @@ class CryptoYieldMonitor:
         if stability_product_notifications:
             logger.info(f"已添加{len(stability_product_notifications)}个稳定理财Token到通知列表")
             self._send_product_notifications(stability_product_notifications, product_type='stable')
+        if fixedterm_product_notifications:
+            logger.info(f"已添加{len(fixedterm_product_notifications)}个定期理财Token到通知列表")
+            self._send_product_notifications(fixedterm_product_notifications, product_type='fixedterm')
 
-    def check_tokens(self,  all_products):
-        subscribed_tokens = [i['asset'] for i in self.exchange_api.get_gateio_subscribed_products() if i['asset'] != 'USDT' and float(i['curr_amount_usdt']) > 1 ]
+    def check_tokens(self, all_products):
+        subscribed_tokens = [i['asset'] for i in self.exchange_api.get_gateio_subscribed_products() if
+                             i['asset'] != 'USDT' and float(i['curr_amount_usdt']) > 1]
         logger.info(f"get subscribed tokens: {len(subscribed_tokens)}, detail: {subscribed_tokens}")
         filtered_products = [i for i in all_products if i['token'] in subscribed_tokens and i['exchange'] == 'GateIO']
         logger.info(f"get filtered products: {len(filtered_products)}")
@@ -364,7 +377,7 @@ class CryptoYieldMonitor:
             if os.path.exists(self.combined_file):
                 with open(self.combined_file, 'w', encoding='utf-8') as f:
                     f.write('')
-            
+
             # 获取所有交易所的活期理财产品
             binance_products = self.exchange_api.get_binance_flexible_products()
             logger.info(f"从Binance获取到{len(binance_products)}个活期理财产品")
@@ -385,7 +398,7 @@ class CryptoYieldMonitor:
             all_products = binance_products + bitget_products + bybit_products + gateio_products + okx_products
             logger.info(f"总共获取到{len(all_products)}个活期理财产品")
             self.exchange_api.get_binance_funding_info()
-            
+
             # 过滤和处理高收益理财产品
             self.product_filter(all_products)
             self.check_tokens(all_products)
