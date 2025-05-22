@@ -287,6 +287,46 @@ class BinanceOpportunityFinder:
             logger.error(f"分析{symbol}机会时发生错误: {str(e)}")
             return None
             
+    def get_all_symbols(self) -> List[str]:
+        """
+        获取所有同时具有现货和合约的交易对
+        
+        Returns:
+            List[str]: 交易对列表
+        """
+        try:
+            logger.info("开始获取所有交易对...")
+            
+            # 获取现货交易对
+            spot_symbols = set()
+            spot_exchange_info = self.client.get_exchange_info()
+            for symbol_info in spot_exchange_info['symbols']:
+                if (symbol_info['status'] == 'TRADING' and 
+                    symbol_info['quoteAsset'] == 'USDT' and 
+                    symbol_info['isSpotTradingAllowed']):
+                    spot_symbols.add(symbol_info['symbol'])
+            logger.info(f"获取到{len(spot_symbols)}个现货交易对")
+            
+            # 获取合约交易对
+            futures_symbols = set()
+            futures_exchange_info = self.client.futures_exchange_info()
+            for symbol_info in futures_exchange_info['symbols']:
+                if (symbol_info['status'] == 'TRADING' and 
+                    symbol_info['quoteAsset'] == 'USDT' and 
+                    symbol_info['contractType'] == 'PERPETUAL'):
+                    futures_symbols.add(symbol_info['symbol'])
+            logger.info(f"获取到{len(futures_symbols)}个合约交易对")
+            
+            # 获取同时具有现货和合约的交易对
+            common_symbols = list(spot_symbols.intersection(futures_symbols))
+            logger.info(f"找到{len(common_symbols)}个同时具有现货和合约的交易对")
+            
+            return common_symbols
+            
+        except Exception as e:
+            logger.error(f"获取交易对列表失败: {str(e)}")
+            return []
+            
     def save_opportunity(self, opportunity: Dict[str, Any]):
         """
         保存交易机会到文件
@@ -305,8 +345,17 @@ class BinanceOpportunityFinder:
             else:
                 opportunities = []
                 
-            # 添加新机会
-            opportunities.append(opportunity)
+            # 检查是否已存在相同symbol的机会
+            for i, opp in enumerate(opportunities):
+                if opp['symbol'] == opportunity['symbol']:
+                    # 更新现有机会
+                    opportunities[i] = opportunity
+                    logger.info(f"更新{opportunity['symbol']}的交易机会")
+                    break
+            else:
+                # 添加新机会
+                opportunities.append(opportunity)
+                logger.info(f"添加{opportunity['symbol']}的新交易机会")
             
             # 保存数据
             with open(self.opportunities_file, 'w') as f:
@@ -336,9 +385,13 @@ class BinanceOpportunityFinder:
         try:
             logger.info("开始运行交易机会发现程序...")
             
-            # 获取测试交易对
-            symbols = self.get_test_symbol()
-            logger.info(f"测试交易对: {symbols}")
+            # 获取所有交易对
+            symbols = self.get_all_symbols()
+            if not symbols:
+                logger.error("未获取到任何交易对，程序退出")
+                return
+                
+            logger.info(f"开始分析{len(symbols)}个交易对...")
             
             for symbol in symbols:
                 logger.info(f"开始分析交易对: {symbol}")
