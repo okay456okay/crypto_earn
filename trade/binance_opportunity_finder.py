@@ -22,7 +22,7 @@ import sys
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
 from tools.logger import logger
-from config import binance_api_key, binance_api_secret, proxies
+from config import binance_api_key, binance_api_secret, proxies, project_root
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 import time
@@ -30,9 +30,9 @@ import json
 import requests
 import pandas as pd
 from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional
-# import logging
-# logger.setLevel(logging.DEBUG)
+from typing import List, Dict, Any, Optional, Tuple
+import logging
+logger.setLevel(logging.DEBUG)
 
 class BinanceOpportunityFinder:
     """Binance交易机会发现器"""
@@ -53,13 +53,25 @@ class BinanceOpportunityFinder:
                 'proxies': proxies
             }
         )
-        self.opportunities_file = 'data/binance_opportunities.json'
         self.ensure_directories()
-        
+        self.latest_file = os.path.join(project_root, 'trade/reports/binance_future_opportunies')
+
+        # 生成带时间戳的文件名
+        timestamp = datetime.now().strftime('%Y%m%d%H%M')
+        self.report_file = os.path.join(project_root, f'trade/reports/binance_future_opportunies_{timestamp}.log')
+
+        # 生成当前时间戳
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        # 清空最新文件并写入时间戳
+        with open(self.latest_file, 'w', encoding='utf-8') as f:
+            f.write(f"运行时间: {current_time}\n\n")
+
     def ensure_directories(self):
         """确保必要的目录存在"""
         os.makedirs('logs', exist_ok=True)
         os.makedirs('data', exist_ok=True)
+        os.makedirs('trade/reports', exist_ok=True)
         
     def get_test_symbol(self) -> List[str]:
         """
@@ -176,7 +188,169 @@ class BinanceOpportunityFinder:
             logger.error(f"获取{symbol}市值时发生错误: {str(e)}")
             return None
 
-    def analyze_opportunity(self, symbol: str, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def format_opportunity_report(self, symbol: str, conditions: Dict[str, bool], 
+                                oi_price_market_ratio: float, volume_market_ratio: float,
+                                historical_price_changes: List[float], historical_oi_changes: List[float],
+                                final_oi_change: float) -> str:
+        """
+        格式化交易机会报告
+        
+        Args:
+            symbol: 交易对符号
+            conditions: 条件检查结果
+            oi_price_market_ratio: 合约持仓金额/市值
+            volume_market_ratio: 近24小时成交量/市值
+            historical_price_changes: 历史价格变化率列表
+            historical_oi_changes: 历史持仓量变化率列表
+            final_oi_change: 最终持仓量变化率
+            
+        Returns:
+            str: 格式化后的报告
+        """
+        # 计算历史价格变化率的最大值
+        max_price_change = max(abs(change) for change in historical_price_changes[:-1]) * 100
+        # 计算历史持仓量变化率的最大值
+        max_oi_change = max(abs(change) for change in historical_oi_changes[:-1]) * 100
+        
+        report = f"{symbol}\n"
+        report += f"交易活跃度:合约持仓金额/市值 {oi_price_market_ratio:.2f} > 0.2: {'✓' if conditions['交易活跃度:合约持仓金额/市值 > 0.2'] else '✗'}\n"
+        report += f"交易活跃度:近24小时成交量/市值 {volume_market_ratio:.2f} > 0.05: {'✓' if conditions['交易活跃度:近24小时成交量/市值 > 0.05'] else '✗'}\n"
+        report += f"拉盘信号:历史价格变化率 {max_price_change:.1f}% < 5%: {'✓' if conditions['拉盘信号:历史价格变化率 < 5%'] else '✗'}\n"
+        report += f"拉盘信号:历史持仓量变化率 {max_oi_change:.1f}% < 5%: {'✓' if conditions['拉盘信号:历史持仓量变化率 < 5%'] else '✗'}\n"
+        report += f"拉盘信号:最终持仓量变化率 {final_oi_change*100:.1f}% > 20%: {'✓' if conditions['拉盘信号:最终持仓量变化率 > 20%'] else '✗'}\n"
+        return report
+        
+    def save_opportunity(self, opportunity: Dict[str, Any], conditions: Dict[str, bool],
+                        historical_price_changes: List[float], historical_oi_changes: List[float]):
+        """
+        保存交易机会到文件
+        
+        Args:
+            opportunity: 交易机会数据
+            conditions: 条件检查结果
+            historical_price_changes: 历史价格变化率列表
+            historical_oi_changes: 历史持仓量变化率列表
+        """
+        try:
+            logger.info(f"开始保存{opportunity['symbol']}的交易机会...")
+            
+            # 生成报告内容
+            report = self.format_opportunity_report(
+                opportunity['symbol'],
+                conditions,
+                opportunity['oi_price_market_ratio'],
+                opportunity['volume_market_ratio'],
+                historical_price_changes,
+                historical_oi_changes,
+                opportunity['oi_change']
+            )
+            
+            # 保存到带时间戳的文件
+            with open(self.report_file, 'a', encoding='utf-8') as f:
+                f.write(report)
+                
+            # 同时保存到最新文件
+            with open(self.latest_file, 'a', encoding='utf-8') as f:
+                f.write(report)
+                
+            logger.info(f"成功保存{opportunity['symbol']}的交易机会")
+            
+        except Exception as e:
+            logger.error(f"保存交易机会时发生错误: {str(e)}")
+            
+    def send_wecom_notification(self, opportunity: Dict[str, Any]):
+        """
+        发送企业微信通知
+        
+        Args:
+            opportunity: 交易机会数据
+        """
+        try:
+            # TODO: 实现企业微信机器人通知
+            pass
+        except Exception as e:
+            logger.error(f"发送企业微信通知时发生错误: {str(e)}")
+            
+    def get_all_symbols(self) -> List[str]:
+        """
+        获取所有同时具有现货和合约的交易对
+        
+        Returns:
+            List[str]: 交易对列表
+        """
+        try:
+            logger.info("开始获取所有交易对...")
+            
+            # 获取现货交易对
+            spot_symbols = set()
+            spot_exchange_info = self.client.get_exchange_info()
+            for symbol_info in spot_exchange_info['symbols']:
+                if (symbol_info['status'] == 'TRADING' and 
+                    symbol_info['quoteAsset'] == 'USDT' and 
+                    symbol_info['isSpotTradingAllowed']):
+                    spot_symbols.add(symbol_info['symbol'])
+            logger.info(f"获取到{len(spot_symbols)}个现货交易对")
+            
+            # 获取合约交易对
+            futures_symbols = set()
+            futures_exchange_info = self.client.futures_exchange_info()
+            for symbol_info in futures_exchange_info['symbols']:
+                if (symbol_info['status'] == 'TRADING' and 
+                    symbol_info['quoteAsset'] == 'USDT' and 
+                    symbol_info['contractType'] == 'PERPETUAL'):
+                    futures_symbols.add(symbol_info['symbol'])
+            logger.info(f"获取到{len(futures_symbols)}个合约交易对")
+            
+            # 获取同时具有现货和合约的交易对
+            common_symbols = list(spot_symbols.intersection(futures_symbols))
+            logger.info(f"找到{len(common_symbols)}个同时具有现货和合约的交易对")
+            
+            return common_symbols
+            
+        except Exception as e:
+            logger.error(f"获取交易对列表失败: {str(e)}")
+            return []
+            
+    def run(self):
+        """运行交易机会发现程序"""
+        try:
+            logger.info("开始运行交易机会发现程序...")
+            
+            # 获取所有交易对
+            symbols = self.get_all_symbols()
+            if not symbols:
+                logger.error("未获取到任何交易对，程序退出")
+                return
+                
+            logger.info(f"开始分析{len(symbols)}个交易对...")
+            
+            for symbol in symbols:
+                logger.info(f"开始分析交易对: {symbol}")
+                
+                # 获取历史数据
+                data = self.get_historical_data(symbol)
+                if not data:
+                    logger.warning(f"跳过{symbol}，无法获取历史数据")
+                    continue
+                    
+                # 分析机会
+                result = self.analyze_opportunity(symbol, data)
+                if result:
+                    opportunity, conditions, historical_price_changes, historical_oi_changes = result
+                    # 保存机会
+                    self.save_opportunity(opportunity, conditions, historical_price_changes, historical_oi_changes)
+                    # 发送通知
+                    self.send_wecom_notification(opportunity)
+                    
+                # 避免触发频率限制
+                time.sleep(0.1)
+                
+            logger.info("交易机会发现程序运行完成")
+                
+        except Exception as e:
+            logger.error(f"运行程序时发生错误: {str(e)}")
+            
+    def analyze_opportunity(self, symbol: str, data: Dict[str, Any]) -> Optional[Tuple[Dict[str, Any], Dict[str, bool], List[float], List[float]]]:
         """
         分析交易机会
         
@@ -185,7 +359,7 @@ class BinanceOpportunityFinder:
             data: 历史数据
             
         Returns:
-            Dict: 分析结果，如果符合条件则返回详细信息，否则返回None
+            Tuple: (交易机会数据, 条件检查结果, 历史价格变化率列表, 历史持仓量变化率列表)
         """
         try:
             logger.info(f"开始分析{symbol}的交易机会...")
@@ -268,17 +442,22 @@ class BinanceOpportunityFinder:
             
             if all(conditions.values()):
                 logger.info(f"{symbol} 符合交易机会条件!")
-                return {
-                    'symbol': symbol,
-                    'current_price': current_price,
-                    'current_oi': open_interest,
-                    'oi_change': final_oi_change,
-                    'price_change': final_price_change,
-                    'oi_price_market_ratio': oi_price_market_ratio,
-                    'volume_market_ratio': volume_market_ratio,
-                    'market_cap': market_cap,
-                    'timestamp': datetime.now().isoformat()
-                }
+                return (
+                    {
+                        'symbol': symbol,
+                        'current_price': current_price,
+                        'current_oi': open_interest,
+                        'oi_change': final_oi_change,
+                        'price_change': final_price_change,
+                        'oi_price_market_ratio': oi_price_market_ratio,
+                        'volume_market_ratio': volume_market_ratio,
+                        'market_cap': market_cap,
+                        'timestamp': datetime.now().isoformat()
+                    },
+                    conditions,
+                    historical_price_changes,
+                    historical_oi_changes
+                )
             
             logger.info(f"{symbol} 不符合交易机会条件")
             return None
@@ -286,137 +465,6 @@ class BinanceOpportunityFinder:
         except Exception as e:
             logger.error(f"分析{symbol}机会时发生错误: {str(e)}")
             return None
-            
-    def get_all_symbols(self) -> List[str]:
-        """
-        获取所有同时具有现货和合约的交易对
-        
-        Returns:
-            List[str]: 交易对列表
-        """
-        try:
-            logger.info("开始获取所有交易对...")
-            
-            # 获取现货交易对
-            spot_symbols = set()
-            spot_exchange_info = self.client.get_exchange_info()
-            for symbol_info in spot_exchange_info['symbols']:
-                if (symbol_info['status'] == 'TRADING' and 
-                    symbol_info['quoteAsset'] == 'USDT' and 
-                    symbol_info['isSpotTradingAllowed']):
-                    spot_symbols.add(symbol_info['symbol'])
-            logger.info(f"获取到{len(spot_symbols)}个现货交易对")
-            
-            # 获取合约交易对
-            futures_symbols = set()
-            futures_exchange_info = self.client.futures_exchange_info()
-            for symbol_info in futures_exchange_info['symbols']:
-                if (symbol_info['status'] == 'TRADING' and 
-                    symbol_info['quoteAsset'] == 'USDT' and 
-                    symbol_info['contractType'] == 'PERPETUAL'):
-                    futures_symbols.add(symbol_info['symbol'])
-            logger.info(f"获取到{len(futures_symbols)}个合约交易对")
-            
-            # 获取同时具有现货和合约的交易对
-            common_symbols = list(spot_symbols.intersection(futures_symbols))
-            logger.info(f"找到{len(common_symbols)}个同时具有现货和合约的交易对")
-            
-            return common_symbols
-            
-        except Exception as e:
-            logger.error(f"获取交易对列表失败: {str(e)}")
-            return []
-            
-    def save_opportunity(self, opportunity: Dict[str, Any]):
-        """
-        保存交易机会到文件
-        
-        Args:
-            opportunity: 交易机会数据
-        """
-        try:
-            logger.info(f"开始保存{opportunity['symbol']}的交易机会...")
-            
-            # 读取现有数据
-            if os.path.exists(self.opportunities_file):
-                with open(self.opportunities_file, 'r') as f:
-                    opportunities = json.load(f)
-                logger.debug(f"已读取现有交易机会数据: {json.dumps(opportunities, indent=2)}")
-            else:
-                opportunities = []
-                
-            # 检查是否已存在相同symbol的机会
-            for i, opp in enumerate(opportunities):
-                if opp['symbol'] == opportunity['symbol']:
-                    # 更新现有机会
-                    opportunities[i] = opportunity
-                    logger.info(f"更新{opportunity['symbol']}的交易机会")
-                    break
-            else:
-                # 添加新机会
-                opportunities.append(opportunity)
-                logger.info(f"添加{opportunity['symbol']}的新交易机会")
-            
-            # 保存数据
-            with open(self.opportunities_file, 'w') as f:
-                json.dump(opportunities, f, indent=2)
-                
-            logger.info(f"成功保存{opportunity['symbol']}的交易机会")
-            logger.debug(f"保存的交易机会数据: {json.dumps(opportunity, indent=2)}")
-            
-        except Exception as e:
-            logger.error(f"保存交易机会时发生错误: {str(e)}")
-            
-    def send_wecom_notification(self, opportunity: Dict[str, Any]):
-        """
-        发送企业微信通知
-        
-        Args:
-            opportunity: 交易机会数据
-        """
-        try:
-            # TODO: 实现企业微信机器人通知
-            pass
-        except Exception as e:
-            logger.error(f"发送企业微信通知时发生错误: {str(e)}")
-            
-    def run(self):
-        """运行交易机会发现程序"""
-        try:
-            logger.info("开始运行交易机会发现程序...")
-            
-            # 获取所有交易对
-            symbols = self.get_all_symbols()
-            if not symbols:
-                logger.error("未获取到任何交易对，程序退出")
-                return
-                
-            logger.info(f"开始分析{len(symbols)}个交易对...")
-            
-            for symbol in symbols:
-                logger.info(f"开始分析交易对: {symbol}")
-                
-                # 获取历史数据
-                data = self.get_historical_data(symbol)
-                if not data:
-                    logger.warning(f"跳过{symbol}，无法获取历史数据")
-                    continue
-                    
-                # 分析机会
-                opportunity = self.analyze_opportunity(symbol, data)
-                if opportunity:
-                    # 保存机会
-                    self.save_opportunity(opportunity)
-                    # 发送通知
-                    self.send_wecom_notification(opportunity)
-                    
-                # 避免触发频率限制
-                time.sleep(0.1)
-                
-            logger.info("交易机会发现程序运行完成")
-                
-        except Exception as e:
-            logger.error(f"运行程序时发生错误: {str(e)}")
             
 def main():
     """主函数"""
