@@ -22,7 +22,13 @@ import sys
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
 from tools.logger import logger
-from config import binance_api_key, binance_api_secret, proxies, project_root
+from config import (
+    binance_api_key, 
+    binance_api_secret, 
+    proxies, 
+    project_root,
+    BINANCE_OPPORTUNITY_FINDER
+)
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 import time
@@ -66,12 +72,17 @@ class BinanceOpportunityFinder:
         # 清空最新文件并写入时间戳
         with open(self.latest_file, 'w', encoding='utf-8') as f:
             f.write(f"运行时间: {current_time}\n\n")
+            
+        # 从配置文件加载阈值
+        self.oi_price_market_ratio_threshold = BINANCE_OPPORTUNITY_FINDER['OI_PRICE_MARKET_RATIO_THRESHOLD']
+        self.volume_market_ratio_threshold = BINANCE_OPPORTUNITY_FINDER['VOLUME_MARKET_RATIO_THRESHOLD']
+        self.historical_change_threshold = BINANCE_OPPORTUNITY_FINDER['HISTORICAL_CHANGE_THRESHOLD']
+        self.final_oi_change_threshold = BINANCE_OPPORTUNITY_FINDER['FINAL_OI_CHANGE_THRESHOLD']
 
     def ensure_directories(self):
         """确保必要的目录存在"""
-        os.makedirs('logs', exist_ok=True)
-        os.makedirs('data', exist_ok=True)
-        os.makedirs('trade/reports', exist_ok=True)
+        # os.makedirs('logs', exist_ok=True)
+        os.makedirs(f'{project_root}/trade/reports', exist_ok=True)
         
     def get_test_symbol(self) -> List[str]:
         """
@@ -213,11 +224,11 @@ class BinanceOpportunityFinder:
         max_oi_change = max(abs(change) for change in historical_oi_changes[:-1]) * 100
         
         report = f"{symbol}\n"
-        report += f"交易活跃度:合约持仓金额/市值 {oi_price_market_ratio:.2f} > 0.2: {'✓' if conditions['交易活跃度:合约持仓金额/市值 > 0.2'] else '✗'}\n"
-        report += f"交易活跃度:近24小时成交量/市值 {volume_market_ratio:.2f} > 0.05: {'✓' if conditions['交易活跃度:近24小时成交量/市值 > 0.05'] else '✗'}\n"
-        report += f"拉盘信号:历史价格变化率 {max_price_change:.1f}% < 5%: {'✓' if conditions['拉盘信号:历史价格变化率 < 5%'] else '✗'}\n"
-        report += f"拉盘信号:历史持仓量变化率 {max_oi_change:.1f}% < 5%: {'✓' if conditions['拉盘信号:历史持仓量变化率 < 5%'] else '✗'}\n"
-        report += f"拉盘信号:最终持仓量变化率 {final_oi_change*100:.1f}% > 20%: {'✓' if conditions['拉盘信号:最终持仓量变化率 > 20%'] else '✗'}\n"
+        report += f"交易活跃度:合约持仓金额/市值 {oi_price_market_ratio:.2f} > {self.oi_price_market_ratio_threshold}: {'✓' if conditions[f'交易活跃度:合约持仓金额/市值 > {self.oi_price_market_ratio_threshold}'] else '✗'}\n"
+        report += f"交易活跃度:近24小时成交量/市值 {volume_market_ratio:.2f} > {self.volume_market_ratio_threshold}: {'✓' if conditions[f'交易活跃度:近24小时成交量/市值 > {self.volume_market_ratio_threshold}'] else '✗'}\n"
+        report += f"拉盘信号:历史价格变化率 {max_price_change:.1f}% < {self.historical_change_threshold*100}%: {'✓' if conditions[f'拉盘信号:历史价格变化率 < {self.historical_change_threshold*100}%'] else '✗'}\n"
+        report += f"拉盘信号:历史持仓量变化率 {max_oi_change:.1f}% < {self.historical_change_threshold*100}%: {'✓' if conditions[f'拉盘信号:历史持仓量变化率 < {self.historical_change_threshold*100}%'] else '✗'}\n"
+        report += f"拉盘信号:最终持仓量变化率 {final_oi_change*100:.1f}% > {self.final_oi_change_threshold*100}%: {'✓' if conditions[f'拉盘信号:最终持仓量变化率 > {self.final_oi_change_threshold*100}%'] else '✗'}\n"
         return report
         
     def save_opportunity(self, opportunity: Dict[str, Any], conditions: Dict[str, bool],
@@ -397,8 +408,8 @@ class BinanceOpportunityFinder:
             # 计算最终持仓量变化率（最后一个时点）
             final_oi_change = (float(open_interest_hist[-1]['sumOpenInterest']) - float(open_interest_hist[-2]['sumOpenInterest'])) / float(open_interest_hist[-2]['sumOpenInterest'])
             
-            # 检查历史变化率是否都在5%以内
-            historical_changes_ok = all(abs(change) <= 0.05 for change in historical_oi_changes[:-1])
+            # 检查历史变化率是否都在阈值以内
+            historical_changes_ok = all(abs(change) <= self.historical_change_threshold for change in historical_oi_changes[:-1])
             
             # 计算历史价格变化率
             historical_price_changes = []
@@ -411,8 +422,8 @@ class BinanceOpportunityFinder:
             # 计算最终价格变化率（最后一个时点）
             final_price_change = (float(klines[-1][4]) - float(klines[-2][4])) / float(klines[-2][4])
             
-            # 检查历史价格变化率是否都在5%以内
-            historical_price_changes_ok = all(abs(change) <= 0.05 for change in historical_price_changes[:-1])
+            # 检查历史价格变化率是否都在阈值以内
+            historical_price_changes_ok = all(abs(change) <= self.historical_change_threshold for change in historical_price_changes[:-1])
             
             # 计算合约持仓金额/市值比
             oi_price_market_ratio = (open_interest * current_price) / market_cap
@@ -429,11 +440,11 @@ class BinanceOpportunityFinder:
             
             # 检查条件
             conditions = {
-                '交易活跃度:合约持仓金额/市值 > 0.2': oi_price_market_ratio > 0.2,
-                '交易活跃度:近24小时成交量/市值 > 0.05': volume_market_ratio > 0.05,
-                '拉盘信号:历史价格变化率 < 5%': historical_price_changes_ok,
-                '拉盘信号:历史持仓量变化率 < 5%': historical_changes_ok,
-                '拉盘信号:最终持仓量变化率 > 20%': final_oi_change > 0.2
+                f'交易活跃度:合约持仓金额/市值 > {self.oi_price_market_ratio_threshold}': oi_price_market_ratio > self.oi_price_market_ratio_threshold,
+                f'交易活跃度:近24小时成交量/市值 > {self.volume_market_ratio_threshold}': volume_market_ratio > self.volume_market_ratio_threshold,
+                f'拉盘信号:历史价格变化率 < {self.historical_change_threshold*100}%': historical_price_changes_ok,
+                f'拉盘信号:历史持仓量变化率 < {self.historical_change_threshold*100}%': historical_changes_ok,
+                f'拉盘信号:最终持仓量变化率 > {self.final_oi_change_threshold*100}%': final_oi_change > self.final_oi_change_threshold
             }
             
             logger.info(f"{symbol} 条件检查结果:")
@@ -481,6 +492,7 @@ def main():
             
         logger.info("初始化交易机会发现器...")
         finder = BinanceOpportunityFinder(api_key, api_secret)
+        logger.info("开始运行交易机会发现器...")
         finder.run()
         
     except Exception as e:
