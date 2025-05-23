@@ -535,7 +535,7 @@ async def main():
             
             # 如果amount为-1，使用calculate_order_quantity计算数量
             if args.amount == -1:
-                from tools.math import calculate_order_quantity
+                from tools.mymath import calculate_order_quantity
                 quantity_result = calculate_order_quantity(spot_price)
                 args.amount = quantity_result['quantity']
                 logger.info(f"自动计算交易数量: {args.amount} {base_currency} (预计金额: {quantity_result['estimated_amount']:.2f} USDT)")
