@@ -222,13 +222,14 @@ class BinanceOpportunityFinder:
         max_price_change = max(abs(change) for change in historical_price_changes[:-1]) * 100
         # 计算历史持仓量变化率的最大值
         max_oi_change = max(abs(change) for change in historical_oi_changes[:-1]) * 100
-        
-        report = f"{symbol}\n"
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        report = f"{symbol} - {current_time}\n"
         report += f"交易活跃度:合约持仓金额/市值 {oi_price_market_ratio:.2f} > {self.oi_price_market_ratio_threshold}: {'✓' if conditions[f'交易活跃度:合约持仓金额/市值 > {self.oi_price_market_ratio_threshold}'] else '✗'}\n"
         report += f"交易活跃度:近24小时成交量/市值 {volume_market_ratio:.2f} > {self.volume_market_ratio_threshold}: {'✓' if conditions[f'交易活跃度:近24小时成交量/市值 > {self.volume_market_ratio_threshold}'] else '✗'}\n"
         report += f"拉盘信号:历史价格变化率 {max_price_change:.1f}% < {self.historical_change_threshold*100}%: {'✓' if conditions[f'拉盘信号:历史价格变化率 < {self.historical_change_threshold*100}%'] else '✗'}\n"
         report += f"拉盘信号:历史持仓量变化率 {max_oi_change:.1f}% < {self.historical_change_threshold*100}%: {'✓' if conditions[f'拉盘信号:历史持仓量变化率 < {self.historical_change_threshold*100}%'] else '✗'}\n"
-        report += f"拉盘信号:最终持仓量变化率 {final_oi_change*100:.1f}% > {self.final_oi_change_threshold*100}%: {'✓' if conditions[f'拉盘信号:最终持仓量变化率 > {self.final_oi_change_threshold*100}%'] else '✗'}\n"
+        report += f"拉盘信号:最终持仓量变化率 {final_oi_change*100:.1f}% > {self.final_oi_change_threshold*100}%: {'✓' if conditions[f'拉盘信号:最终持仓量变化率 > {self.final_oi_change_threshold*100}%'] else '✗'}\n\n"
         return report
         
     def save_opportunity(self, opportunity: Dict[str, Any], conditions: Dict[str, bool],
