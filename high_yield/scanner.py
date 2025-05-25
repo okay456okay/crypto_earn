@@ -389,7 +389,7 @@ class CryptoYieldMonitor:
             logger.info(f"从{products[0]['exchange']}获取到{len([i for i in products if i['duration'] ==0])}个活期理财和{len([i for i in products if i['duration'] > 0])}定期理财产品")
 
             bitget_products = self.exchange_api.get_bitget_flexible_products()
-            products = binance_products
+            products = bitget_products
             logger.info(f"从{products[0]['exchange']}获取到{len([i for i in products if i['duration'] ==0])}个活期理财和{len([i for i in products if i['duration'] > 0])}定期理财产品")
 
             bybit_products = self.exchange_api.get_bybit_flexible_products()
@@ -402,7 +402,7 @@ class CryptoYieldMonitor:
 
             # 合并所有产品
             all_products = binance_products + bitget_products + bybit_products + gateio_products + okx_products
-            logger.info(f"总共获取到{len(all_products)}个活期理财产品")
+            # logger.info(f"总共获取到{len(all_products)}个活期理财产品")
             self.exchange_api.get_binance_funding_info()
 
             # 过滤和处理高收益理财产品
