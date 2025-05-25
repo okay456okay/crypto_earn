@@ -381,19 +381,24 @@ class CryptoYieldMonitor:
 
             # 获取所有交易所的活期理财产品
             binance_products = self.exchange_api.get_binance_flexible_products()
-            logger.info(f"从Binance获取到{len(binance_products)}个活期理财产品")
+            products = binance_products
+            logger.info(f"从{products[0]['exchange']}获取到{len([i for i in products if i['duration'] ==0])}个活期理财和{len([i for i in products if i['duration'] > 0])}定期理财产品")
 
             gateio_products = self.exchange_api.get_gateio_flexible_products()
-            logger.info(f"从GateIO获取到{len(gateio_products)}个活期理财产品")
+            products = gateio_products
+            logger.info(f"从{products[0]['exchange']}获取到{len([i for i in products if i['duration'] ==0])}个活期理财和{len([i for i in products if i['duration'] > 0])}定期理财产品")
 
             bitget_products = self.exchange_api.get_bitget_flexible_products()
-            logger.info(f"从Bitget获取到{len(bitget_products)}个活期理财产品")
+            products = binance_products
+            logger.info(f"从{products[0]['exchange']}获取到{len([i for i in products if i['duration'] ==0])}个活期理财和{len([i for i in products if i['duration'] > 0])}定期理财产品")
 
             bybit_products = self.exchange_api.get_bybit_flexible_products()
-            logger.info(f"从Bybit获取到{len(bybit_products)}个活期理财产品")
+            products = bybit_products
+            logger.info(f"从{products[0]['exchange']}获取到{len([i for i in products if i['duration'] ==0])}个活期理财和{len([i for i in products if i['duration'] > 0])}定期理财产品")
 
             okx_products = self.exchange_api.get_okx_flexible_products()
-            logger.info(f"从OKX获取到{len(okx_products)}个活期理财产品")
+            products = okx_products
+            logger.info(f"从{products[0]['exchange']}获取到{len([i for i in products if i['duration'] ==0])}个活期理财和{len([i for i in products if i['duration'] > 0])}定期理财产品")
 
             # 合并所有产品
             all_products = binance_products + bitget_products + bybit_products + gateio_products + okx_products
