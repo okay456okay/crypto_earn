@@ -22,5 +22,5 @@ python binance_positions.py >reports/binance_positions_$suffix.log
 python exchange_position_arbitrage.py >reports/positions_sum_$suffix.log
 
 cd reports
-cat gateio_positions_$suffix.log bitget_positions_$suffix.log bybit_positions_$suffix.log binance_positions_$suffix.log positions_sum_$suffix.log >positions
+cat bitget_positions_$suffix.log bybit_positions_$suffix.log binance_positions_$suffix.log positions_sum_$suffix.log >positions
 cat positions

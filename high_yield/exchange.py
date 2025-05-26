@@ -409,6 +409,7 @@ class ExchangeAPI:
                         # 'apy_percentile': apy_percentile,
                         'apy_month': [],
                         'apy_day': apy_day,
+                        'duration': 0,
                         "min_purchase": float(item.get('minStakeAmount', 0)),
                         "max_purchase": float(item.get('maxStakeAmount', 0)),
                         "volume_24h": self.bybit_volumes.get(item["coin"], 0)
@@ -1152,7 +1153,7 @@ class ExchangeAPI:
 if __name__ == "__main__":
     api = ExchangeAPI()
     # print(api.get_binance_flexible_products())
-    # print(api.get_gateio_flexible_products())
+    print(api.get_bybit_flexible_products())
     # print(api.get_bitget_futures_funding_rate('ETHUSDT'))
     # print(api.get_bitget_futures_funding_rate('GMUSDT'))
     # # print(api.get_binance_futures_funding_rate('ETHUSDT'))
