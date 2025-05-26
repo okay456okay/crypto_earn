@@ -455,7 +455,8 @@ class ExchangeArbitrageCalculator:
                 # 计算综合加权收益率
                 total_value = total_contract_value + earn_value
                 if total_value > 0:
-                    combined_apy = (funding_rate_apy * total_contract_value + last_rate_year * earn_value) / total_value
+                    # combined_apy = (funding_rate_apy * total_contract_value + last_rate_year * earn_value) / total_value
+                    combined_apy = funding_rate_apy + last_rate_year
                 else:
                     combined_apy = 0
 
@@ -517,7 +518,7 @@ class ExchangeArbitrageCalculator:
             should_highlight = (
                 pos['funding_rate_apy'] < 0 or  # 合约年化为负
                 pos['last_rate_year'] < 3 or    # 理财年化小于3%
-                pos['combined_apy'] < 3         # 综合年化小于3%
+                pos['combined_apy'] < 15         # 综合年化小于3%
             )
             
             # 设置样式
