@@ -22,7 +22,9 @@ from collections import defaultdict
 from time import sleep
 
 import ccxt.pro as ccxtpro
-
+from rich.console import Console
+from rich.table import Table
+from rich import box
 
 # 添加项目根目录到系统路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -43,6 +45,9 @@ from trade.gateio_api import get_earn_positions, get_earn_product
 # 设置日志级别
 import logging
 logger.setLevel(logging.ERROR)
+
+# 初始化rich console
+console = Console()
 
 class ExchangeArbitrageCalculator:
     def __init__(self):
@@ -277,14 +282,24 @@ class ExchangeArbitrageCalculator:
         total_arbitrage_value = 0
 
         # 打印标题
-        print("\n" + "="*120)
-        print(f"GateIO理财与合约套利分析 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print("="*120)
+        console.print("\n" + "="*120)
+        console.print(f"GateIO理财与合约套利分析 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        console.print("="*120)
 
-        # 先打印持仓汇总表头
-        print("\n【合约持仓汇总】")
-        print(f"{'代币':<8} {'Binance多':<12} {'Binance空':<12} {'Bybit多':<12} {'Bybit空':<12} {'Bitget多':<12} {'Bitget空':<12} {'总多仓':<12} {'总空仓':<12} {'净仓位':<12} {'当前价格':<8} {'持仓金额':<15}")
-        print("-"*165)
+        # 创建合约持仓汇总表格
+        position_table = Table(title="合约持仓汇总", box=box.ROUNDED)
+        position_table.add_column("代币", justify="left", style="cyan")
+        position_table.add_column("Binance多", justify="right", style="green")
+        position_table.add_column("Binance空", justify="right", style="red")
+        position_table.add_column("Bybit多", justify="right", style="green")
+        position_table.add_column("Bybit空", justify="right", style="red")
+        position_table.add_column("Bitget多", justify="right", style="green")
+        position_table.add_column("Bitget空", justify="right", style="red")
+        position_table.add_column("总多仓", justify="right", style="green")
+        position_table.add_column("总空仓", justify="right", style="red")
+        position_table.add_column("净仓位", justify="right")
+        position_table.add_column("当前价格", justify="right")
+        position_table.add_column("持仓金额", justify="right")
 
         # 合约持仓汇总
         position_summary = []
@@ -320,14 +335,41 @@ class ExchangeArbitrageCalculator:
         # 按持仓金额降序排序
         position_summary.sort(key=lambda x: x['position_value'], reverse=True)
 
-        # 打印排序后的结果
+        # 添加数据到表格
         for pos in position_summary:
-            print(f"{pos['token']:<10} {pos['binance_long']:<13.2f} {pos['binance_short']:<13.2f} {pos['bybit_long']:<13.2f} {pos['bybit_short']:<13.2f} {pos['bitget_long']:<13.2f} {pos['bitget_short']:<13.2f} {pos['total_long']:<15.2f} {pos['total_short']:<14.2f} {pos['net_position']:<15.2f} {pos['price']:<12.6f} {pos['position_value']:<15.2f}")
+            position_table.add_row(
+                pos['token'],
+                f"{pos['binance_long']:.2f}",
+                f"{pos['binance_short']:.2f}",
+                f"{pos['bybit_long']:.2f}",
+                f"{pos['bybit_short']:.2f}",
+                f"{pos['bitget_long']:.2f}",
+                f"{pos['bitget_short']:.2f}",
+                f"{pos['total_long']:.2f}",
+                f"{pos['total_short']:.2f}",
+                f"{pos['net_position']:.2f}",
+                f"{pos['price']:.6f}",
+                f"{pos['position_value']:.2f}"
+            )
 
-        # 打印GateIO理财与套利情况
-        print("\n【GateIO理财与套利情况】")
-        print(f"{'代币':<8} {'理财数量':<12} {'合约净仓位':<9} {'对冲差额':<8} {'当前价格':<12} {'理财金额':<6} {'理财年化':<5} {'合约年化':<5} {'综合年化':<5} {'套利价值':<7} {'套利收益率':<7} {'借出总额':<12} {'可借总额':<12}")
-        print("-"*165)
+        # 打印合约持仓汇总表格
+        console.print(position_table)
+
+        # 创建GateIO理财与套利情况表格
+        arbitrage_table = Table(title="GateIO理财与套利情况", box=box.ROUNDED)
+        arbitrage_table.add_column("代币", justify="left", style="cyan")
+        arbitrage_table.add_column("理财数量", justify="right")
+        arbitrage_table.add_column("合约净仓位", justify="right")
+        arbitrage_table.add_column("对冲差额", justify="right")
+        arbitrage_table.add_column("当前价格", justify="right")
+        arbitrage_table.add_column("理财金额", justify="right")
+        arbitrage_table.add_column("理财年化", justify="right")
+        arbitrage_table.add_column("合约年化", justify="right")
+        arbitrage_table.add_column("综合年化", justify="right")
+        arbitrage_table.add_column("套利价值", justify="right")
+        arbitrage_table.add_column("套利收益率", justify="right")
+        arbitrage_table.add_column("借出总额", justify="right")
+        arbitrage_table.add_column("可借总额", justify="right")
 
         # 计算套利情况
         arbitrage_summary = []
@@ -469,9 +511,23 @@ class ExchangeArbitrageCalculator:
         # 按理财金额降序排序
         arbitrage_summary.sort(key=lambda x: x['earn_value'], reverse=True)
 
-        # 打印排序后的结果
+        # 添加数据到表格
         for pos in arbitrage_summary:
-            print(f"{pos['token']:<10} {pos['earn_amount']:<15.2f} {pos['net_position']:<15.2f} {pos['hedge_diff']:<12.2f} {pos['price']:<16.6f} {pos['earn_value']:<10.2f} {pos['last_rate_year']:<9.2f} {pos['funding_rate_apy']:<9.2f} {pos['combined_apy']:<9.2f} {pos['arbitrage_value']:<10.2f} {pos['arbitrage_rate']:<13.2f} {pos['total_lend_amount']:<16.2f} {pos['total_lend_available']:<14.2f}")
+            arbitrage_table.add_row(
+                pos['token'],
+                f"{pos['earn_amount']:.2f}",
+                f"{pos['net_position']:.2f}",
+                f"{pos['hedge_diff']:.2f}",
+                f"{pos['price']:.6f}",
+                f"{pos['earn_value']:.2f}",
+                f"{pos['last_rate_year']:.2f}",
+                f"{pos['funding_rate_apy']:.2f}",
+                f"{pos['combined_apy']:.2f}",
+                f"{pos['arbitrage_value']:.2f}",
+                f"{pos['arbitrage_rate']:.2f}",
+                f"{pos['total_lend_amount']:.2f}",
+                f"{pos['total_lend_available']:.2f}"
+            )
             # 更新套利结果和总价值
             arbitrage_results.append({
                 'token': pos['token'],
@@ -482,6 +538,9 @@ class ExchangeArbitrageCalculator:
                 'arbitrage_value': pos['arbitrage_value']
             })
             total_arbitrage_value += pos['arbitrage_value']
+
+        # 打印GateIO理财与套利情况表格
+        console.print(arbitrage_table)
 
         # 打印合约中有但理财没有的代币
         for token, positions in self.aggregated_positions.items():
@@ -495,14 +554,28 @@ class ExchangeArbitrageCalculator:
                 price = self.token_prices.get(token, 0)
                 arbitrage_value = 0
                 try:
-                    print(f"{token:<10} {0.0:<16.2f} {net_position:<20.2f} {-net_position:<16.2f} {price:<16.6f} {0.0:<16.2f} {0.0:<14.2f} {0.0:<12.2f} {0.0:<12.2f} {arbitrage_value:<15.2f} {0.0:<14.2f} {0.0:<16.2f} {0.0:<16.2f}")
+                    arbitrage_table.add_row(
+                        token,
+                        "0.00",
+                        f"{net_position:.2f}",
+                        f"{-net_position:.2f}",
+                        f"{price:.6f}",
+                        "0.00",
+                        "0.00",
+                        "0.00",
+                        "0.00",
+                        f"{arbitrage_value:.2f}",
+                        "0.00",
+                        "0.00",
+                        "0.00"
+                    )
                 except Exception as e:
                     logger.error(f"print failed, info: {token} {net_position} {price} {arbitrage_value}", exc_info=True)
                     continue
 
         # 打印套利总和
-        print("\n【套利汇总】")
-        print(f"总套利价值: {total_arbitrage_value:.2f} USDT")
+        console.print("\n【套利汇总】")
+        console.print(f"总套利价值: {total_arbitrage_value:.2f} USDT")
 
         # 计算加权平均年化收益率
         total_earn_value = 0
@@ -514,8 +587,8 @@ class ExchangeArbitrageCalculator:
                 weighted_apy_sum += earn_value * pos['last_rate_year']
 
         weighted_apy = (weighted_apy_sum / total_earn_value) if total_earn_value > 0 else 0
-        print(f"加权平均年化收益率: {weighted_apy:.2f}%")
-        print("="*90)
+        console.print(f"加权平均年化收益率: {weighted_apy:.2f}%")
+        console.print("="*90)
 
         return {
             'arbitrage_results': arbitrage_results,
