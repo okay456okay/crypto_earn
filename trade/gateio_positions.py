@@ -1,6 +1,9 @@
 import os
 import sys
 from datetime import datetime
+from rich.console import Console
+from rich.table import Table
+from rich import box
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 from high_yield.exchange import ExchangeAPI
@@ -12,14 +15,17 @@ import ccxt
 from tools.logger import logger
 logger.setLevel(logging.ERROR)
 
+# 初始化rich console
+console = Console()
+
 def print_earn_info():
     positions = get_earn_positions()
     api = ExchangeAPI()
 
     # 打印标题
-    print("\n" + "="*80)
-    print(f"GateIO 理财持仓信息 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("="*80)
+    console.print("\n" + "="*80)
+    console.print(f"GateIO 理财持仓信息 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    console.print("="*80)
 
     # 汇总信息
     total_usdt_value = 0
@@ -28,10 +34,20 @@ def print_earn_info():
     earn_infos = {}
     total_24h_apy = 0  # 用于计算24小时加权平均年化率
 
+    # 创建持仓详情表格
+    position_table = Table(title="持仓详情", box=box.ROUNDED)
+    position_table.add_column("币种", justify="left", style="cyan")
+    position_table.add_column("持仓数量", justify="right")
+    position_table.add_column("持仓价值(USDT)", justify="right")
+    position_table.add_column("当前价格", justify="right")
+    position_table.add_column("当前年化率", justify="right")
+    position_table.add_column("24h收益", justify="right")
+    position_table.add_column("24h年化率", justify="right")
+    position_table.add_column("冻结数量", justify="right")
+    position_table.add_column("可用数量", justify="right")
+
     # 打印每个持仓的详细信息
-    print("\n【持仓详情】")
-    print(f"{'币种':<6} {'持仓数量':<10} {'持仓价值(USDT)':<13} {'当前价格':<8} {'当前年化率':<7} {'24h收益':<8} {'24h年化率':<10} {'冻结数量':<10} {'可用数量':<12}")
-    print("-"*150)
+    console.print("\n【持仓详情】")
 
     for p in positions:
         if float(p['curr_amount_usdt']) >= 1:
@@ -67,15 +83,28 @@ def print_earn_info():
             frozen_amount = float(p['frozen_amount'])
             margin_available = float(p['margin_available_amount'])
 
-            # 打印详细信息
-            print(f"{p['asset']:<8} {curr_amount:<15.2f} {curr_amount_usdt:<15.2f} {price:<13.6f} {apy:<12.2f} {interest_24h:<12.2f} {interest_24h_apy:<12.2f} {frozen_amount:<14.2f} {margin_available:<12.2f}")
+            # 添加数据到表格
+            position_table.add_row(
+                p['asset'],
+                f"{curr_amount:.2f}",
+                f"{curr_amount_usdt:.2f}",
+                f"{price:.6f}",
+                f"{apy:.2f}",
+                f"{interest_24h:.2f}",
+                f"{interest_24h_apy:.2f}",
+                f"{frozen_amount:.2f}",
+                f"{margin_available:.2f}"
+            )
+
+    # 打印持仓详情表格
+    console.print(position_table)
 
     # 打印汇总信息
-    print("\n【汇总信息】")
-    print(f"总资产数量: {total_assets} 种")
-    print(f"总资产价值: {total_usdt_value:.2f} USDT")
-    print(f"近24小时收益: {total_24h_interest_usdt:.2f} USDT")
-    print(f"近24小时加权平均年化率: {total_24h_apy/total_usdt_value:.2f}%")
+    console.print("\n【汇总信息】")
+    console.print(f"总资产数量: {total_assets} 种")
+    console.print(f"总资产价值: {total_usdt_value:.2f} USDT")
+    console.print(f"近24小时收益: {total_24h_interest_usdt:.2f} USDT")
+    console.print(f"近24小时加权平均年化率: {total_24h_apy/total_usdt_value:.2f}%")
 
     # 计算平均年化率
     if total_assets > 0:
@@ -85,9 +114,9 @@ def print_earn_info():
                 earn_info = earn_infos.get(p['asset'])
                 weight = float(p['curr_amount_usdt']) / total_usdt_value
                 total_apy += float(earn_info['apy']) * weight
-        print(f"当前加权平均年化率: {total_apy:.2f}%")
+        console.print(f"当前加权平均年化率: {total_apy:.2f}%")
 
-    print("="*80)
+    console.print("="*80)
 
 def auto_subscribe_earn():
     """

@@ -513,6 +513,16 @@ class ExchangeArbitrageCalculator:
 
         # 添加数据到表格
         for pos in arbitrage_summary:
+            # 检查是否需要标红和加粗
+            should_highlight = (
+                pos['funding_rate_apy'] < 0 or  # 合约年化为负
+                pos['last_rate_year'] < 3 or    # 理财年化小于3%
+                pos['combined_apy'] < 3         # 综合年化小于3%
+            )
+            
+            # 设置样式
+            style = "bold red" if should_highlight else None
+            
             arbitrage_table.add_row(
                 pos['token'],
                 f"{pos['earn_amount']:.2f}",
@@ -526,7 +536,8 @@ class ExchangeArbitrageCalculator:
                 f"{pos['arbitrage_value']:.2f}",
                 f"{pos['arbitrage_rate']:.2f}",
                 f"{pos['total_lend_amount']:.2f}",
-                f"{pos['total_lend_available']:.2f}"
+                f"{pos['total_lend_available']:.2f}",
+                style=style
             )
             # 更新套利结果和总价值
             arbitrage_results.append({

@@ -18,6 +18,9 @@ import ccxt.pro as ccxtpro
 from decimal import Decimal
 from datetime import datetime
 import subprocess
+from rich.console import Console
+from rich.table import Table
+from rich import box
 
 # 添加项目根目录到系统路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -29,6 +32,9 @@ from high_yield.exchange import ExchangeAPI
 import logging
 from tools.logger import logger
 logger.setLevel(logging.ERROR)
+
+# 初始化rich console
+console = Console()
 
 class BybitPositionFetcher:
     def __init__(self):
@@ -67,18 +73,26 @@ class BybitPositionFetcher:
             positions = await self.exchange.fetch_positions()
 
             if not positions:
-                print("当前没有持仓")
+                console.print("当前没有持仓")
                 return positions
 
             # 打印持仓信息
-            print("\n=== Bybit合约持仓信息 ===")
-            print(f"查询时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            print("-" * 160)
-
-            # 打印表头
-            header = f"{'交易对':<8} {'方向':<4} {'数量':<12} {'杠杆':<4} {'资金费率':<8} {'开仓价':<10} {'标记价':<10} {'强平价':<10} {'未实现盈亏':<12} {'结算周期':<8} {'下次结算':<19}"
-            print(header)
-            print("-" * 160)
+            console.print("\n=== Bybit合约持仓信息 ===")
+            console.print(f"查询时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            
+            # 创建持仓信息表格
+            position_table = Table(box=box.ROUNDED)
+            position_table.add_column("交易对", justify="left", style="cyan")
+            position_table.add_column("方向", justify="center")
+            position_table.add_column("数量", justify="right")
+            position_table.add_column("杠杆", justify="right")
+            position_table.add_column("资金费率", justify="right")
+            position_table.add_column("开仓价", justify="right")
+            position_table.add_column("标记价", justify="right")
+            position_table.add_column("强平价", justify="right")
+            position_table.add_column("未实现盈亏", justify="right")
+            position_table.add_column("结算周期", justify="center")
+            position_table.add_column("下次结算", justify="center")
 
             total_unrealized_pnl = Decimal('0')
 
@@ -110,21 +124,20 @@ class BybitPositionFetcher:
                     token = symbol.replace('/USDT:USDT', '')
                     self.run_funding_script(token)
 
-                # 格式化输出一行
-                position_line = (
-                    f"{symbol.replace('/USDT:USDT', ''):<12} "
-                    f"{'多' if side == 'long' else '空':<4} "
-                    f"{contracts:<14.2f} "
-                    f"{int(leverage):<6} "
-                    f"{funding_rate:<12.4f}"
-                    f"{entry_price:<13.6f} "
-                    f"{mark_price:<14.6f} "
-                    f"{liquidation_price:<14.6f} "
-                    f"{unrealized_pnl:<16.2f} "
-                    f"{funding_interval:<6} "
-                    f"{next_funding_time_str:<19}"
+                # 添加数据到表格
+                position_table.add_row(
+                    symbol.replace('/USDT:USDT', ''),
+                    '多' if side == 'long' else '空',
+                    f"{contracts:.2f}",
+                    str(leverage),
+                    f"{funding_rate:.4f}",
+                    f"{entry_price:.6f}",
+                    f"{mark_price:.6f}",
+                    f"{liquidation_price:.6f}",
+                    f"{unrealized_pnl:.2f}",
+                    funding_interval,
+                    next_funding_time_str
                 )
-                print(position_line)
 
                 # 累加统计数据
                 total_unrealized_pnl += Decimal(str(unrealized_pnl))
@@ -145,12 +158,13 @@ class BybitPositionFetcher:
                 }
                 processed_positions.append(processed_position)
 
-            print("-" * 160)
+            # 打印持仓信息表格
+            console.print(position_table)
 
             # 打印汇总信息
-            print("\n=== 持仓汇总信息 ===")
-            print(f"总未实现盈亏: {float(total_unrealized_pnl):.2f} USDT")
-            print("=" * 160)
+            console.print("\n=== 持仓汇总信息 ===")
+            console.print(f"总未实现盈亏: {float(total_unrealized_pnl):.2f} USDT")
+            console.print("=" * 160)
             return processed_positions
 
         except Exception as e:
