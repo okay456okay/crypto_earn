@@ -218,8 +218,6 @@ class BinanceOpportunityFinder:
         Returns:
             str: 格式化后的报告
         """
-        # 计算历史价格变化率的最大值
-        max_price_change = max(abs(change) for change in historical_price_changes[:-1]) * 100
         # 计算历史持仓量变化率的最大值
         max_oi_change = max(abs(change) for change in historical_oi_changes[:-1]) * 100
         current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -227,7 +225,6 @@ class BinanceOpportunityFinder:
         report = f"{symbol} - {current_time}\n"
         report += f"交易活跃度:合约持仓金额/市值 {oi_price_market_ratio:.2f} > {self.oi_price_market_ratio_threshold}: {'✓' if conditions[f'交易活跃度:合约持仓金额/市值 > {self.oi_price_market_ratio_threshold}'] else '✗'}\n"
         report += f"交易活跃度:近24小时成交量/市值 {volume_market_ratio:.2f} > {self.volume_market_ratio_threshold}: {'✓' if conditions[f'交易活跃度:近24小时成交量/市值 > {self.volume_market_ratio_threshold}'] else '✗'}\n"
-        report += f"拉盘信号:历史价格变化率 {max_price_change:.1f}% < {self.historical_change_threshold*100}%: {'✓' if conditions[f'拉盘信号:历史价格变化率 < {self.historical_change_threshold*100}%'] else '✗'}\n"
         report += f"拉盘信号:历史持仓量变化率 {max_oi_change:.1f}% < {self.historical_change_threshold*100}%: {'✓' if conditions[f'拉盘信号:历史持仓量变化率 < {self.historical_change_threshold*100}%'] else '✗'}\n"
         report += f"拉盘信号:最终持仓量变化率 {final_oi_change*100:.1f}% > {self.final_oi_change_threshold*100}%: {'✓' if conditions[f'拉盘信号:最终持仓量变化率 > {self.final_oi_change_threshold*100}%'] else '✗'}\n\n"
         return report
@@ -285,7 +282,7 @@ class BinanceOpportunityFinder:
             
     def get_all_symbols(self) -> List[str]:
         """
-        获取所有同时具有现货和合约的交易对
+        获取所有合约交易对
         
         Returns:
             List[str]: 交易对列表
@@ -293,31 +290,17 @@ class BinanceOpportunityFinder:
         try:
             logger.info("开始获取所有交易对...")
             
-            # 获取现货交易对
-            spot_symbols = set()
-            spot_exchange_info = self.client.get_exchange_info()
-            for symbol_info in spot_exchange_info['symbols']:
-                if (symbol_info['status'] == 'TRADING' and 
-                    symbol_info['quoteAsset'] == 'USDT' and 
-                    symbol_info['isSpotTradingAllowed']):
-                    spot_symbols.add(symbol_info['symbol'])
-            logger.info(f"获取到{len(spot_symbols)}个现货交易对")
-            
             # 获取合约交易对
-            futures_symbols = set()
+            futures_symbols = []
             futures_exchange_info = self.client.futures_exchange_info()
             for symbol_info in futures_exchange_info['symbols']:
                 if (symbol_info['status'] == 'TRADING' and 
                     symbol_info['quoteAsset'] == 'USDT' and 
                     symbol_info['contractType'] == 'PERPETUAL'):
-                    futures_symbols.add(symbol_info['symbol'])
+                    futures_symbols.append(symbol_info['symbol'])
             logger.info(f"获取到{len(futures_symbols)}个合约交易对")
             
-            # 获取同时具有现货和合约的交易对
-            common_symbols = list(spot_symbols.intersection(futures_symbols))
-            logger.info(f"找到{len(common_symbols)}个同时具有现货和合约的交易对")
-            
-            return common_symbols
+            return futures_symbols
             
         except Exception as e:
             logger.error(f"获取交易对列表失败: {str(e)}")
@@ -333,8 +316,8 @@ class BinanceOpportunityFinder:
             if not symbols:
                 logger.error("未获取到任何交易对，程序退出")
                 return
-                
-            logger.info(f"开始分析{len(symbols)}个交易对...")
+
+            logger.info(f"开始分析{len(symbols)}个交易对, 获取到的交易对如下：{symbols}")
             
             for symbol in symbols:
                 logger.info(f"开始分析交易对: {symbol}")
@@ -412,19 +395,8 @@ class BinanceOpportunityFinder:
             # 检查历史变化率是否都在阈值以内
             historical_changes_ok = all(abs(change) <= self.historical_change_threshold for change in historical_oi_changes[:-1])
             
-            # 计算历史价格变化率
+            # 为保持函数签名一致性，提供空的历史价格变化率列表
             historical_price_changes = []
-            for i in range(len(klines) - 1):
-                current_price = float(klines[i][4])  # 收盘价
-                next_price = float(klines[i + 1][4])
-                change = (next_price - current_price) / current_price
-                historical_price_changes.append(change)
-            
-            # 计算最终价格变化率（最后一个时点）
-            final_price_change = (float(klines[-1][4]) - float(klines[-2][4])) / float(klines[-2][4])
-            
-            # 检查历史价格变化率是否都在阈值以内
-            historical_price_changes_ok = all(abs(change) <= self.historical_change_threshold for change in historical_price_changes[:-1])
             
             # 计算合约持仓金额/市值比
             oi_price_market_ratio = (open_interest * current_price) / market_cap
@@ -434,8 +406,6 @@ class BinanceOpportunityFinder:
             logger.debug(f"  当前持仓量: {open_interest:,.2f} {symbol.replace('USDT', '')}")
             logger.debug(f"  历史持仓量变化率: {[f'{change:.2%}' for change in historical_oi_changes]}")
             logger.debug(f"  最终持仓量变化率: {final_oi_change:.2%}")
-            logger.debug(f"  历史价格变化率: {[f'{change:.2%}' for change in historical_price_changes]}")
-            logger.debug(f"  最终价格变化率: {final_price_change:.2%}")
             logger.debug(f"  合约持仓金额/市值: {oi_price_market_ratio:.4f}")
             logger.debug(f"  近24小时成交量/市值: {volume_market_ratio:.4f}")
             
@@ -443,7 +413,6 @@ class BinanceOpportunityFinder:
             conditions = {
                 f'交易活跃度:合约持仓金额/市值 > {self.oi_price_market_ratio_threshold}': oi_price_market_ratio > self.oi_price_market_ratio_threshold,
                 f'交易活跃度:近24小时成交量/市值 > {self.volume_market_ratio_threshold}': volume_market_ratio > self.volume_market_ratio_threshold,
-                f'拉盘信号:历史价格变化率 < {self.historical_change_threshold*100}%': historical_price_changes_ok,
                 f'拉盘信号:历史持仓量变化率 < {self.historical_change_threshold*100}%': historical_changes_ok,
                 f'拉盘信号:最终持仓量变化率 > {self.final_oi_change_threshold*100}%': final_oi_change > self.final_oi_change_threshold
             }
@@ -460,7 +429,7 @@ class BinanceOpportunityFinder:
                         'current_price': current_price,
                         'current_oi': open_interest,
                         'oi_change': final_oi_change,
-                        'price_change': final_price_change,
+                        'price_change': (float(klines[-1][4]) - float(klines[-2][4])) / float(klines[-2][4]),
                         'oi_price_market_ratio': oi_price_market_ratio,
                         'volume_market_ratio': volume_market_ratio,
                         'market_cap': market_cap,
