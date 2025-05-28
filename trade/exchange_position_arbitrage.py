@@ -47,7 +47,7 @@ import logging
 logger.setLevel(logging.ERROR)
 
 # 初始化rich console
-console = Console()
+console = Console(width=200, force_terminal=True)
 
 class ExchangeArbitrageCalculator:
     def __init__(self):

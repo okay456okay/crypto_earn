@@ -16,7 +16,7 @@ from tools.logger import logger
 logger.setLevel(logging.ERROR)
 
 # 初始化rich console
-console = Console()
+console = Console(width=200, force_terminal=True)
 
 def print_earn_info():
     positions = get_earn_positions()
