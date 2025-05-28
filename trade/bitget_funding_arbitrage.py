@@ -316,8 +316,9 @@ class FundingArbitrageTrader:
                 await asyncio.sleep(60)  # 等待60秒
 
                 # 6. 以相同价格重新开空单
-                logger.info(f"[{self.symbol}] 准备以价格 {close_price} 重新开空单")
-                open_order = await self.open_position(price=close_price)
+                open_price = close_price * 1.005
+                logger.info(f"[{self.symbol}] 准备以价格 {open_price} 重新开空单")
+                open_order = await self.open_position(price=open_price)
                 
                 if open_order:
                     logger.info(f"[{self.symbol}] 本轮资金费率套利执行完成")
