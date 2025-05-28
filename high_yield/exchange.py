@@ -272,9 +272,8 @@ class ExchangeAPI:
                                     'apy_day': apy_day,
                                     'apy_month': apy_month,
                                     "duration": duration,
-                                    "min_purchase": float(item.get('productDetailList', [])[0].get("minPurchaseAmount", 0)),
-                                    "max_purchase": float(
-                                        item.get('productDetailList', [])[0].get("maxPurchaseAmountPerUser", 0)),
+                                    "min_purchase": float(item_sub.get("minPurchaseAmount", 0)),
+                                    "max_purchase": float(item_sub.get("maxPurchaseAmountPerUser", 0)),
                                     "volume_24h": self.binance_volumes.get(token, 0)
                                 }
                                 products.append(product)
