@@ -38,6 +38,17 @@ import pandas as pd
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional, Tuple
 import logging
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from matplotlib import rcParams
+import numpy as np
+import base64
+import hashlib
+
+# 设置matplotlib中文字体
+rcParams['font.sans-serif'] = ['Arial Unicode MS', 'SimHei', 'DejaVu Sans']
+rcParams['axes.unicode_minus'] = False
+
 logger.setLevel(logging.DEBUG)
 
 class BinanceOpportunityFinder:
@@ -106,14 +117,14 @@ class BinanceOpportunityFinder:
         try:
             logger.info(f"开始获取{symbol}的历史数据...")
             
-            # 获取K线数据
+            # 获取K线数据 - 改为5分钟间隔，获取更多数据点（2小时的数据）
             logger.debug(f"请求{symbol}的K线数据...")
             klines = self.client.futures_klines(
                 symbol=symbol,
-                interval=Client.KLINE_INTERVAL_1HOUR,
-                limit=24
+                interval=Client.KLINE_INTERVAL_5MINUTE,
+                limit=int(1*24*60/5)
             )
-            logger.debug(f"{symbol} K线数据: {json.dumps(klines, indent=2)}")
+            # logger.debug(f"{symbol} K线数据: {json.dumps(klines, indent=2)}")
             
             # 获取24小时统计数据
             logger.debug(f"请求{symbol}的24小时统计数据...")
@@ -125,14 +136,13 @@ class BinanceOpportunityFinder:
             open_interest = self.client.futures_open_interest(symbol=symbol)
             logger.debug(f"{symbol} 合约持仓量数据: {json.dumps(open_interest, indent=2)}")
             
-            # 获取合约持仓量历史
+            # 获取合约持仓量历史 - 改为5分钟间隔
             logger.debug(f"请求{symbol}的合约持仓量历史数据...")
             open_interest_hist = self.client.futures_open_interest_hist(
                 symbol=symbol,
-                period='1h',
-                limit=24
+                period='5m',
+                limit=int(1*24*60/5)
             )
-            logger.debug(f"{symbol} 合约持仓量历史数据: {json.dumps(open_interest_hist, indent=2)}")
             
             # 获取币种信息
             logger.debug(f"请求{symbol}的币种信息...")
@@ -199,10 +209,86 @@ class BinanceOpportunityFinder:
             logger.error(f"获取{symbol}市值时发生错误: {str(e)}")
             return None
 
+    def plot_trends(self, symbol: str, klines: List, open_interest_hist: List) -> str:
+        """
+        绘制持仓量和价格趋势图
+        
+        Args:
+            symbol: 交易对符号
+            klines: K线数据
+            open_interest_hist: 持仓量历史数据
+            
+        Returns:
+            str: 图片文件路径
+        """
+        try:
+            logger.info(f"开始绘制{symbol}的趋势图...")
+            
+            # 确保图片目录存在
+            charts_dir = os.path.join(project_root, 'trade/charts')
+            os.makedirs(charts_dir, exist_ok=True)
+            
+            # 生成文件名
+            timestamp = datetime.now().strftime('%Y%m%d%H%M')
+            filename = f"{symbol.lower()}_{timestamp}.png"
+            filepath = os.path.join(charts_dir, filename)
+            
+            # 提取价格数据
+            timestamps = []
+            prices = []
+            for kline in klines:
+                timestamp = datetime.fromtimestamp(int(kline[0]) / 1000)
+                timestamps.append(timestamp)
+                prices.append(float(kline[4]))  # 收盘价
+            
+            # 提取持仓量数据
+            oi_timestamps = []
+            oi_values = []
+            for oi_data in open_interest_hist:
+                timestamp = datetime.fromtimestamp(int(oi_data['timestamp']) / 1000)
+                oi_timestamps.append(timestamp)
+                oi_values.append(float(oi_data['sumOpenInterest']))
+            
+            # 创建图表
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+            
+            # 绘制价格趋势
+            ax1.plot(timestamps, prices, 'b-', linewidth=2, label='Price')
+            ax1.set_ylabel('Price (USDT)', color='b')
+            ax1.tick_params(axis='y', labelcolor='b')
+            ax1.grid(True, alpha=0.3)
+            ax1.set_title(f'{symbol} Price and Open Interest Trends', fontsize=14, fontweight='bold')
+            
+            # 绘制持仓量趋势
+            ax2.plot(oi_timestamps, oi_values, 'r-', linewidth=2, label='Open Interest')
+            ax2.set_ylabel('Open Interest', color='r')
+            ax2.tick_params(axis='y', labelcolor='r')
+            ax2.grid(True, alpha=0.3)
+            ax2.set_xlabel('Time')
+            
+            # 格式化x轴时间显示
+            ax2.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+            ax2.xaxis.set_major_locator(mdates.MinuteLocator(interval=30))
+            plt.setp(ax2.xaxis.get_majorticklabels(), rotation=45)
+            
+            # 调整布局
+            plt.tight_layout()
+            
+            # 保存图片
+            plt.savefig(filepath, dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            logger.info(f"成功保存{symbol}趋势图到: {filepath}")
+            return filepath
+            
+        except Exception as e:
+            logger.error(f"绘制{symbol}趋势图时发生错误: {str(e)}")
+            return ""
+
     def format_opportunity_report(self, symbol: str, conditions: Dict[str, bool], 
                                 oi_price_market_ratio: float, volume_market_ratio: float,
                                 historical_price_changes: List[float], historical_oi_changes: List[float],
-                                final_oi_change: float) -> str:
+                                final_oi_change: float, chart_path: str = "") -> str:
         """
         格式化交易机会报告
         
@@ -214,6 +300,7 @@ class BinanceOpportunityFinder:
             historical_price_changes: 历史价格变化率列表
             historical_oi_changes: 历史持仓量变化率列表
             final_oi_change: 最终持仓量变化率
+            chart_path: 图表文件路径
             
         Returns:
             str: 格式化后的报告
@@ -226,11 +313,15 @@ class BinanceOpportunityFinder:
         report += f"交易活跃度:合约持仓金额/市值 {oi_price_market_ratio:.2f} > {self.oi_price_market_ratio_threshold}: {'✓' if conditions[f'交易活跃度:合约持仓金额/市值 > {self.oi_price_market_ratio_threshold}'] else '✗'}\n"
         report += f"交易活跃度:近24小时成交量/市值 {volume_market_ratio:.2f} > {self.volume_market_ratio_threshold}: {'✓' if conditions[f'交易活跃度:近24小时成交量/市值 > {self.volume_market_ratio_threshold}'] else '✗'}\n"
         report += f"拉盘信号:历史持仓量变化率 {max_oi_change:.1f}% < {self.historical_change_threshold*100}%: {'✓' if conditions[f'拉盘信号:历史持仓量变化率 < {self.historical_change_threshold*100}%'] else '✗'}\n"
-        report += f"拉盘信号:最终持仓量变化率 {final_oi_change*100:.1f}% > {self.final_oi_change_threshold*100}%: {'✓' if conditions[f'拉盘信号:最终持仓量变化率 > {self.final_oi_change_threshold*100}%'] else '✗'}\n\n"
+        report += f"拉盘信号:最终持仓量变化率 {final_oi_change*100:.1f}% > {self.final_oi_change_threshold*100}%: {'✓' if conditions[f'拉盘信号:最终持仓量变化率 > {self.final_oi_change_threshold*100}%'] else '✗'}\n"
+        if chart_path:
+            report += f"趋势图路径: {chart_path}\n"
+        report += "\n"
         return report
         
     def save_opportunity(self, opportunity: Dict[str, Any], conditions: Dict[str, bool],
-                        historical_price_changes: List[float], historical_oi_changes: List[float]):
+                        historical_price_changes: List[float], historical_oi_changes: List[float],
+                        chart_path: str = ""):
         """
         保存交易机会到文件
         
@@ -239,6 +330,7 @@ class BinanceOpportunityFinder:
             conditions: 条件检查结果
             historical_price_changes: 历史价格变化率列表
             historical_oi_changes: 历史持仓量变化率列表
+            chart_path: 图表文件路径
         """
         try:
             logger.info(f"开始保存{opportunity['symbol']}的交易机会...")
@@ -251,7 +343,8 @@ class BinanceOpportunityFinder:
                 opportunity['volume_market_ratio'],
                 historical_price_changes,
                 historical_oi_changes,
-                opportunity['oi_change']
+                opportunity['oi_change'],
+                chart_path
             )
             
             # 保存到带时间戳的文件
@@ -267,18 +360,102 @@ class BinanceOpportunityFinder:
         except Exception as e:
             logger.error(f"保存交易机会时发生错误: {str(e)}")
             
-    def send_wecom_notification(self, opportunity: Dict[str, Any]):
+    def send_wecom_notification(self, opportunity: Dict[str, Any], chart_path: str = ""):
         """
         发送企业微信通知
         
         Args:
             opportunity: 交易机会数据
+            chart_path: 图表文件路径
         """
         try:
-            # TODO: 实现企业微信机器人通知
-            pass
+            webhook_url = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=43c4c655-b144-4e1f-b054-4b3a9e2caf26"
+            
+            # 构建通知消息
+            symbol = opportunity['symbol']
+            current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
+            # 文本消息内容
+            message_text = f"""🚀 发现交易机会 - {symbol}
+            
+⏰ 时间: {current_time}
+💰 当前价格: {opportunity['current_price']:,.2f} USDT
+📈 价格变化: {opportunity['price_change']*100:+.2f}%
+📊 持仓量变化: {opportunity['oi_change']*100:+.2f}%
+💎 合约持仓金额/市值: {opportunity['oi_price_market_ratio']:.4f}
+🔥 成交量/市值比: {opportunity['volume_market_ratio']:.4f}
+💵 市值: {opportunity['market_cap']:,.0f} USDT
+
+📊 趋势图已生成，请查看附件分析详情。"""
+
+            # 发送文本消息
+            text_payload = {
+                "msgtype": "text",
+                "text": {
+                    "content": message_text
+                }
+            }
+            
+            logger.info(f"开始发送{symbol}的企业微信通知...")
+            
+            # 发送文本消息
+            response = requests.post(
+                webhook_url, 
+                json=text_payload,
+                proxies=proxies,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                if result.get('errcode') == 0:
+                    logger.info(f"✓ 成功发送{symbol}的文本通知到企业微信")
+                else:
+                    logger.error(f"✗ 发送{symbol}文本通知失败: {result.get('errmsg', '未知错误')}")
+            else:
+                logger.error(f"✗ 发送{symbol}文本通知HTTP错误: {response.status_code}")
+                
+            # 如果有图片，尝试发送图片消息
+            if chart_path and os.path.exists(chart_path):
+                try:
+                    # 读取图片文件并转换为base64
+                    with open(chart_path, 'rb') as f:
+                        image_data = f.read()
+                        image_base64 = base64.b64encode(image_data).decode('utf-8')
+                    
+                    # 计算图片MD5
+                    image_md5 = hashlib.md5(image_data).hexdigest()
+                    
+                    # 发送图片消息
+                    image_payload = {
+                        "msgtype": "image",
+                        "image": {
+                            "base64": image_base64,
+                            "md5": image_md5
+                        }
+                    }
+                    
+                    response = requests.post(
+                        webhook_url,
+                        json=image_payload,
+                        proxies=proxies,
+                        timeout=30
+                    )
+                    
+                    if response.status_code == 200:
+                        result = response.json()
+                        if result.get('errcode') == 0:
+                            logger.info(f"✓ 成功发送{symbol}的图片到企业微信")
+                        else:
+                            logger.error(f"✗ 发送{symbol}图片失败: {result.get('errmsg', '未知错误')}")
+                    else:
+                        logger.error(f"✗ 发送{symbol}图片HTTP错误: {response.status_code}")
+                        
+                except Exception as e:
+                    logger.error(f"✗ 处理{symbol}图片时发生错误: {str(e)}")
+                    
         except Exception as e:
-            logger.error(f"发送企业微信通知时发生错误: {str(e)}")
+            logger.error(f"发送{symbol}企业微信通知时发生错误: {str(e)}")
             
     def get_all_symbols(self) -> List[str]:
         """
@@ -332,10 +509,12 @@ class BinanceOpportunityFinder:
                 result = self.analyze_opportunity(symbol, data)
                 if result:
                     opportunity, conditions, historical_price_changes, historical_oi_changes = result
+                    # 只对符合条件的交易对生成趋势图
+                    chart_path = self.plot_trends(symbol, data['klines'], data['open_interest_hist'])
                     # 保存机会
-                    self.save_opportunity(opportunity, conditions, historical_price_changes, historical_oi_changes)
+                    self.save_opportunity(opportunity, conditions, historical_price_changes, historical_oi_changes, chart_path)
                     # 发送通知
-                    self.send_wecom_notification(opportunity)
+                    self.send_wecom_notification(opportunity, chart_path)
                     
                 # 避免触发频率限制
                 time.sleep(0.1)
