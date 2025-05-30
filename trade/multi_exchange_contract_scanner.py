@@ -375,7 +375,7 @@ class MultiExchangeContractScanner:
             table.add_column("排名", justify="center", style="bold", width=4)
             table.add_column("交易所", justify="center", style="cyan", width=8)
             table.add_column("交易对", justify="center", style="bold yellow", width=15)
-            table.add_column("基础资产", justify="center", style="green", width=10)
+            # table.add_column("基础资产", justify="center", style="green", width=10)
             table.add_column("当前价格", justify="right", style="white", width=12)
             table.add_column("最高价", justify="right", style="bright_red", width=12)
             table.add_column("最低价", justify="right", style="bright_green", width=12)
@@ -385,7 +385,7 @@ class MultiExchangeContractScanner:
             table.add_column("结算周期", justify="center", style="yellow", width=8)
             table.add_column("平均费率", justify="right", style="white", width=10)
             table.add_column("年化收益", justify="right", style="bold green", width=10)
-            table.add_column("一致性", justify="center", style="cyan", width=16)
+            table.add_column("一致性", justify="center", style="cyan", width=18)
             
             # 添加数据行
             for i, symbol_data in enumerate(all_qualified_symbols, 1):
@@ -409,7 +409,7 @@ class MultiExchangeContractScanner:
                     str(i),
                     exchange_name,
                     symbol_data['symbol'],
-                    symbol_data['baseAsset'],
+                    # symbol_data['baseAsset'],
                     f"${symbol_data['currentPrice']:.6f}",
                     f"${symbol_data['priceRange']['max']:.6f}",
                     f"${symbol_data['priceRange']['min']:.6f}",
