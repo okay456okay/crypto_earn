@@ -42,7 +42,7 @@ class BybitContractScanner:
     """Bybit合约扫描器"""
     
     def __init__(self, api_key: str = None, api_secret: str = None,
-                 price_volatility_threshold: float = 0.10, min_leverage: int = 20, days_to_analyze: int = 30):
+                 price_volatility_threshold: float = 0.50, min_leverage: int = 20, days_to_analyze: int = 30):
         """
         初始化Bybit客户端
         
@@ -198,31 +198,34 @@ class BybitContractScanner:
             float: 结算周期（小时）
         """
         if len(funding_rates_data) < 2:
+            logger.warning(f"合约资金费率历史数据小于2，使用默认值8.0")
             return 8.0  # 默认8小时
+        else:
+            return (funding_rates_data[-1]['timestamp'] - funding_rates_data[-2]['timestamp']) / (1000 * 60 * 60)
+
+        # intervals = []
+        # for i in range(1, min(10, len(funding_rates_data))):  # 取前10个间隔计算平均值
+        #     # 检查数据格式，兼容不同的时间戳字段名
+        #     if 'timestamp' in funding_rates_data[i-1]:
+        #         prev_time = funding_rates_data[i-1]['timestamp']
+        #         curr_time = funding_rates_data[i]['timestamp']
+        #     elif 'fundingTime' in funding_rates_data[i-1]:
+        #         prev_time = funding_rates_data[i-1]['fundingTime']
+        #         curr_time = funding_rates_data[i]['fundingTime']
+        #     else:
+        #         logger.warning("无法识别的时间戳字段格式")
+        #         return 8.0
+        #
+        #     interval_ms = curr_time - prev_time
+        #     interval_hours = interval_ms / (1000 * 60 * 60)
+        #     intervals.append(interval_hours)
+        #
+        # if intervals:
+        #     avg_interval = sum(intervals) / len(intervals)
+        #     logger.debug(f"计算得出的平均资金费率结算周期: {avg_interval:.1f}小时")
+        #     return avg_interval
         
-        intervals = []
-        for i in range(1, min(10, len(funding_rates_data))):  # 取前10个间隔计算平均值
-            # 检查数据格式，兼容不同的时间戳字段名
-            if 'timestamp' in funding_rates_data[i-1]:
-                prev_time = funding_rates_data[i-1]['timestamp']
-                curr_time = funding_rates_data[i]['timestamp']
-            elif 'fundingTime' in funding_rates_data[i-1]:
-                prev_time = funding_rates_data[i-1]['fundingTime']
-                curr_time = funding_rates_data[i]['fundingTime']
-            else:
-                logger.warning("无法识别的时间戳字段格式")
-                return 8.0
-            
-            interval_ms = curr_time - prev_time
-            interval_hours = interval_ms / (1000 * 60 * 60)
-            intervals.append(interval_hours)
-        
-        if intervals:
-            avg_interval = sum(intervals) / len(intervals)
-            logger.debug(f"计算得出的平均资金费率结算周期: {avg_interval:.1f}小时")
-            return avg_interval
-        
-        return 8.0  # 默认8小时
+        # return 8.0  # 默认8小时
 
     def get_funding_rate_history(self, symbol: str, days: int = 30) -> Optional[List[float]]:
         """
