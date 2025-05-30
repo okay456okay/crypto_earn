@@ -90,34 +90,104 @@ class OKXContractScanner:
         try:
             logger.info("获取OKX所有合约交易对信息...")
             
-            # 加载市场信息
-            markets = self.exchange.load_markets()
-            
-            active_symbols = []
-            for symbol, market in markets.items():
-                if (market['active'] and 
-                    market['type'] == 'swap' and
-                    market['quote'] == 'USDT' and
-                    market['contract']):
+            # 直接使用OKX API获取合约信息，绕过ccxt的解析问题
+            try:
+                # 使用OKX的公共API获取合约信息
+                response = self.exchange.publicGetPublicInstruments({
+                    'instType': 'SWAP'
+                })
+                
+                logger.debug(f"OKX API响应: {response}")
+                
+                if not response or 'data' not in response:
+                    logger.error("无法获取OKX合约数据")
+                    logger.error(f"响应内容: {response}")
+                    return []
+                
+                logger.info(f"获取到 {len(response['data'])} 个合约信息")
+                
+                active_symbols = []
+                for i, instrument in enumerate(response['data']):
+                    if not instrument:
+                        continue
                     
+                    # 添加调试信息
+                    if i < 5:  # 只打印前5个用于调试
+                        logger.debug(f"合约 {i}: {instrument}")
+                    
+                    # 获取基础信息
+                    inst_id = instrument.get('instId', '')
+                    # OKX的数据结构中，baseCcy可能为空，需要从instId中解析
+                    settle_ccy = instrument.get('settleCcy', '')
+                    state = instrument.get('state', '')
+                    ct_type = instrument.get('ctType', '')
+                    
+                    # 只处理USDT永续合约且状态为live的
+                    if (settle_ccy == 'USDT' and 
+                        state == 'live' and 
+                        ct_type == 'linear' and
+                        inst_id and 
+                        '-USDT-SWAP' in inst_id):
+                        
+                        # 从instId中提取基础资产名称
+                        base_ccy = inst_id.replace('-USDT-SWAP', '')
+                        
+                        # 构造符合ccxt格式的symbol
+                        symbol = f"{base_ccy}/USDT:USDT"
+                        
+                        symbol_data = {
+                            'symbol': symbol,
+                            'baseAsset': base_ccy,
+                            'quoteAsset': 'USDT',
+                            'status': 'TRADING',
+                            'contractType': 'PERPETUAL',
+                            'pricePrecision': 8,  # 默认精度
+                            'quantityPrecision': 8,  # 默认精度
+                            'maxLeverage': int(instrument.get('lever', 100)),  # 使用API返回的杠杆信息
+                            'exchange': self.exchange_name,
+                            'instId': inst_id  # 保存原始的instId用于后续API调用
+                        }
+                        active_symbols.append(symbol_data)
+                
+                logger.info(f"找到 {len(active_symbols)} 个活跃的USDT永续合约交易对")
+                return active_symbols
+                
+            except Exception as e:
+                logger.error(f"直接API调用失败: {str(e)}")
+                # 如果直接API调用失败，尝试使用预定义的主要交易对
+                logger.info("使用预定义的主要交易对列表...")
+                
+                major_symbols = [
+                    'BTC/USDT:USDT', 'ETH/USDT:USDT', 'BNB/USDT:USDT', 'ADA/USDT:USDT',
+                    'XRP/USDT:USDT', 'SOL/USDT:USDT', 'DOT/USDT:USDT', 'DOGE/USDT:USDT',
+                    'AVAX/USDT:USDT', 'SHIB/USDT:USDT', 'MATIC/USDT:USDT', 'LTC/USDT:USDT',
+                    'UNI/USDT:USDT', 'LINK/USDT:USDT', 'ATOM/USDT:USDT', 'ETC/USDT:USDT',
+                    'XLM/USDT:USDT', 'BCH/USDT:USDT', 'ALGO/USDT:USDT', 'VET/USDT:USDT'
+                ]
+                
+                active_symbols = []
+                for symbol in major_symbols:
+                    base_asset = symbol.split('/')[0]
                     symbol_data = {
                         'symbol': symbol,
-                        'baseAsset': market['base'],
-                        'quoteAsset': market['quote'],
-                        'status': 'TRADING' if market['active'] else 'INACTIVE',
+                        'baseAsset': base_asset,
+                        'quoteAsset': 'USDT',
+                        'status': 'TRADING',
                         'contractType': 'PERPETUAL',
-                        'pricePrecision': market.get('precision', {}).get('price', 8),
-                        'quantityPrecision': market.get('precision', {}).get('amount', 8),
-                        'maxLeverage': 1,  # 需要单独获取
+                        'pricePrecision': 8,
+                        'quantityPrecision': 8,
+                        'maxLeverage': 100,
                         'exchange': self.exchange_name
                     }
                     active_symbols.append(symbol_data)
-            
-            logger.info(f"找到 {len(active_symbols)} 个活跃的USDT永续合约交易对")
-            return active_symbols
+                
+                logger.info(f"使用预定义列表，共 {len(active_symbols)} 个交易对")
+                return active_symbols
             
         except Exception as e:
             logger.error(f"获取合约交易对信息失败: {str(e)}")
+            import traceback
+            logger.error(f"详细错误信息: {traceback.format_exc()}")
             return []
 
     def get_symbol_leverage_info(self, symbol: str) -> int:
@@ -163,22 +233,68 @@ class OKXContractScanner:
             # 计算开始时间
             since = int((datetime.now() - timedelta(days=days)).timestamp() * 1000)
             
-            # 获取日K线数据
-            ohlcv = self.exchange.fetch_ohlcv(
-                symbol=symbol,
-                timeframe='1d',
-                since=since,
-                limit=days + 5
-            )
+            # 尝试使用原始的OKX instId格式
+            inst_id = None
+            if symbol.endswith('/USDT:USDT'):
+                base_asset = symbol.split('/')[0]
+                inst_id = f"{base_asset}-USDT-SWAP"
             
-            if not ohlcv or len(ohlcv) < days * 0.8:  # 至少要有80%的数据
-                logger.warning(f"{symbol}: 价格数据不足，只有{len(ohlcv) if ohlcv else 0}天")
+            # 首先尝试使用原始API调用
+            if inst_id:
+                try:
+                    # 使用OKX原生API获取K线数据
+                    response = self.exchange.publicGetMarketCandles({
+                        'instId': inst_id,
+                        'bar': '1D',  # 日K线
+                        'before': str(since),
+                        'limit': str(days + 5)
+                    })
+                    
+                    if response and 'data' in response and response['data']:
+                        # OKX返回格式: [timestamp, open, high, low, close, volume, volCcy, volCcyQuote, confirm]
+                        ohlcv_data = []
+                        for candle in response['data']:
+                            if len(candle) >= 5:
+                                ohlcv_data.append([
+                                    int(candle[0]),  # timestamp
+                                    float(candle[1]),  # open
+                                    float(candle[2]),  # high
+                                    float(candle[3]),  # low
+                                    float(candle[4]),  # close
+                                    float(candle[5]) if len(candle) > 5 else 0  # volume
+                                ])
+                        
+                        if len(ohlcv_data) >= days * 0.8:  # 至少要有80%的数据
+                            close_prices = [float(candle[4]) for candle in ohlcv_data]
+                            logger.debug(f"{symbol}: 通过原生API获取到{len(close_prices)}天的价格数据")
+                            return close_prices
+                        else:
+                            logger.warning(f"{symbol}: 原生API价格数据不足，只有{len(ohlcv_data)}天")
+                            
+                except Exception as api_error:
+                    logger.debug(f"{symbol}: 原生API调用失败: {str(api_error)}")
+            
+            # 如果原生API失败，尝试使用ccxt的fetch_ohlcv
+            try:
+                ohlcv = self.exchange.fetch_ohlcv(
+                    symbol=symbol,
+                    timeframe='1d',
+                    since=since,
+                    limit=days + 5
+                )
+                
+                if not ohlcv or len(ohlcv) < days * 0.8:  # 至少要有80%的数据
+                    logger.warning(f"{symbol}: ccxt价格数据不足，只有{len(ohlcv) if ohlcv else 0}天")
+                    return None
+                
+                # 提取收盘价 (OHLCV格式: [timestamp, open, high, low, close, volume])
+                close_prices = [float(candle[4]) for candle in ohlcv]
+                logger.debug(f"{symbol}: 通过ccxt获取到{len(close_prices)}天的价格数据")
+                return close_prices
+                
+            except Exception as ccxt_error:
+                logger.debug(f"{symbol}: ccxt调用失败: {str(ccxt_error)}")
                 return None
-            
-            # 提取收盘价 (OHLCV格式: [timestamp, open, high, low, close, volume])
-            close_prices = [float(candle[4]) for candle in ohlcv]
-            logger.debug(f"{symbol}: 获取到{len(close_prices)}天的价格数据")
-            return close_prices
             
         except Exception as e:
             logger.error(f"获取{symbol}价格数据失败: {str(e)}")
@@ -209,21 +325,57 @@ class OKXContractScanner:
             # 计算开始时间
             since = int((datetime.now() - timedelta(days=days)).timestamp() * 1000)
             
-            # 获取资金费率历史
-            funding_rates = self.exchange.fetch_funding_rate_history(
-                symbol=symbol,
-                since=since,
-                limit=days * 3 + 10  # 每天3次，多获取一些
-            )
+            # 尝试使用原始的OKX instId格式
+            inst_id = None
+            if symbol.endswith('/USDT:USDT'):
+                base_asset = symbol.split('/')[0]
+                inst_id = f"{base_asset}-USDT-SWAP"
             
-            if not funding_rates:
-                logger.warning(f"{symbol}: 无资金费率数据")
+            # 首先尝试使用原始API调用
+            if inst_id:
+                try:
+                    # 使用OKX原生API获取资金费率历史
+                    response = self.exchange.publicGetPublicFundingRateHistory({
+                        'instId': inst_id,
+                        'before': str(since),
+                        'limit': str(days * 3 + 10)  # 每天3次，多获取一些
+                    })
+                    
+                    if response and 'data' in response and response['data']:
+                        rates = []
+                        for rate_data in response['data']:
+                            if 'fundingRate' in rate_data and rate_data['fundingRate'] is not None:
+                                rates.append(float(rate_data['fundingRate']))
+                        
+                        if rates:
+                            logger.debug(f"{symbol}: 通过原生API获取到{len(rates)}个资金费率数据点")
+                            return rates
+                        else:
+                            logger.warning(f"{symbol}: 原生API无有效资金费率数据")
+                            
+                except Exception as api_error:
+                    logger.debug(f"{symbol}: 原生API资金费率调用失败: {str(api_error)}")
+            
+            # 如果原生API失败，尝试使用ccxt的fetch_funding_rate_history
+            try:
+                funding_rates = self.exchange.fetch_funding_rate_history(
+                    symbol=symbol,
+                    since=since,
+                    limit=days * 3 + 10  # 每天3次，多获取一些
+                )
+                
+                if not funding_rates:
+                    logger.warning(f"{symbol}: ccxt无资金费率数据")
+                    return None
+                
+                # 提取资金费率
+                rates = [float(rate['fundingRate']) for rate in funding_rates if rate['fundingRate'] is not None]
+                logger.debug(f"{symbol}: 通过ccxt获取到{len(rates)}个资金费率数据点")
+                return rates
+                
+            except Exception as ccxt_error:
+                logger.debug(f"{symbol}: ccxt资金费率调用失败: {str(ccxt_error)}")
                 return None
-            
-            # 提取资金费率
-            rates = [float(rate['fundingRate']) for rate in funding_rates if rate['fundingRate'] is not None]
-            logger.debug(f"{symbol}: 获取到{len(rates)}个资金费率数据点")
-            return rates
             
         except Exception as e:
             logger.error(f"获取{symbol}资金费率数据失败: {str(e)}")
