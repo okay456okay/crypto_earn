@@ -41,13 +41,17 @@ logger.setLevel(logging.INFO)
 class GateIOContractScanner:
     """GateIO合约扫描器"""
     
-    def __init__(self, api_key: str = None, api_secret: str = None):
+    def __init__(self, api_key: str = None, api_secret: str = None,
+                 price_volatility_threshold: float = 0.10, min_leverage: int = 20, days_to_analyze: int = 30):
         """
         初始化GateIO客户端
         
         Args:
             api_key: GateIO API Key
             api_secret: GateIO API Secret
+            price_volatility_threshold: 价格波动率阈值
+            min_leverage: 最小杠杆要求
+            days_to_analyze: 分析天数
         """
         self.exchange = ccxt.gateio({
             'apiKey': api_key or gateio_api_key,
@@ -69,12 +73,13 @@ class GateIOContractScanner:
         self.summary_file = os.path.join(self.reports_dir, f'gateio_contract_summary_{timestamp}.txt')
         
         # 扫描参数
-        self.price_volatility_threshold = 0.20  # 20%价格波动阈值
-        self.min_leverage = 20  # 最小杠杆要求
-        self.days_to_analyze = 30  # 分析天数
+        self.price_volatility_threshold = price_volatility_threshold
+        self.min_leverage = min_leverage
+        self.days_to_analyze = days_to_analyze
         self.exchange_name = "GateIO"  # 交易所名称
         
         logger.info(f"GateIO合约扫描器初始化完成")
+        logger.info(f"参数配置: 波动率阈值={self.price_volatility_threshold:.1%}, 最小杠杆={self.min_leverage}x, 分析天数={self.days_to_analyze}天")
         logger.info(f"报告将保存到: {self.report_file}")
         logger.info(f"摘要将保存到: {self.summary_file}")
 

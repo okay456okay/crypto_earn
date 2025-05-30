@@ -5,7 +5,7 @@
 多交易所合约扫描器
 
 该脚本用于同时扫描多个交易所的合约交易对，找到符合以下条件的交易对：
-1. 最近30天内价格波动小于20%
+1. 最近30天内价格波动小于10%
 2. 资金费率一直为正或一直为负（即保持一个方向）
 3. 最大杠杆大于等于20
 
@@ -104,15 +104,35 @@ class MultiExchangeContractScanner:
         """
         try:
             if exchange == 'binance':
-                return BinanceContractScanner()
+                return BinanceContractScanner(
+                    price_volatility_threshold=self.price_volatility_threshold,
+                    min_leverage=self.min_leverage,
+                    days_to_analyze=self.days_to_analyze
+                )
             elif exchange == 'bitget':
-                return BitgetContractScanner()
+                return BitgetContractScanner(
+                    price_volatility_threshold=self.price_volatility_threshold,
+                    min_leverage=self.min_leverage,
+                    days_to_analyze=self.days_to_analyze
+                )
             elif exchange == 'bybit':
-                return BybitContractScanner()
+                return BybitContractScanner(
+                    price_volatility_threshold=self.price_volatility_threshold,
+                    min_leverage=self.min_leverage,
+                    days_to_analyze=self.days_to_analyze
+                )
             elif exchange == 'gateio':
-                return GateIOContractScanner()
+                return GateIOContractScanner(
+                    price_volatility_threshold=self.price_volatility_threshold,
+                    min_leverage=self.min_leverage,
+                    days_to_analyze=self.days_to_analyze
+                )
             elif exchange == 'okx':
-                return OKXContractScanner()
+                return OKXContractScanner(
+                    price_volatility_threshold=self.price_volatility_threshold,
+                    min_leverage=self.min_leverage,
+                    days_to_analyze=self.days_to_analyze
+                )
             else:
                 raise ValueError(f"不支持的交易所: {exchange}")
         except Exception as e:
