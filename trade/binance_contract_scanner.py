@@ -402,6 +402,7 @@ class BinanceContractScanner:
             result = {
                 'symbol': symbol,
                 'baseAsset': symbol_info['baseAsset'],
+                'exchange': self.exchange_name,
                 'maxLeverage': max_leverage,
                 'priceVolatility': volatility,
                 'fundingRateAnalysis': funding_analysis,
