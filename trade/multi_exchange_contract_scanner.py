@@ -323,8 +323,9 @@ class MultiExchangeContractScanner:
             for i, symbol_data in enumerate(all_qualified_symbols, 1):
                 funding_analysis = symbol_data['fundingRateAnalysis']
                 funding_interval = symbol_data.get('fundingIntervalHours', 8.0)
+                exchange_name = symbol_data.get('exchange', 'Unknown')  # 安全获取exchange字段
                 summary_lines.extend([
-                    f"{i:>3}. {symbol_data['symbol']:>15} ({symbol_data['baseAsset']:>8}) - {symbol_data['exchange']}",
+                    f"{i:>3}. {symbol_data['symbol']:>15} ({symbol_data['baseAsset']:>8}) - {exchange_name}",
                     f"     最大杠杆: {symbol_data['maxLeverage']:>3}x | 波动率: {symbol_data['priceVolatility']:>6.2%} | 当前价格: ${symbol_data['currentPrice']:>12.6f}",
                     f"     资金费率方向: {funding_analysis['direction']:>8} | 一致性: {funding_analysis['positive_ratio']:>5.1%} 正 / {funding_analysis['negative_ratio']:>5.1%} 负",
                     f"     平均资金费率: {funding_analysis['avg_rate']:>10.6f} | 年化收益率: {funding_analysis['annualized_rate']:>8.2f}%",
