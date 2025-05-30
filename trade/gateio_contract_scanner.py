@@ -187,15 +187,42 @@ class GateIOContractScanner:
             logger.error(f"获取{symbol}价格数据失败: {str(e)}")
             return None
 
-    def get_funding_rate_interval(self) -> float:
+    def get_funding_rate_interval(self, funding_rates_data: List[Dict]) -> float:
         """
-        获取资金费率结算周期
+        计算资金费率结算周期
         
+        Args:
+            funding_rates_data: 资金费率历史数据
+            
         Returns:
             float: 结算周期（小时）
         """
-        # GateIO的资金费率通常是8小时结算一次
-        return 8.0
+        if len(funding_rates_data) < 2:
+            return 8.0  # 默认8小时
+        
+        intervals = []
+        for i in range(1, min(10, len(funding_rates_data))):  # 取前10个间隔计算平均值
+            # 检查数据格式，兼容不同的时间戳字段名
+            if 'timestamp' in funding_rates_data[i-1]:
+                prev_time = funding_rates_data[i-1]['timestamp']
+                curr_time = funding_rates_data[i]['timestamp']
+            elif 'fundingTime' in funding_rates_data[i-1]:
+                prev_time = funding_rates_data[i-1]['fundingTime']
+                curr_time = funding_rates_data[i]['fundingTime']
+            else:
+                logger.warning("无法识别的时间戳字段格式")
+                return 8.0
+            
+            interval_ms = curr_time - prev_time
+            interval_hours = interval_ms / (1000 * 60 * 60)
+            intervals.append(interval_hours)
+        
+        if intervals:
+            avg_interval = sum(intervals) / len(intervals)
+            logger.debug(f"计算得出的平均资金费率结算周期: {avg_interval:.1f}小时")
+            return avg_interval
+        
+        return 8.0  # 默认8小时
 
     def get_funding_rate_history(self, symbol: str, days: int = 30) -> Optional[List[float]]:
         """
@@ -223,9 +250,12 @@ class GateIOContractScanner:
                 logger.warning(f"{symbol}: 无资金费率数据")
                 return None
             
+            # 计算结算周期
+            self.funding_interval_hours = self.get_funding_rate_interval(funding_rates)
+            
             # 提取资金费率
             rates = [float(rate['fundingRate']) for rate in funding_rates if rate['fundingRate'] is not None]
-            logger.debug(f"{symbol}: 获取到{len(rates)}个资金费率数据点")
+            logger.debug(f"{symbol}: 获取到{len(rates)}个资金费率数据点，结算周期{self.funding_interval_hours:.1f}小时")
             return rates
             
         except Exception as e:
@@ -266,7 +296,7 @@ class GateIOContractScanner:
             float: 年化收益率（百分比）
         """
         # 公式: 平均资金费率 * 24/资金费结算周期 * 365 * 合约杠杆率 * 100
-        funding_interval = self.get_funding_rate_interval()
+        funding_interval = getattr(self, 'funding_interval_hours', 8.0)
         annualized_rate = avg_rate * (24 / funding_interval) * 365 * leverage * 100
         return annualized_rate
 
@@ -390,7 +420,7 @@ class GateIOContractScanner:
                 },
                 'analysisDate': datetime.now().isoformat(),
                 'daysAnalyzed': self.days_to_analyze,
-                'fundingIntervalHours': self.get_funding_rate_interval()
+                'fundingIntervalHours': getattr(self, 'funding_interval_hours', 8.0)
             }
             
             logger.info(f"{symbol}: 符合条件! 杠杆={max_leverage}, 波动率={volatility:.2%}, "
