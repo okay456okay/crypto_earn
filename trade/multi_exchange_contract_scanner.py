@@ -385,7 +385,7 @@ class MultiExchangeContractScanner:
             table.add_column("结算周期", justify="center", style="yellow", width=8)
             table.add_column("平均费率", justify="right", style="white", width=10)
             table.add_column("年化收益", justify="right", style="bold green", width=10)
-            table.add_column("一致性", justify="center", style="cyan", width=12)
+            table.add_column("一致性", justify="center", style="cyan", width=16)
             
             # 添加数据行
             for i, symbol_data in enumerate(all_qualified_symbols, 1):
