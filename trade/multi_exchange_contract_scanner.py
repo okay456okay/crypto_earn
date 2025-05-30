@@ -401,10 +401,7 @@ class MultiExchangeContractScanner:
                 rate_text = f"[{rate_color}]{annualized_rate:.2f}%[/{rate_color}]"
                 
                 # 一致性显示
-                if funding_analysis['direction'] == "正向":
-                    consistency = f"{funding_analysis['positive_ratio']:.1f}%"
-                else:
-                    consistency = f"{funding_analysis['negative_ratio']:.1f}%"
+                consistency = f"{funding_analysis['positive_ratio']:.1%} 正 / {funding_analysis['negative_ratio']:.1%} 负"
                 
                 table.add_row(
                     str(i),
