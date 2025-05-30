@@ -80,7 +80,7 @@ class MultiExchangeContractScanner:
         self.summary_file = os.path.join(self.reports_dir, f'multi_exchange_contract_summary_{timestamp}.txt')
         
         # 扫描参数
-        self.price_volatility_threshold = 0.20  # 20%价格波动阈值
+        self.price_volatility_threshold = 0.10  # 20%价格波动阈值
         self.min_leverage = 20  # 最小杠杆要求
         self.days_to_analyze = 30  # 分析天数
         
