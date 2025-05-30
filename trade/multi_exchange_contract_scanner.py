@@ -377,6 +377,8 @@ class MultiExchangeContractScanner:
             table.add_column("交易对", justify="center", style="bold yellow", width=15)
             table.add_column("基础资产", justify="center", style="green", width=10)
             table.add_column("当前价格", justify="right", style="white", width=12)
+            table.add_column("最高价", justify="right", style="bright_red", width=12)
+            table.add_column("最低价", justify="right", style="bright_green", width=12)
             table.add_column("最大杠杆", justify="center", style="magenta", width=8)
             table.add_column("价格波动", justify="center", style="blue", width=8)
             table.add_column("费率方向", justify="center", style="bold", width=8)
@@ -409,6 +411,8 @@ class MultiExchangeContractScanner:
                     symbol_data['symbol'],
                     symbol_data['baseAsset'],
                     f"${symbol_data['currentPrice']:.6f}",
+                    f"${symbol_data['priceRange']['max']:.6f}",
+                    f"${symbol_data['priceRange']['min']:.6f}",
                     f"{symbol_data['maxLeverage']}x",
                     f"{symbol_data['priceVolatility']:.2%}",
                     direction_text,
