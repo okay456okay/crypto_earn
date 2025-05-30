@@ -180,6 +180,34 @@ class BinanceContractScanner:
             logger.error(f"获取{symbol}价格数据失败: {str(e)}")
             return None
 
+    def get_funding_rate_interval(self, funding_rates_data: List[Dict]) -> float:
+        """
+        计算资金费率结算周期
+        
+        Args:
+            funding_rates_data: 资金费率历史数据
+            
+        Returns:
+            float: 结算周期（小时）
+        """
+        if len(funding_rates_data) < 2:
+            return 8.0  # 默认8小时
+        
+        intervals = []
+        for i in range(1, min(10, len(funding_rates_data))):  # 取前10个间隔计算平均值
+            prev_time = funding_rates_data[i-1]['fundingTime']
+            curr_time = funding_rates_data[i]['fundingTime']
+            interval_ms = curr_time - prev_time
+            interval_hours = interval_ms / (1000 * 60 * 60)
+            intervals.append(interval_hours)
+        
+        if intervals:
+            avg_interval = sum(intervals) / len(intervals)
+            logger.debug(f"计算得出的平均资金费率结算周期: {avg_interval:.1f}小时")
+            return avg_interval
+        
+        return 8.0  # 默认8小时
+
     def get_funding_rate_history(self, symbol: str, days: int = 30) -> Optional[List[float]]:
         """
         获取交易对的资金费率历史数据
@@ -197,20 +225,23 @@ class BinanceContractScanner:
             start_time = end_time - timedelta(days=days)
             
             # 获取资金费率历史
-            funding_rates = self.client.futures_funding_rate(
+            funding_rates_data = self.client.futures_funding_rate(
                 symbol=symbol,
                 startTime=int(start_time.timestamp() * 1000),
                 endTime=int(end_time.timestamp() * 1000),
                 limit=days * 3 + 10  # 每天3次，多获取一些
             )
             
-            if not funding_rates:
+            if not funding_rates_data:
                 logger.warning(f"{symbol}: 无资金费率数据")
                 return None
             
+            # 计算结算周期
+            self.funding_interval_hours = self.get_funding_rate_interval(funding_rates_data)
+            
             # 提取资金费率
-            rates = [float(rate['fundingRate']) for rate in funding_rates]
-            logger.debug(f"{symbol}: 获取到{len(rates)}个资金费率数据点")
+            rates = [float(rate['fundingRate']) for rate in funding_rates_data]
+            logger.debug(f"{symbol}: 获取到{len(rates)}个资金费率数据点，结算周期{self.funding_interval_hours:.1f}小时")
             return rates
             
         except Exception as e:
@@ -239,6 +270,22 @@ class BinanceContractScanner:
         volatility = (max_price - min_price) / min_price
         return volatility
 
+    def calculate_annualized_funding_rate(self, avg_rate: float, leverage: int) -> float:
+        """
+        计算年化资金费率收益
+        
+        Args:
+            avg_rate: 平均资金费率
+            leverage: 合约杠杆率
+            
+        Returns:
+            float: 年化收益率（百分比）
+        """
+        # 公式: 平均资金费率 * 24/资金费结算周期 * 365 * 合约杠杆率 * 100
+        funding_interval = getattr(self, 'funding_interval_hours', 8.0)
+        annualized_rate = avg_rate * (24 / funding_interval) * 365 * leverage * 100
+        return annualized_rate
+
     def analyze_funding_rate_direction(self, funding_rates: List[float]) -> Dict[str, Any]:
         """
         分析资金费率的方向性
@@ -256,7 +303,8 @@ class BinanceContractScanner:
                 'positive_ratio': 0,
                 'negative_ratio': 0,
                 'avg_rate': 0,
-                'total_count': 0
+                'total_count': 0,
+                'annualized_rate': 0
             }
         
         positive_count = sum(1 for rate in funding_rates if rate > 0)
@@ -290,7 +338,8 @@ class BinanceContractScanner:
             'total_count': total_count,
             'positive_count': positive_count,
             'negative_count': negative_count,
-            'zero_count': zero_count
+            'zero_count': zero_count,
+            'annualized_rate': 0  # 将在analyze_symbol中计算
         }
 
     def analyze_symbol(self, symbol_info: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -335,6 +384,13 @@ class BinanceContractScanner:
                 logger.debug(f"{symbol}: 资金费率方向不一致")
                 return None
             
+            # 6. 计算年化资金费率收益
+            annualized_rate = self.calculate_annualized_funding_rate(
+                funding_analysis['avg_rate'], 
+                max_leverage
+            )
+            funding_analysis['annualized_rate'] = annualized_rate
+            
             # 符合所有条件，返回分析结果
             result = {
                 'symbol': symbol,
@@ -348,11 +404,12 @@ class BinanceContractScanner:
                     'max': max(prices) if prices else 0
                 },
                 'analysisDate': datetime.now().isoformat(),
-                'daysAnalyzed': self.days_to_analyze
+                'daysAnalyzed': self.days_to_analyze,
+                'fundingIntervalHours': getattr(self, 'funding_interval_hours', 8.0)
             }
             
             logger.info(f"{symbol}: 符合条件! 杠杆={max_leverage}, 波动率={volatility:.2%}, "
-                       f"资金费率方向={funding_analysis['direction']}")
+                       f"资金费率方向={funding_analysis['direction']}, 年化收益={annualized_rate:.2f}%")
             return result
             
         except Exception as e:
@@ -439,6 +496,7 @@ class BinanceContractScanner:
             
             for i, symbol_data in enumerate(qualified_symbols, 1):
                 funding_analysis = symbol_data['fundingRateAnalysis']
+                funding_interval = symbol_data.get('fundingIntervalHours', 8.0)
                 summary_lines.extend([
                     f"{i}. {symbol_data['symbol']} ({symbol_data['baseAsset']})",
                     f"   最大杠杆: {symbol_data['maxLeverage']}x",
@@ -447,7 +505,9 @@ class BinanceContractScanner:
                     f"   价格区间: ${symbol_data['priceRange']['min']:.6f} - ${symbol_data['priceRange']['max']:.6f}",
                     f"   资金费率方向: {funding_analysis['direction']}",
                     f"   资金费率一致性: {funding_analysis['positive_ratio']:.1%} 正 / {funding_analysis['negative_ratio']:.1%} 负",
-                    f"   平均资金费率: {funding_analysis['avg_rate']:.6f} ({funding_analysis['avg_rate']*365*3:.2f}% 年化)",
+                    f"   平均资金费率: {funding_analysis['avg_rate']:.6f}",
+                    f"   资金费率结算周期: {funding_interval:.1f}小时",
+                    f"   年化收益率: {funding_analysis['annualized_rate']:.2f}%",
                     ""
                 ])
         else:

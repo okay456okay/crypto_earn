@@ -91,25 +91,45 @@ class BinanceContractScannerTest:
             logger.error(f"获取{symbol}价格数据失败: {str(e)}")
             return None
 
+    def get_funding_rate_interval(self, funding_rates_data: List[Dict]) -> float:
+        """计算资金费率结算周期"""
+        if len(funding_rates_data) < 2:
+            return 8.0  # 默认8小时
+        
+        intervals = []
+        for i in range(1, min(10, len(funding_rates_data))):
+            prev_time = funding_rates_data[i-1]['fundingTime']
+            curr_time = funding_rates_data[i]['fundingTime']
+            interval_ms = curr_time - prev_time
+            interval_hours = interval_ms / (1000 * 60 * 60)
+            intervals.append(interval_hours)
+        
+        if intervals:
+            return sum(intervals) / len(intervals)
+        return 8.0
+
     def get_funding_rate_history(self, symbol: str, days: int = 30) -> Optional[List[float]]:
         """获取交易对的资金费率历史数据"""
         try:
             end_time = datetime.now()
             start_time = end_time - timedelta(days=days)
             
-            funding_rates = self.client.futures_funding_rate(
+            funding_rates_data = self.client.futures_funding_rate(
                 symbol=symbol,
                 startTime=int(start_time.timestamp() * 1000),
                 endTime=int(end_time.timestamp() * 1000),
                 limit=days * 3 + 10
             )
             
-            if not funding_rates:
+            if not funding_rates_data:
                 logger.warning(f"{symbol}: 无资金费率数据")
                 return None
             
-            rates = [float(rate['fundingRate']) for rate in funding_rates]
-            logger.info(f"{symbol}: 获取到{len(rates)}个资金费率数据点")
+            # 计算结算周期
+            self.funding_interval_hours = self.get_funding_rate_interval(funding_rates_data)
+            
+            rates = [float(rate['fundingRate']) for rate in funding_rates_data]
+            logger.info(f"{symbol}: 获取到{len(rates)}个资金费率数据点，结算周期{self.funding_interval_hours:.1f}小时")
             return rates
             
         except Exception as e:
@@ -130,6 +150,12 @@ class BinanceContractScannerTest:
         volatility = (max_price - min_price) / min_price
         return volatility
 
+    def calculate_annualized_funding_rate(self, avg_rate: float, leverage: int) -> float:
+        """计算年化资金费率收益"""
+        funding_interval = getattr(self, 'funding_interval_hours', 8.0)
+        annualized_rate = avg_rate * (24 / funding_interval) * 365 * leverage * 100
+        return annualized_rate
+
     def analyze_funding_rate_direction(self, funding_rates: List[float]) -> Dict[str, Any]:
         """分析资金费率的方向性"""
         if not funding_rates:
@@ -139,7 +165,8 @@ class BinanceContractScannerTest:
                 'positive_ratio': 0,
                 'negative_ratio': 0,
                 'avg_rate': 0,
-                'total_count': 0
+                'total_count': 0,
+                'annualized_rate': 0
             }
         
         positive_count = sum(1 for rate in funding_rates if rate > 0)
@@ -173,7 +200,8 @@ class BinanceContractScannerTest:
             'total_count': total_count,
             'positive_count': positive_count,
             'negative_count': negative_count,
-            'zero_count': zero_count
+            'zero_count': zero_count,
+            'annualized_rate': 0  # 将在test_symbol中计算
         }
 
     def test_symbol(self, symbol: str):
@@ -206,11 +234,22 @@ class BinanceContractScannerTest:
             
             # 5. 分析资金费率方向性
             funding_analysis = self.analyze_funding_rate_direction(funding_rates)
+            
+            # 6. 计算年化收益率
+            annualized_rate = self.calculate_annualized_funding_rate(
+                funding_analysis['avg_rate'], 
+                max_leverage
+            )
+            funding_analysis['annualized_rate'] = annualized_rate
+            
             logger.info(f"资金费率方向: {funding_analysis['direction']}")
             logger.info(f"资金费率一致性: {funding_analysis['positive_ratio']:.1%} 正 / {funding_analysis['negative_ratio']:.1%} 负")
-            logger.info(f"平均资金费率: {funding_analysis['avg_rate']:.6f} ({funding_analysis['avg_rate']*365*3:.2f}% 年化)")
+            logger.info(f"平均资金费率: {funding_analysis['avg_rate']:.6f}")
+            funding_interval = getattr(self, 'funding_interval_hours', 8.0)
+            logger.info(f"资金费率结算周期: {funding_interval:.1f}小时")
+            logger.info(f"年化收益率: {annualized_rate:.2f}%")
             
-            # 6. 判断是否符合条件
+            # 7. 判断是否符合条件
             conditions = {
                 'leverage_ok': max_leverage >= self.min_leverage,
                 'volatility_ok': volatility <= self.price_volatility_threshold,
@@ -224,6 +263,8 @@ class BinanceContractScannerTest:
             
             all_conditions_met = all(conditions.values())
             logger.info(f"\n最终结果: {'符合条件 ✓' if all_conditions_met else '不符合条件 ✗'}")
+            if all_conditions_met:
+                logger.info(f"预期年化收益: {annualized_rate:.2f}%")
             
         except Exception as e:
             logger.error(f"测试{symbol}时发生错误: {str(e)}")
