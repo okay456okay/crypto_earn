@@ -24,7 +24,7 @@ from rich import box
 
 # 添加项目根目录到系统路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import bitget_api_key, bitget_api_secret, bitget_api_passphrase, proxies
+from config import bitget_api_key, bitget_api_secret, bitget_api_passphrase, proxies, fundingrate_auto_skip
 from tools.proxy import get_proxy_ip
 from high_yield.exchange import ExchangeAPI
 
@@ -123,7 +123,7 @@ class BitgetPositionFetcher:
                     next_funding_datetime = datetime.fromtimestamp(next_funding_time/1000).strftime('%Y-%m-%d %H:%M') if next_funding_time else 'N/A'
                     
                     # 检查资金费率是否为负
-                    if funding_rate_value < -0.1:
+                    if funding_rate_value < -0.1 and fundingrate_auto_skip:
                         token = symbol.replace('/USDT:USDT', '')
                         self.run_funding_script(token)
                 except Exception as e:

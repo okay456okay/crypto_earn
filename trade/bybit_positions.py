@@ -25,7 +25,7 @@ from rich import box
 # 添加项目根目录到系统路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tools.logger import logger
-from config import bybit_api_key, bybit_api_secret, proxies
+from config import bybit_api_key, bybit_api_secret, proxies, fundingrate_auto_skip
 from tools.proxy import get_proxy_ip
 from high_yield.exchange import ExchangeAPI
 
@@ -120,7 +120,7 @@ class BybitPositionFetcher:
                 next_funding_time_str = datetime.fromtimestamp(next_funding_time/1000).strftime('%Y-%m-%d %H:%M:%S') if next_funding_time else '无'
 
                 # 检查资金费率是否为负
-                if funding_rate < -0.1:
+                if funding_rate < -0.1 and fundingrate_auto_skip:
                     token = symbol.replace('/USDT:USDT', '')
                     self.run_funding_script(token)
 
