@@ -88,7 +88,8 @@ class BinanceOpportunityFinder:
         self.oi_price_market_ratio_threshold = BINANCE_OPPORTUNITY_FINDER['OI_PRICE_MARKET_RATIO_THRESHOLD']
         self.volume_market_ratio_threshold = BINANCE_OPPORTUNITY_FINDER['VOLUME_MARKET_RATIO_THRESHOLD']
         self.historical_change_threshold = BINANCE_OPPORTUNITY_FINDER['HISTORICAL_CHANGE_THRESHOLD']
-        self.final_oi_change_threshold = BINANCE_OPPORTUNITY_FINDER['FINAL_OI_CHANGE_THRESHOLD']
+        self.final_change_muliplier = BINANCE_OPPORTUNITY_FINDER['FINAL_CHANGE_MULTIPLIER']
+
 
     def ensure_directories(self):
         """确保必要的目录存在"""
@@ -104,12 +105,15 @@ class BinanceOpportunityFinder:
         """
         return ['ETHUSDT']
             
-    def get_historical_data(self, symbol: str) -> Optional[Dict[str, Any]]:
+    def get_historical_data(self, symbol: str, start_time: str = '', end_time: str = '', create_graph: bool = False) -> Optional[Dict[str, Any]]:
         """
         获取交易对的历史数据
         
         Args:
             symbol: 交易对符号
+            start_time: 开始时间，可以是时间戳或日期字符串(如'2025-05-20 11:22:11')，默认为空(自动设置为end_time-24小时)
+            end_time: 结束时间，可以是时间戳或日期字符串(如'2025-05-20 11:22:11')，默认为空(当前时间)
+            create_graph: 是否创建图表，默认为False
             
         Returns:
             Dict: 包含价格、持仓量、交易量等数据的字典
@@ -117,12 +121,60 @@ class BinanceOpportunityFinder:
         try:
             logger.info(f"开始获取{symbol}的历史数据...")
             
-            # 获取K线数据 - 改为5分钟间隔，获取更多数据点（2小时的数据）
+            # 处理结束时间
+            if end_time == '':
+                end_timestamp = int(time.time() * 1000)  # 当前时间戳(毫秒)
+            else:
+                try:
+                    # 尝试将字符串转换为时间戳
+                    if isinstance(end_time, str) and len(end_time) > 10:
+                        # 日期字符串格式
+                        end_dt = datetime.strptime(end_time, '%Y-%m-%d %H:%M:%S')
+                        end_timestamp = int(end_dt.timestamp() * 1000)
+                    else:
+                        # 假设是时间戳
+                        end_timestamp = int(end_time)
+                except ValueError:
+                    logger.error(f"无效的结束时间格式: {end_time}")
+                    return None
+            
+            # 处理开始时间
+            if start_time == '':
+                start_timestamp = end_timestamp - 24 * 60 * 60 * 1000  # 24小时前
+            else:
+                try:
+                    if isinstance(start_time, str) and len(start_time) > 10:
+                        # 日期字符串格式
+                        start_dt = datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S')
+                        start_timestamp = int(start_dt.timestamp() * 1000)
+                    else:
+                        # 假设是时间戳
+                        start_timestamp = int(start_time)
+                except ValueError:
+                    logger.error(f"无效的开始时间格式: {start_time}")
+                    return None
+            
+            # 确保开始时间小于结束时间
+            if start_timestamp >= end_timestamp:
+                logger.error(f"开始时间必须小于结束时间: start={start_timestamp}, end={end_timestamp}")
+                return None
+            
+            # 计算时间间隔（5分钟 = 5*60*1000毫秒）
+            interval_ms = 5 * 60 * 1000
+            # 计算limit（数据点数量）
+            limit = min(int((end_timestamp - start_timestamp) / interval_ms) + 1, 1500)  # Binance API限制最大1500
+            
+            logger.debug(f"时间范围: {datetime.fromtimestamp(start_timestamp/1000)} 到 {datetime.fromtimestamp(end_timestamp/1000)}")
+            logger.debug(f"计算的limit: {limit}")
+            
+            # 获取K线数据 - 使用开始和结束时间
             logger.debug(f"请求{symbol}的K线数据...")
             klines = self.client.futures_klines(
                 symbol=symbol,
                 interval=Client.KLINE_INTERVAL_5MINUTE,
-                limit=int(1*24*60/5)
+                startTime=start_timestamp,
+                endTime=end_timestamp,
+                limit=limit
             )
             # logger.debug(f"{symbol} K线数据: {json.dumps(klines, indent=2)}")
             
@@ -133,15 +185,20 @@ class BinanceOpportunityFinder:
             
             # 获取合约持仓量数据
             logger.debug(f"请求{symbol}的合约持仓量数据...")
-            open_interest = self.client.futures_open_interest(symbol=symbol)
-            logger.debug(f"{symbol} 合约持仓量数据: {json.dumps(open_interest, indent=2)}")
+            open_interest = self.client.futures_open_interest(
+                symbol=symbol,
+                timestamp=end_timestamp
+            )
+            # logger.debug(f"{symbol} 合约持仓量数据: {json.dumps(open_interest, indent=2)}")
             
-            # 获取合约持仓量历史 - 改为5分钟间隔
+            # 获取合约持仓量历史 - 使用开始和结束时间
             logger.debug(f"请求{symbol}的合约持仓量历史数据...")
             open_interest_hist = self.client.futures_open_interest_hist(
                 symbol=symbol,
                 period='5m',
-                limit=int(1*24*60/5)
+                startTime=start_timestamp,
+                endTime=end_timestamp,
+                limit=limit
             )
             
             # 获取币种信息
@@ -163,21 +220,116 @@ class BinanceOpportunityFinder:
             if not asset_info:
                 logger.warning(f"无法获取{symbol}的币种信息")
                 return None
-                
+            
             data = {
                 'klines': klines,
                 'ticker': ticker,
                 'open_interest': open_interest,
                 'open_interest_hist': open_interest_hist,
-                'asset_info': asset_info
+                'asset_info': asset_info,
+                'start_timestamp': start_timestamp,
+                'end_timestamp': end_timestamp
             }
+            
+            # 如果需要创建图表
+            if create_graph:
+                chart_path = self.create_detailed_charts(symbol, klines, open_interest_hist)
+                data['chart_path'] = chart_path
+                
             logger.info(f"成功获取{symbol}的所有历史数据")
             return data
             
         except (BinanceAPIException, Exception) as e:
             logger.error(f"获取{symbol}历史数据失败: {str(e)}")
             return None
+
+    def create_detailed_charts(self, symbol: str, klines: List, open_interest_hist: List) -> str:
+        """
+        创建详细的价格、持仓量和交易量图表
+        
+        Args:
+            symbol: 交易对符号
+            klines: K线数据
+            open_interest_hist: 持仓量历史数据
             
+        Returns:
+            str: 图片文件路径
+        """
+        try:
+            logger.info(f"开始绘制{symbol}的详细图表...")
+            
+            # 确保图片目录存在
+            charts_dir = os.path.join(project_root, 'trade/charts')
+            os.makedirs(charts_dir, exist_ok=True)
+            
+            # 生成文件名
+            timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+            filename = f"{symbol.lower()}_detailed_{timestamp}.png"
+            filepath = os.path.join(charts_dir, filename)
+            
+            # 提取价格数据
+            timestamps = []
+            prices = []
+            volumes = []
+            for kline in klines:
+                timestamp = datetime.fromtimestamp(int(kline[0]) / 1000)
+                timestamps.append(timestamp)
+                prices.append(float(kline[4]))  # 收盘价
+                volumes.append(float(kline[5]))  # 成交量
+            
+            # 提取持仓量数据
+            oi_timestamps = []
+            oi_values = []
+            for oi_data in open_interest_hist:
+                timestamp = datetime.fromtimestamp(int(oi_data['timestamp']) / 1000)
+                oi_timestamps.append(timestamp)
+                oi_values.append(float(oi_data['sumOpenInterest']))
+            
+            # 创建三个子图
+            fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(14, 12), sharex=True)
+            
+            # 绘制价格趋势
+            ax1.plot(timestamps, prices, 'b-', linewidth=2, label='Price')
+            ax1.set_ylabel('Price (USDT)', color='b', fontsize=12)
+            ax1.tick_params(axis='y', labelcolor='b')
+            ax1.grid(True, alpha=0.3)
+            ax1.set_title(f'{symbol} - Price, Volume and Open Interest Analysis', fontsize=16, fontweight='bold')
+            ax1.legend(loc='upper left')
+            
+            # 绘制交易量
+            ax2.bar(timestamps, volumes, width=0.003, color='green', alpha=0.7, label='Volume')
+            ax2.set_ylabel('Volume', color='green', fontsize=12)
+            ax2.tick_params(axis='y', labelcolor='green')
+            ax2.grid(True, alpha=0.3)
+            ax2.legend(loc='upper left')
+            
+            # 绘制持仓量趋势
+            ax3.plot(oi_timestamps, oi_values, 'r-', linewidth=2, label='Open Interest')
+            ax3.set_ylabel('Open Interest', color='r', fontsize=12)
+            ax3.tick_params(axis='y', labelcolor='r')
+            ax3.grid(True, alpha=0.3)
+            ax3.set_xlabel('Time', fontsize=12)
+            ax3.legend(loc='upper left')
+            
+            # 格式化x轴时间显示
+            ax3.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
+            ax3.xaxis.set_major_locator(mdates.HourLocator(interval=4))
+            plt.setp(ax3.xaxis.get_majorticklabels(), rotation=45)
+            
+            # 调整布局
+            plt.tight_layout()
+            
+            # 保存图片
+            plt.savefig(filepath, dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            logger.info(f"成功保存{symbol}详细图表到: {filepath}")
+            return filepath
+            
+        except Exception as e:
+            logger.error(f"绘制{symbol}详细图表时发生错误: {str(e)}")
+            return ""
+
     def get_market_cap(self, symbol: str) -> Optional[Dict[str, float]]:
         """
         获取币种市值和成交量/市值比
@@ -288,7 +440,7 @@ class BinanceOpportunityFinder:
     def format_opportunity_report(self, symbol: str, conditions: Dict[str, bool], 
                                 oi_price_market_ratio: float, volume_market_ratio: float,
                                 historical_price_changes: List[float], historical_oi_changes: List[float],
-                                final_oi_change: float, chart_path: str = "") -> str:
+                                final_oi_change: float, final_oi_change_threshold: float, chart_path: str = "") -> str:
         """
         格式化交易机会报告
         
@@ -300,6 +452,7 @@ class BinanceOpportunityFinder:
             historical_price_changes: 历史价格变化率列表
             historical_oi_changes: 历史持仓量变化率列表
             final_oi_change: 最终持仓量变化率
+            final_oi_change_threshold: 最终持仓量变化阈值
             chart_path: 图表文件路径
             
         Returns:
@@ -313,7 +466,7 @@ class BinanceOpportunityFinder:
         report += f"交易活跃度:合约持仓金额/市值 {oi_price_market_ratio:.2f} > {self.oi_price_market_ratio_threshold}: {'✓' if conditions[f'交易活跃度:合约持仓金额/市值 > {self.oi_price_market_ratio_threshold}'] else '✗'}\n"
         report += f"交易活跃度:近24小时成交量/市值 {volume_market_ratio:.2f} > {self.volume_market_ratio_threshold}: {'✓' if conditions[f'交易活跃度:近24小时成交量/市值 > {self.volume_market_ratio_threshold}'] else '✗'}\n"
         report += f"拉盘信号:历史持仓量变化率 {max_oi_change:.1f}% < {self.historical_change_threshold*100}%: {'✓' if conditions[f'拉盘信号:历史持仓量变化率 < {self.historical_change_threshold*100}%'] else '✗'}\n"
-        report += f"拉盘信号:最终持仓量变化率 {final_oi_change*100:.1f}% > {self.final_oi_change_threshold*100}%: {'✓' if conditions[f'拉盘信号:最终持仓量变化率 > {self.final_oi_change_threshold*100}%'] else '✗'}\n"
+        report += f"拉盘信号:最终持仓量变化率 {final_oi_change*100:.1f}% > {final_oi_change_threshold*100:.1f}%: {'✓' if conditions[f'拉盘信号:最终持仓量变化率 > {final_oi_change_threshold*100:.1f}%'] else '✗'}\n"
         if chart_path:
             report += f"趋势图路径: {chart_path}\n"
         report += "\n"
@@ -344,6 +497,7 @@ class BinanceOpportunityFinder:
                 historical_price_changes,
                 historical_oi_changes,
                 opportunity['oi_change'],
+                opportunity['final_oi_change_threshold'],
                 chart_path
             )
             
@@ -571,6 +725,10 @@ class BinanceOpportunityFinder:
             # 计算最终持仓量变化率（最后一个时点）
             final_oi_change = (float(open_interest_hist[-1]['sumOpenInterest']) - float(open_interest_hist[-2]['sumOpenInterest'])) / float(open_interest_hist[-2]['sumOpenInterest'])
             
+            # 动态计算final_oi_change_threshold：历史持仓量变化率最大绝对值的2倍
+            max_historical_oi_change = max(abs(change) for change in historical_oi_changes[:-1]) if len(historical_oi_changes) > 1 else 0.01
+            final_oi_change_threshold = max_historical_oi_change * self.final_change_muliplier
+            
             # 检查历史变化率是否都在阈值以内
             historical_changes_ok = all(abs(change) <= self.historical_change_threshold for change in historical_oi_changes[:-1])
             
@@ -587,13 +745,14 @@ class BinanceOpportunityFinder:
             logger.debug(f"  最终持仓量变化率: {final_oi_change:.2%}")
             logger.debug(f"  合约持仓金额/市值: {oi_price_market_ratio:.4f}")
             logger.debug(f"  近24小时成交量/市值: {volume_market_ratio:.4f}")
+            logger.debug(f"  动态计算的最终持仓量变化阈值: {final_oi_change_threshold:.2%}")
             
             # 检查条件
             conditions = {
                 f'交易活跃度:合约持仓金额/市值 > {self.oi_price_market_ratio_threshold}': oi_price_market_ratio > self.oi_price_market_ratio_threshold,
                 f'交易活跃度:近24小时成交量/市值 > {self.volume_market_ratio_threshold}': volume_market_ratio > self.volume_market_ratio_threshold,
                 f'拉盘信号:历史持仓量变化率 < {self.historical_change_threshold*100}%': historical_changes_ok,
-                f'拉盘信号:最终持仓量变化率 > {self.final_oi_change_threshold*100}%': final_oi_change > self.final_oi_change_threshold
+                f'拉盘信号:最终持仓量变化率 > {final_oi_change_threshold*100:.1f}%': final_oi_change > final_oi_change_threshold
             }
             
             logger.info(f"{symbol} 条件检查结果:")
@@ -612,7 +771,8 @@ class BinanceOpportunityFinder:
                         'oi_price_market_ratio': oi_price_market_ratio,
                         'volume_market_ratio': volume_market_ratio,
                         'market_cap': market_cap,
-                        'timestamp': datetime.now().isoformat()
+                        'timestamp': datetime.now().isoformat(),
+                        'final_oi_change_threshold': final_oi_change_threshold
                     },
                     conditions,
                     historical_price_changes,
@@ -641,6 +801,32 @@ def main():
             
         logger.info("初始化交易机会发现器...")
         finder = BinanceOpportunityFinder(api_key, api_secret)
+        """
+            'BIDUSDT',
+            start_time='2025-06-02 02:30:00',
+            end_time='2025-06-03 14:30:00',
+            'ZEREBROUSDT',
+            start_time='2025-06-01 01:30:32',
+            end_time='2025-06-02 13:40:32',
+            'LEVERUSDT',
+            start_time='2025-06-01 01:06:36',
+            end_time='2025-06-02 13:06:36',
+            'PUMPUSDT',
+            start_time='2025-05-28 22:09:23',
+            end_time='2025-05-30 10:09:23',
+            'BMTUSDT',
+            start_time='2025-05-28 18:09:01',
+            end_time='2025-05-30 06:09:01',
+        """
+        # data = finder.get_historical_data(
+        #     'BIDUSDT',
+        #     start_time='2025-06-02 02:38:49',
+        #     end_time='2025-06-03 02:30:49',
+        #     create_graph=False
+        # )
+        # result = finder.analyze_opportunity('BIDUSDT', data)
+        # # print(result)
+        # exit()
         logger.info("开始运行交易机会发现器...")
         finder.run()
         
