@@ -180,8 +180,8 @@ class BinanceOpportunityFinder:
             
             # 获取24小时统计数据
             logger.debug(f"请求{symbol}的24小时统计数据...")
-            ticker = self.client.futures_ticker(symbol=symbol)
-            logger.debug(f"{symbol} 24小时统计数据: {json.dumps(ticker, indent=2)}")
+            # ticker = self.client.futures_ticker(symbol=symbol)
+            # logger.debug(f"{symbol} 24小时统计数据: {json.dumps(ticker, indent=2)}")
             
             # 获取合约持仓量数据
             logger.debug(f"请求{symbol}的合约持仓量数据...")
@@ -205,28 +205,28 @@ class BinanceOpportunityFinder:
             logger.debug(f"请求{symbol}的币种信息...")
             base_asset = symbol.replace('USDT', '')
             # 使用futures_exchange_info获取币种信息
-            exchange_info = self.client.futures_exchange_info()
-            asset_info = None
-            for symbol_info in exchange_info['symbols']:
-                if symbol_info['symbol'] == symbol:
-                    asset_info = {
-                        'symbol': symbol,
-                        'baseAsset': base_asset,
-                        'status': symbol_info['status'],
-                        'contractType': symbol_info['contractType']
-                    }
-                    break
-            
-            if not asset_info:
-                logger.warning(f"无法获取{symbol}的币种信息")
-                return None
+            # exchange_info = self.client.futures_exchange_info()
+            # asset_info = None
+            # for symbol_info in exchange_info['symbols']:
+            #     if symbol_info['symbol'] == symbol:
+            #         asset_info = {
+            #             'symbol': symbol,
+            #             'baseAsset': base_asset,
+            #             'status': symbol_info['status'],
+            #             'contractType': symbol_info['contractType']
+            #         }
+            #         break
+            #
+            # if not asset_info:
+            #     logger.warning(f"无法获取{symbol}的币种信息")
+            #     return None
             
             data = {
                 'klines': klines,
-                'ticker': ticker,
+                # 'ticker': ticker,
                 'open_interest': open_interest,
                 'open_interest_hist': open_interest_hist,
-                'asset_info': asset_info,
+                # 'asset_info': asset_info,
                 'start_timestamp': start_timestamp,
                 'end_timestamp': end_timestamp
             }
@@ -694,22 +694,24 @@ class BinanceOpportunityFinder:
             
             # 提取数据
             klines = data['klines']
-            ticker = data['ticker']
+            # ticker = data['ticker']
             open_interest = float(data['open_interest']['openInterest'])
             open_interest_hist = data['open_interest_hist']
-            asset_info = data['asset_info']
+            # asset_info = data['asset_info']
             
             # 获取市值和成交量/市值比
             market_data = self.get_market_cap(symbol)
-            if market_data is None:
-                # 如果无法获取市值数据，使用24小时成交额作为替代指标
-                volume_24h = float(ticker['quoteVolume'])
-                market_cap = volume_24h
-                volume_market_ratio = 1.0  # 使用成交额作为市值时，比值为1
-                logger.debug(f"{symbol} 使用24小时成交额作为市值参考: {market_cap:,.2f} USDT")
-            else:
-                market_cap = market_data['market_cap']
-                volume_market_ratio = market_data['volume_market_ratio']
+            market_cap = market_data['market_cap']
+            volume_market_ratio = market_data['volume_market_ratio']
+            # if market_data is None:
+            #     # 如果无法获取市值数据，使用24小时成交额作为替代指标
+            #     volume_24h = float(ticker['quoteVolume'])
+            #     market_cap = volume_24h
+            #     volume_market_ratio = 1.0  # 使用成交额作为市值时，比值为1
+            #     logger.debug(f"{symbol} 使用24小时成交额作为市值参考: {market_cap:,.2f} USDT")
+            # else:
+            #     market_cap = market_data['market_cap']
+            #     volume_market_ratio = market_data['volume_market_ratio']
             
             # 计算当前价格
             current_price = float(klines[-1][4])  # 收盘价
@@ -825,7 +827,7 @@ def main():
         #     create_graph=False
         # )
         # result = finder.analyze_opportunity('BIDUSDT', data)
-        # # print(result)
+        # # # print(result)
         # exit()
         logger.info("开始运行交易机会发现器...")
         finder.run()
