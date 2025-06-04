@@ -671,7 +671,7 @@ class BinanceOpportunityFinder:
                     self.send_wecom_notification(opportunity, chart_path)
                     
                 # 避免触发频率限制
-                time.sleep(0.1)
+                time.sleep(0.01)
                 
             logger.info("交易机会发现程序运行完成")
                 
