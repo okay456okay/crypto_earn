@@ -678,8 +678,8 @@ class BinanceOpportunityFinder:
                 result = self.analyze_opportunity(symbol, data)
                 if result:
                     opportunity, conditions, historical_price_changes, historical_oi_changes = result
-                    # 只对符合条件的交易对生成趋势图
-                    chart_path = self.plot_trends(symbol, data['klines'], data['open_interest_hist'])
+                    # 对符合条件的交易对生成详细趋势图
+                    chart_path = self.create_detailed_charts(symbol, data['klines'], data['open_interest_hist'])
                     # 保存机会
                     self.save_opportunity(opportunity, conditions, historical_price_changes, historical_oi_changes, chart_path)
                     # 发送通知
