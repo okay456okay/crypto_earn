@@ -183,53 +183,36 @@ class BinanceFundingRateTrader:
             logger.error(f"获取市场信息失败: {e}")
             raise
 
-    async def wait_for_funding_check_time(self, next_funding_time: datetime, manual_time: Optional[str] = None):
+    async def wait_until_funding_time(self, next_funding_time: datetime, seconds_before: int, manual_time: Optional[str] = None):
         """
-        等待到检查资金费率的时间点（结算前15秒）
+        等待到资金费率结算前指定秒数的时间点
         
         Args:
             next_funding_time: 下次资金费率结算时间
+            seconds_before: 提前多少秒（例如：15表示结算前15秒）
             manual_time: 手动指定的时间（用于测试）
         """
         if manual_time:
-            target_time = datetime.fromisoformat(manual_time)
-            logger.info(f"使用手动指定时间: {target_time}")
+            if seconds_before == 5:
+                # 下单时间在测试模式下立即执行
+                logger.info("测试模式: 立即执行下单")
+                return
+            else:
+                # 检查时间使用手动指定时间
+                target_time = datetime.fromisoformat(manual_time)
+                logger.info(f"使用手动指定时间: {target_time}")
         else:
             target_time = next_funding_time
 
         current_time = datetime.now(target_time.tzinfo)
-        # 在结算时间前15秒进行检查
-        wait_seconds = (target_time - current_time - timedelta(seconds=15)).total_seconds()
+        wait_seconds = (target_time - current_time - timedelta(seconds=seconds_before)).total_seconds()
 
         if wait_seconds > 0:
-            logger.info(f"等待 {wait_seconds:.1f} 秒到检查时间: {target_time}")
+            action_desc = "检查条件" if seconds_before == 15 else "下单"
+            logger.info(f"等待 {wait_seconds:.1f} 秒到{action_desc}时间（结算前{seconds_before}秒）: {target_time}")
             await asyncio.sleep(wait_seconds)
         else:
-            logger.info("已到达检查时间")
-
-    async def wait_for_order_time(self, next_funding_time: datetime, manual_time: Optional[str] = None):
-        """
-        等待到下单时间点（结算前2秒）
-        
-        Args:
-            next_funding_time: 下次资金费率结算时间
-            manual_time: 手动指定的时间（用于测试）
-        """
-        if manual_time:
-            # 测试模式下立即执行
-            logger.info("测试模式: 立即执行下单")
-            return
-        
-        target_time = next_funding_time
-        current_time = datetime.now(target_time.tzinfo)
-        # 在结算时间前5秒下单
-        wait_seconds = (target_time - current_time - timedelta(seconds=5)).total_seconds()
-
-        if wait_seconds > 0:
-            logger.info(f"等待 {wait_seconds:.1f} 秒到下单时间（结算前2秒）: {target_time}")
-            await asyncio.sleep(wait_seconds)
-        else:
-            logger.info("已到达下单时间")
+            logger.info(f"已到达{'检查' if seconds_before == 15 else '下单'}时间")
 
     async def check_funding_rate_condition(self, symbol: str) -> Tuple[bool, float]:
         """
@@ -485,7 +468,7 @@ class BinanceFundingRateTrader:
 
             # 3. 等待检查时间（结算前15秒）
             logger.info("3. 等待资金费率检查时间...")
-            await self.wait_for_funding_check_time(funding_info['next_funding_time'], manual_time)
+            await self.wait_until_funding_time(funding_info['next_funding_time'], 15, manual_time)
 
             # 4. 检查资金费率条件
             logger.info("4. 检查资金费率条件...")
@@ -507,7 +490,7 @@ class BinanceFundingRateTrader:
 
             # 7. 等待到下单时间（结算前5秒）
             logger.info("7. 等待到下单时间（结算前5秒）...")
-            await self.wait_for_order_time(funding_info['next_funding_time'], manual_time)
+            await self.wait_until_funding_time(funding_info['next_funding_time'], 5, manual_time)
 
             # 8. 下空单
             logger.info("8. 下空单...")
