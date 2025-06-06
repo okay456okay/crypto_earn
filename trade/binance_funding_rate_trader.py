@@ -57,14 +57,10 @@ logger = setup_logging()
 class BinanceFundingRateTrader:
     """Binance资金费率交易器"""
 
-    def __init__(self, test_mode: bool = False):
+    def __init__(self):
         """
         初始化交易器
-        
-        Args:
-            test_mode: 是否为测试模式（使用模拟环境）
         """
-        self.test_mode = test_mode
         self.exchange = None
         self.symbol = None
         self.position_info = {}
@@ -75,6 +71,10 @@ class BinanceFundingRateTrader:
         self.max_leverage = 20
         self.min_order_amount = 100  # USDT
         self.funding_rate_buffer = 0.005  # 0.5% 缓冲
+        
+        # 止损参数
+        self.stop_loss_threshold = 0.001  # 0.1% 止损阈值
+        self.max_monitor_duration = 600  # 最大监控时间10分钟
 
         self._initialize_exchange()
 
@@ -84,7 +84,6 @@ class BinanceFundingRateTrader:
             config = {
                 'apiKey': binance_api_key,
                 'secret': binance_api_secret,
-                'sandbox': self.test_mode,
                 'enableRateLimit': True,
                 'options': {
                     'defaultType': 'future',  # 使用合约交易
@@ -98,7 +97,7 @@ class BinanceFundingRateTrader:
 
             # 测试连接
             self.exchange.load_markets()
-            logger.info(f"交易所连接成功 {'(测试模式)' if self.test_mode else '(实盘模式)'}")
+            logger.info("交易所连接成功 (实盘模式)")
 
         except Exception as e:
             logger.error(f"交易所连接失败: {e}")
@@ -194,8 +193,8 @@ class BinanceFundingRateTrader:
         """
         if manual_time:
             if seconds_before == 5:
-                # 下单时间在测试模式下立即执行
-                logger.info("测试模式: 立即执行下单")
+                # 下单时间在手动模式下立即执行
+                logger.info("手动时间模式: 立即执行下单")
                 return
             else:
                 # 检查时间使用手动指定时间
@@ -277,13 +276,9 @@ class BinanceFundingRateTrader:
             leverage: 杠杆倍数
         """
         try:
-            if not self.test_mode:
-                result = self.exchange.set_leverage(leverage, symbol)
-                logger.info(f"设置杠杆倍数成功: {leverage}x")
-                return result
-            else:
-                logger.info(f"测试模式: 模拟设置杠杆倍数 {leverage}x")
-                return {'leverage': leverage}
+            result = self.exchange.set_leverage(leverage, symbol)
+            logger.info(f"设置杠杆倍数成功: {leverage}x")
+            return result
 
         except Exception as e:
             logger.error(f"设置杠杆倍数失败: {e}")
@@ -308,37 +303,16 @@ class BinanceFundingRateTrader:
             # 计算数量（基于USDT金额）
             quantity = amount_usdt / current_price
 
-            if not self.test_mode:
-                # 下市价空单
-                order = self.exchange.create_market_sell_order(symbol, quantity, params={'positionSide': 'SHORT'})
-                logger.info(f"空单下单成功:")
-                logger.info(f"订单ID: {order['id']}")
-                logger.info(f"交易对: {symbol}")
-                logger.info(f"数量: {quantity:.6f}")
-                logger.info(f"预估价格: {current_price:.4f}")
-                logger.info(f"预估金额: {amount_usdt:.2f} USDT")
+            # 下市价空单
+            order = self.exchange.create_market_sell_order(symbol, quantity, params={'positionSide': 'SHORT'})
+            logger.info(f"空单下单成功:")
+            logger.info(f"订单ID: {order['id']}")
+            logger.info(f"交易对: {symbol}")
+            logger.info(f"数量: {quantity:.6f}")
+            logger.info(f"预估价格: {current_price:.4f}")
+            logger.info(f"预估金额: {amount_usdt:.2f} USDT")
 
-                return order
-            else:
-                # 测试模式
-                mock_order = {
-                    'id': f'test_{int(time.time())}',
-                    'symbol': symbol,
-                    'amount': quantity,
-                    'price': current_price,
-                    'side': 'sell',
-                    'type': 'market',
-                    'status': 'closed',
-                    'filled': quantity,
-                    'cost': amount_usdt,
-                    'timestamp': int(time.time() * 1000)
-                }
-                logger.info(f"测试模式: 模拟空单下单成功")
-                logger.info(f"订单ID: {mock_order['id']}")
-                logger.info(f"数量: {quantity:.6f}")
-                logger.info(f"价格: {current_price:.4f}")
-
-                return mock_order
+            return order
 
         except Exception as e:
             logger.error(f"下空单失败: {e}")
@@ -356,33 +330,21 @@ class BinanceFundingRateTrader:
             订单详细信息
         """
         try:
-            if not self.test_mode:
-                order_info = self.exchange.fetch_order(order_id, symbol)
+            order_info = self.exchange.fetch_order(order_id, symbol)
 
-                logger.info(f"订单状态检查:")
-                logger.info(f"订单ID: {order_id}")
-                logger.info(f"状态: {order_info['status']}")
-                logger.info(f"已成交数量: {order_info.get('filled', 0):.6f}")
-                logger.info(f"平均成交价格: {order_info.get('average', 0):.4f}")
+            logger.info(f"订单状态检查:")
+            logger.info(f"订单ID: {order_id}")
+            logger.info(f"状态: {order_info['status']}")
+            logger.info(f"已成交数量: {order_info.get('filled', 0):.6f}")
+            logger.info(f"平均成交价格: {order_info.get('average', 0):.4f}")
 
-                return order_info
-            else:
-                # 测试模式返回模拟订单信息
-                logger.info("测试模式: 模拟订单状态检查完成")
-                return {
-                    'id': order_id,
-                    'status': 'closed',
-                    'filled': 0.001,
-                    'average': 50000.0,
-                    'cost': 50.0
-                }
+            return order_info
 
         except Exception as e:
             logger.error(f"检查订单状态失败: {e}")
             raise
 
-    async def place_close_order(self, symbol: str, quantity: float, open_price: float, funding_rate: float) -> Dict[
-        str, Any]:
+    async def place_close_order(self, symbol: str, quantity: float, open_price: float, funding_rate: float) -> Dict[str, Any]:
         """
         下平仓订单
         
@@ -404,43 +366,142 @@ class BinanceFundingRateTrader:
             logger.info(f"资金费率: {funding_rate:.6f}")
             logger.info(f"平仓价格: {close_price:.4f}")
 
-            if not self.test_mode:
-                # 下限价买入平仓单
-                order = self.exchange.create_limit_buy_order(
-                    symbol, quantity, close_price,
-                    params={
-                        "positionSide": "SHORT"  # 指定是平空单
-                    })
+            # 下限价买入平仓单
+            order = self.exchange.create_limit_buy_order(
+                symbol, quantity, close_price,
+                params={
+                    "positionSide": "SHORT"  # 指定是平空单
+                })
 
-                logger.info(f"平仓订单下单成功:")
-                logger.info(f"订单ID: {order['id']}")
-                logger.info(f"类型: 限价买入")
-                logger.info(f"数量: {quantity:.6f}")
-                logger.info(f"价格: {close_price:.4f}")
+            logger.info(f"平仓订单下单成功:")
+            logger.info(f"订单ID: {order['id']}")
+            logger.info(f"类型: 限价买入")
+            logger.info(f"数量: {quantity:.6f}")
+            logger.info(f"价格: {close_price:.4f}")
 
-                return order
-            else:
-                # 测试模式
-                mock_order = {
-                    'id': f'close_test_{int(time.time())}',
-                    'symbol': symbol,
-                    'amount': quantity,
-                    'price': close_price,
-                    'side': 'buy',
-                    'type': 'limit',
-                    'status': 'open',
-                    'filled': 0,
-                    'timestamp': int(time.time() * 1000)
-                }
-
-                logger.info("测试模式: 模拟平仓订单下单成功")
-                logger.info(f"订单ID: {mock_order['id']}")
-                logger.info(f"价格: {close_price:.4f}")
-
-                return mock_order
+            return order
 
         except Exception as e:
             logger.error(f"下平仓订单失败: {e}")
+            raise
+
+    async def monitor_stop_loss(self, symbol: str, open_price: float, quantity: float, funding_time: datetime, limit_order_id: str):
+        """
+        监控止损，在资金结算后监控价格变化
+        
+        Args:
+            symbol: 交易对符号
+            open_price: 开仓价格
+            quantity: 持仓数量
+            funding_time: 资金结算时间
+            limit_order_id: 限价平仓订单ID
+        """
+        try:
+            # 等待到资金结算时间
+            current_time = datetime.now(funding_time.tzinfo)
+            wait_seconds = (funding_time - current_time).total_seconds()
+            
+            if wait_seconds > 0:
+                logger.info(f"等待 {wait_seconds:.1f} 秒到资金结算时间，然后开始止损监控")
+                await asyncio.sleep(wait_seconds)
+            
+            logger.info("=" * 50)
+            logger.info("开始止损监控")
+            logger.info(f"开仓价格: {open_price:.4f}")
+            logger.info(f"止损阈值: +{self.stop_loss_threshold*100:.1f}%")
+            logger.info(f"监控持仓数量: {quantity:.6f}")
+            logger.info("=" * 50)
+            
+            start_time = datetime.now()
+            check_count = 0
+            
+            while True:
+                check_count += 1
+                
+                # 检查是否超过最大监控时间
+                elapsed_time = (datetime.now() - start_time).total_seconds()
+                if elapsed_time > self.max_monitor_duration:
+                    logger.info(f"达到最大监控时间 {self.max_monitor_duration} 秒，停止监控")
+                    break
+                
+                # 检查限价订单是否已成交
+                try:
+                    limit_order_status = self.exchange.fetch_order(limit_order_id, symbol)
+                    if limit_order_status['status'] == 'closed':
+                        logger.info("限价平仓订单已成交，停止止损监控")
+                        return
+                
+                except Exception as e:
+                    logger.warning(f"检查限价订单状态失败: {e}")
+                
+                # 获取当前价格
+                try:
+                    ticker = self.exchange.fetch_ticker(symbol)
+                    current_price = ticker['last']
+                    
+                    # 计算价格变化百分比
+                    price_change_pct = (current_price - open_price) / open_price
+                    
+                    logger.info(f"止损监控 #{check_count}: 当前价格 {current_price:.4f}, 变化 {price_change_pct*100:+.3f}%")
+                    
+                    # 检查是否触发止损
+                    if price_change_pct > self.stop_loss_threshold:
+                        logger.warning("=" * 50)
+                        logger.warning("🚨 触发止损条件！")
+                        logger.warning(f"当前价格: {current_price:.4f}")
+                        logger.warning(f"开仓价格: {open_price:.4f}")
+                        logger.warning(f"价格上涨: {price_change_pct*100:.3f}% > {self.stop_loss_threshold*100:.1f}%")
+                        logger.warning("立即执行市价平仓...")
+                        logger.warning("=" * 50)
+                        
+                        # 执行市价平仓
+                        await self.execute_stop_loss(symbol, quantity, limit_order_id)
+                        return
+                        
+                except Exception as e:
+                    logger.error(f"获取价格失败: {e}")
+                
+                # 等待1秒后继续监控
+                await asyncio.sleep(1)
+                
+        except Exception as e:
+            logger.error(f"止损监控失败: {e}")
+            logger.error(f"错误详情: {traceback.format_exc()}")
+
+    async def execute_stop_loss(self, symbol: str, quantity: float, limit_order_id: str):
+        """
+        执行止损平仓
+        
+        Args:
+            symbol: 交易对符号
+            quantity: 平仓数量
+            limit_order_id: 需要取消的限价订单ID
+        """
+        try:
+            # 1. 取消原限价订单
+            logger.info("1. 取消原限价平仓订单...")
+            try:
+                cancel_result = self.exchange.cancel_order(limit_order_id, symbol)
+                logger.info(f"限价订单取消成功: {limit_order_id}")
+            except Exception as e:
+                logger.warning(f"取消限价订单失败 (可能已成交): {e}")
+            
+            # 2. 执行市价平仓
+            logger.info("2. 执行市价平仓...")
+            stop_loss_order = self.exchange.create_market_buy_order(
+                symbol, quantity,
+                params={"positionSide": "SHORT"}  # 平空单
+            )
+            
+            logger.info("🔴 止损平仓订单执行成功:")
+            logger.info(f"订单ID: {stop_loss_order['id']}")
+            logger.info(f"类型: 市价买入")
+            logger.info(f"数量: {quantity:.6f}")
+            
+            return stop_loss_order
+                
+        except Exception as e:
+            logger.error(f"执行止损平仓失败: {e}")
             raise
 
     async def execute_arbitrage_strategy(self, symbol: str, manual_time: Optional[str] = None):
@@ -521,6 +582,16 @@ class BinanceFundingRateTrader:
             logger.info(f"平仓订单ID: {close_order['id']}")
             logger.info("=" * 60)
 
+            # 11. 启动止损监控
+            logger.info("11. 启动止损监控...")
+            await self.monitor_stop_loss(
+                symbol, 
+                avg_price, 
+                filled_quantity, 
+                funding_info['next_funding_time'],
+                close_order['id']
+            )
+
         except Exception as e:
             logger.error(f"执行套利策略失败: {e}")
             logger.error(f"错误详情: {traceback.format_exc()}")
@@ -540,12 +611,6 @@ def parse_arguments():
         '--manual-time',
         help='手动指定检查时间 (ISO格式, 例如: 2024-01-01T08:00:00+00:00)',
         default=None
-    )
-
-    parser.add_argument(
-        '--test-mode',
-        action='store_true',
-        help='启用测试模式（使用沙盒环境）'
     )
 
     parser.add_argument(
@@ -574,7 +639,7 @@ async def main():
             return
 
         # 创建交易器实例
-        trader = BinanceFundingRateTrader(test_mode=args.test_mode)
+        trader = BinanceFundingRateTrader()
 
         # 执行套利策略
         await trader.execute_arbitrage_strategy(symbol, args.manual_time)
