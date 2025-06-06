@@ -88,7 +88,6 @@ class BinanceOpportunityFinder:
         self.oi_price_market_ratio_threshold = BINANCE_OPPORTUNITY_FINDER['OI_PRICE_MARKET_RATIO_THRESHOLD']
         self.volume_market_ratio_threshold = BINANCE_OPPORTUNITY_FINDER['VOLUME_MARKET_RATIO_THRESHOLD']
         self.historical_change_threshold = BINANCE_OPPORTUNITY_FINDER['HISTORICAL_CHANGE_THRESHOLD']
-        self.final_change_muliplier = BINANCE_OPPORTUNITY_FINDER['FINAL_CHANGE_MULTIPLIER']
         self.oi_new_high_threshold = BINANCE_OPPORTUNITY_FINDER['OI_NEW_HIGH_THRESHOLD']
         self.oi_absolute_change_threshold = BINANCE_OPPORTUNITY_FINDER['OI_ABSOLUTE_CHANGE_THRESHOLD']
 
@@ -442,8 +441,7 @@ class BinanceOpportunityFinder:
     def format_opportunity_report(self, symbol: str, conditions: Dict[str, bool], 
                                 oi_price_market_ratio: float, volume_market_ratio: float,
                                 historical_price_changes: List[float], historical_oi_changes: List[float],
-                                final_oi_change: float, final_oi_change_threshold: float, 
-                                matched_strategies: List[str], chart_path: str = "") -> str:
+                                final_oi_change: float, matched_strategies: List[str], chart_path: str = "") -> str:
         """
         格式化交易机会报告
         
@@ -455,7 +453,6 @@ class BinanceOpportunityFinder:
             historical_price_changes: 历史价格变化率列表
             historical_oi_changes: 历史持仓量变化率列表
             final_oi_change: 最终持仓量变化率
-            final_oi_change_threshold: 最终持仓量变化阈值
             matched_strategies: 命中的策略列表
             chart_path: 图表文件路径
             
@@ -470,7 +467,6 @@ class BinanceOpportunityFinder:
         report += f"交易活跃度:合约持仓金额/市值 {oi_price_market_ratio:.2f} > {self.oi_price_market_ratio_threshold}: {'✓' if conditions[f'交易活跃度:合约持仓金额/市值 > {self.oi_price_market_ratio_threshold}'] else '✗'}\n"
         report += f"交易活跃度:近24小时成交量/市值 {volume_market_ratio:.2f} > {self.volume_market_ratio_threshold}: {'✓' if conditions[f'交易活跃度:近24小时成交量/市值 > {self.volume_market_ratio_threshold}'] else '✗'}\n"
         report += f"拉盘信号:历史持仓量变化率 {max_oi_change:.1f}% < {self.historical_change_threshold*100}%: {'✓' if conditions[f'拉盘信号:历史持仓量变化率 < {self.historical_change_threshold*100}%'] else '✗'}\n"
-        report += f"拉盘信号:最终持仓量变化率 {final_oi_change*100:.1f}% > {final_oi_change_threshold*100:.1f}%: {'✓' if conditions[f'拉盘信号:最终持仓量变化率 > {final_oi_change_threshold*100:.1f}%'] else '✗'}\n"
         
         # 添加新的策略条件显示
         report += f"拉盘信号:最终持仓量创新高(>{self.oi_new_high_threshold*100:.0f}%): {'✓' if conditions[f'拉盘信号:最终持仓量创新高(>{self.oi_new_high_threshold*100:.0f}%)'] else '✗'}\n"
@@ -510,7 +506,6 @@ class BinanceOpportunityFinder:
                 historical_price_changes,
                 historical_oi_changes,
                 opportunity['oi_change'],
-                opportunity['final_oi_change_threshold'],
                 opportunity['matched_strategies'],
                 chart_path
             )
@@ -742,10 +737,6 @@ class BinanceOpportunityFinder:
             # 计算最终持仓量变化率（最后一个时点）
             final_oi_change = (float(open_interest_hist[-1]['sumOpenInterest']) - float(open_interest_hist[-2]['sumOpenInterest'])) / float(open_interest_hist[-2]['sumOpenInterest'])
             
-            # 动态计算final_oi_change_threshold：历史持仓量变化率最大绝对值的2倍
-            max_historical_oi_change = max(abs(change) for change in historical_oi_changes[:-1]) if len(historical_oi_changes) > 1 else 0.01
-            final_oi_change_threshold = max_historical_oi_change * self.final_change_muliplier
-            
             # 新增条件1：检查最终持仓量是否创新高并且比历史最高点高出指定百分比
             current_oi = float(open_interest_hist[-1]['sumOpenInterest'])
             historical_oi_values = [float(oi_data['sumOpenInterest']) for oi_data in open_interest_hist[:-1]]
@@ -773,7 +764,6 @@ class BinanceOpportunityFinder:
             logger.debug(f"  最终持仓量变化率: {final_oi_change:.2%}")
             logger.debug(f"  合约持仓金额/市值: {oi_price_market_ratio:.4f}")
             logger.debug(f"  近24小时成交量/市值: {volume_market_ratio:.4f}")
-            logger.debug(f"  动态计算的最终持仓量变化阈值: {final_oi_change_threshold:.2%}")
             logger.debug(f"  最终持仓量: {current_oi:,.2f}")
             logger.debug(f"  历史最高持仓量: {max_historical_oi:,.2f}")
             logger.debug(f"  新高比例: {oi_new_high_ratio:.2%}")
@@ -783,7 +773,6 @@ class BinanceOpportunityFinder:
                 f'交易活跃度:合约持仓金额/市值 > {self.oi_price_market_ratio_threshold}': oi_price_market_ratio > self.oi_price_market_ratio_threshold,
                 f'交易活跃度:近24小时成交量/市值 > {self.volume_market_ratio_threshold}': volume_market_ratio > self.volume_market_ratio_threshold,
                 f'拉盘信号:历史持仓量变化率 < {self.historical_change_threshold*100}%': historical_changes_ok,
-                f'拉盘信号:最终持仓量变化率 > {final_oi_change_threshold*100:.1f}%': final_oi_change > final_oi_change_threshold,
                 f'拉盘信号:最终持仓量创新高(>{self.oi_new_high_threshold*100:.0f}%)': is_oi_new_high,
                 f'拉盘信号:最终持仓量变化率超过绝对阈值(>{self.oi_absolute_change_threshold*100:.0f}%)': is_oi_absolute_change
             }
@@ -797,7 +786,6 @@ class BinanceOpportunityFinder:
             
             # 策略条件（满足其中任意一个即可）
             strategy_conditions = {
-                '策略1-动态阈值': conditions[f'拉盘信号:最终持仓量变化率 > {final_oi_change_threshold*100:.1f}%'],
                 '策略2-创新高': conditions[f'拉盘信号:最终持仓量创新高(>{self.oi_new_high_threshold*100:.0f}%)'],
                 '策略3-绝对变化': conditions[f'拉盘信号:最终持仓量变化率超过绝对阈值(>{self.oi_absolute_change_threshold*100:.0f}%)']
             }
@@ -826,7 +814,6 @@ class BinanceOpportunityFinder:
                         'volume_market_ratio': volume_market_ratio,
                         'market_cap': market_cap,
                         'timestamp': datetime.now().isoformat(),
-                        'final_oi_change_threshold': final_oi_change_threshold,
                         'matched_strategies': matched_strategies,
                         'max_historical_oi': max_historical_oi,
                         'oi_new_high_ratio': oi_new_high_ratio,
@@ -882,7 +869,6 @@ def main():
         logger.info(f"已配置策略阈值:")
         logger.info(f"  OI新高阈值: {finder.oi_new_high_threshold*100:.0f}%")
         logger.info(f"  OI绝对变化阈值: {finder.oi_absolute_change_threshold*100:.0f}%")
-        logger.info(f"  动态倍数: {finder.final_change_muliplier}")
         
         # 简单功能测试（测试一个交易对）
         # test_data = finder.get_historical_data('ETHUSDT', create_graph=False)
