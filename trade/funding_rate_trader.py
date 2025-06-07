@@ -102,12 +102,13 @@ class FundingRateTrader:
         }
     }
 
-    def __init__(self, exchange_name: str):
+    def __init__(self, exchange_name: str, min_funding_rate: float = -0.005):
         """
         初始化交易器
         
         Args:
             exchange_name: 交易所名称 (binance, gateio, bybit, bitget)
+            min_funding_rate: 触发套利的最小资金费率阈值
         """
         self.exchange_name = exchange_name.lower()
         self.exchange = None
@@ -116,7 +117,7 @@ class FundingRateTrader:
         self.market_info = {}
 
         # 交易参数
-        self.min_funding_rate = -0.005  # -0.5%
+        self.min_funding_rate = min_funding_rate
         self.max_leverage = 20
         self.leverage = self.max_leverage
         self.min_order_amount = 100  # USDT
@@ -151,6 +152,7 @@ class FundingRateTrader:
             # 测试连接
             self.exchange.load_markets()
             logger.info(f"交易所连接成功: {config_info['name']} (实盘模式)")
+            logger.info(f"资金费率阈值: {self.min_funding_rate:.6f} ({self.min_funding_rate * 100:.4f}%)")
 
         except Exception as e:
             logger.error(f"交易所连接失败: {e}")
@@ -768,6 +770,13 @@ def parse_arguments():
     )
 
     parser.add_argument(
+        '--min-funding-rate',
+        type=float,
+        default=-0.005,
+        help='触发套利的最小资金费率阈值 (默认: -0.005, 即-0.5%%)'
+    )
+
+    parser.add_argument(
         '--manual-time',
         help='手动指定检查时间 (ISO格式, 例如: 2024-01-01T08:00:00+00:00)',
         default=None
@@ -799,7 +808,7 @@ async def main():
             return
 
         # 创建交易器实例
-        trader = FundingRateTrader(args.exchange)
+        trader = FundingRateTrader(args.exchange, args.min_funding_rate)
 
         # 执行套利策略
         await trader.execute_arbitrage_strategy(symbol, args.manual_time)

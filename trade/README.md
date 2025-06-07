@@ -59,6 +59,12 @@ python funding_rate_trader.py BTC/USDT --exchange gateio
 
 # 在Bitget上交易BTC/USDT
 python funding_rate_trader.py BTC/USDT --exchange bitget
+
+# 自定义资金费率阈值为-0.3%
+python funding_rate_trader.py BTC/USDT --exchange binance --min-funding-rate -0.003
+
+# 更激进的策略，资金费率为-0.1%时就触发
+python funding_rate_trader.py ETH/USDT --exchange bybit --min-funding-rate -0.001
 ```
 
 ### 命令行参数
@@ -67,6 +73,7 @@ python funding_rate_trader.py BTC/USDT --exchange bitget
 |------|------|------|--------|------|
 | `symbol` | 字符串 | ✅ | - | 交易对符号，如 BTC/USDT |
 | `--exchange` | 选择 | ❌ | binance | 交易所选择 (binance/gateio/bybit/bitget) |
+| `--min-funding-rate` | 浮点数 | ❌ | -0.005 | 触发套利的最小资金费率阈值 (-0.5%) |
 | `--manual-time` | 字符串 | ❌ | None | 手动指定检查时间 (用于测试) |
 | `--log-level` | 选择 | ❌ | INFO | 日志级别 (DEBUG/INFO/WARNING/ERROR) |
 
@@ -81,7 +88,8 @@ python funding_rate_trader.py BTC/USDT --exchange binance --manual-time "2024-01
 
 ### 1. 资金费率检查
 - 监控目标交易对的资金费率
-- 当资金费率 < -0.5% 时触发套利机会
+- 当资金费率低于设定阈值时触发套利机会（默认: < -0.5%）
+- 可通过 `--min-funding-rate` 参数自定义阈值
 
 ### 2. 自动下单
 - 在资金结算前15秒检查条件
