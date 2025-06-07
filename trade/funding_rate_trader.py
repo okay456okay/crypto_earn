@@ -779,7 +779,7 @@ class FundingRateTrader:
 
             # 3. 等待检查时间（结算前15秒）
             logger.info("3. 等待资金费率检查时间...")
-            await self.wait_until_funding_time(15)
+            await self.wait_until_funding_time(10)
 
             # 4. 检查资金费率条件
             logger.info("4. 检查资金费率条件...")
@@ -800,8 +800,8 @@ class FundingRateTrader:
             await self.set_leverage(symbol, self.leverage)
 
             # 7. 等待到下单时间（结算前5秒）
-            logger.info("7. 等待到下单时间（结算前5秒）...")
-            await self.wait_until_funding_time(5)
+            logger.info("7. 等待到下单时间（结算前2秒）...")
+            await self.wait_until_funding_time(2)
 
             # 8. 下空单
             logger.info("8. 下空单...")
