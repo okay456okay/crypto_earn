@@ -122,7 +122,7 @@ class FundingRateTrader:
         self.min_funding_rate = min_funding_rate
         self.max_leverage = 20
         self.leverage = self.max_leverage
-        self.min_order_amount = 6  # USDT
+        self.min_order_amount = 100  # USDT
         self.funding_rate_buffer = 0.005  # 0.5% 缓冲
 
         # 止损参数
