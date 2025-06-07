@@ -120,7 +120,7 @@ class FundingRateTrader:
         self.min_funding_rate = min_funding_rate
         self.max_leverage = 20
         self.leverage = self.max_leverage
-        self.min_order_amount = 100  # USDT
+        self.min_order_amount = 6  # USDT
         self.funding_rate_buffer = 0.005  # 0.5% 缓冲
 
         # 止损参数
@@ -617,7 +617,7 @@ class FundingRateTrader:
         """
         try:
             # 等待到资金结算时间
-            current_time = datetime.now()
+            current_time = datetime.now(next_funding_time.tzinfo)  # 使用相同的时区
             wait_seconds = (next_funding_time - current_time).total_seconds()
 
             if wait_seconds > 0:
