@@ -165,14 +165,19 @@ class FundingRateScanner:
         elif funding_time.tzinfo != pytz.UTC:
             funding_time = funding_time.astimezone(pytz.UTC)
             
+        # 处理本地时间 - 假设是东8区
         if current_time.tzinfo is None:
-            current_time = current_time.replace(tzinfo=pytz.UTC)
-        elif current_time.tzinfo != pytz.UTC:
-            current_time = current_time.astimezone(pytz.UTC)
+            # 本地时间，假设是东8区
+            current_time_with_tz = pytz.timezone('Asia/Shanghai').localize(current_time)
+            current_time_utc = current_time_with_tz.astimezone(pytz.UTC)
+        else:
+            current_time_utc = current_time.astimezone(pytz.UTC)
         
-        next_hour = self.get_next_hour_time(current_time)
+        # 计算下个整点时间（UTC）
+        next_hour_utc = current_time_utc.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        
         # 允许5分钟的误差
-        time_diff = abs((funding_time - next_hour).total_seconds())
+        time_diff = abs((funding_time - next_hour_utc).total_seconds())
         return time_diff <= 300  # 5分钟内算作匹配
     
     async def scan_exchange_funding_rates(self, exchange_name: str) -> List[Dict]:
@@ -222,8 +227,17 @@ class FundingRateScanner:
                     # 提取关键信息
                     funding_rate = funding_rate_info.get('fundingRate')
                     funding_datetime = funding_rate_info.get('fundingDatetime') or funding_rate_info.get('datetime')
+                    
+                    # 特殊处理Bitget交易所的数据结构
+                    if exchange_name.lower() == 'bitget' and funding_datetime is None:
+                        info = funding_rate_info.get('info', {})
+                        next_update = info.get('nextUpdate')
+                        if next_update:
+                            # nextUpdate是毫秒时间戳
+                            funding_datetime = int(next_update)
+                    
                     logger.info(f"{exchange_name} {symbol} {funding_rate} {funding_datetime}")
-
+                    
                     if funding_rate is None:
                         logger.debug(f"{exchange_name.upper()} {symbol}: 资金费率为空")
                         continue
@@ -254,7 +268,29 @@ class FundingRateScanner:
                     is_negative_enough = funding_rate < self.funding_rate_threshold
                     is_next_hour = self.is_next_hour_settlement(funding_time, current_time)
                     
-                    # 添加详细的调试信息
+                    # 添加详细的调试信息 - 特别关注LA/USDT
+                    if 'LA/USDT' in symbol or exchange_name.upper() == 'DEBUG':
+                        logger.info(f"🔍 {exchange_name.upper()} {symbol}:")
+                        logger.info(f"   资金费率: {funding_rate:.6f} ({funding_rate*100:.4f}%) - 条件: < {self.funding_rate_threshold*100:.3f}% = {is_negative_enough}")
+                        logger.info(f"   结算时间: {funding_time} (UTC)")
+                        logger.info(f"   当前时间: {current_time} (本地)")
+                        logger.info(f"   下个整点: {next_hour} (本地)")
+                        logger.info(f"   时间条件: {is_next_hour}")
+                        
+                        # 转换为同一时区进行比较
+                        if current_time.tzinfo is None:
+                            current_utc = current_time.replace(tzinfo=pytz.timezone('Asia/Shanghai')).astimezone(pytz.UTC)
+                        else:
+                            current_utc = current_time.astimezone(pytz.UTC)
+                        
+                        if next_hour.tzinfo is None:
+                            next_hour_utc = next_hour.replace(tzinfo=pytz.timezone('Asia/Shanghai')).astimezone(pytz.UTC)
+                        else:
+                            next_hour_utc = next_hour.astimezone(pytz.UTC)
+                        
+                        time_diff = abs((funding_time - next_hour_utc).total_seconds())
+                        logger.info(f"   时间差: {time_diff:.1f} 秒 (允许300秒内)")
+                    
                     logger.debug(f"{exchange_name.upper()} {symbol}: 费率={funding_rate:.6f} ({funding_rate*100:.4f}%), "
                                f"结算时间={funding_time}, 费率条件={is_negative_enough}, 时间条件={is_next_hour}")
                     
@@ -271,7 +307,10 @@ class FundingRateScanner:
                         logger.info(f"✅ {exchange_name.upper()} {symbol}: {funding_rate*100:.4f}% @ {funding_time}")
                     elif is_negative_enough:
                         # 费率满足但时间不满足的情况
-                        logger.debug(f"🟡 {exchange_name.upper()} {symbol}: 费率满足({funding_rate*100:.4f}%)但时间不满足({funding_time})")
+                        if 'LA/USDT' in symbol:  # 特别关注LA/USDT
+                            logger.info(f"🟡 {exchange_name.upper()} {symbol}: 费率满足({funding_rate*100:.4f}%)但时间不满足({funding_time})")
+                        else:
+                            logger.debug(f"🟡 {exchange_name.upper()} {symbol}: 费率满足({funding_rate*100:.4f}%)但时间不满足({funding_time})")
                     elif is_next_hour:
                         # 时间满足但费率不满足的情况
                         logger.debug(f"🟡 {exchange_name.upper()} {symbol}: 时间满足({funding_time})但费率不满足({funding_rate*100:.4f}%)")
