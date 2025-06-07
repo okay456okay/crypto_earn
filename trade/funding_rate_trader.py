@@ -103,7 +103,7 @@ class FundingRateTrader:
         }
     }
 
-    def __init__(self, exchange_name: str, min_funding_rate: float = -0.005, manual_time: Optional[str] = None):
+    def __init__(self, exchange_name: str, min_funding_rate: float = -0.005, manual_time: Optional[str] = None, min_volume_per_minute: float = 20000):
         """
         初始化交易器
         
@@ -111,6 +111,7 @@ class FundingRateTrader:
             exchange_name: 交易所名称 (binance, gateio, bybit, bitget)
             min_funding_rate: 触发套利的最小资金费率阈值
             manual_time: 手动指定的下次结算时间（ISO格式）
+            min_volume_per_minute: 最小每分钟交易量要求（USDT）
         """
         self.exchange_name = exchange_name.lower()
         self.exchange = None
@@ -124,6 +125,7 @@ class FundingRateTrader:
         self.leverage = self.max_leverage
         self.min_order_amount = 100  # USDT
         self.funding_rate_buffer = 0.005  # 0.5% 缓冲
+        self.min_volume_per_minute = min_volume_per_minute  # 使用传入的参数
 
         # 止损参数
         self.stop_loss_threshold = 0.001  # 0.1% 止损阈值
@@ -321,13 +323,19 @@ class FundingRateTrader:
 
             logger.info(f"24小时交易量: {volume_24h:,.2f} USDT")
             logger.info(f"每分钟交易量: {volume_per_minute:,.2f} USDT")
+            logger.info(f"最小交易量要求: {self.min_volume_per_minute:,.0f} USDT/分钟")
             logger.info(f"最大杠杆倍数: {max_leverage}x")
+
+            # 检查交易量是否满足最小要求
+            volume_check_passed = volume_per_minute >= self.min_volume_per_minute
+            logger.info(f"交易量检查: {'✅ 通过' if volume_check_passed else '❌ 不通过'}")
 
             return {
                 'symbol': symbol,
                 'max_leverage': max_leverage,
                 'volume_24h': volume_24h,
                 'volume_per_minute': volume_per_minute,
+                'volume_check_passed': volume_check_passed,
                 'market_info': market
             }
 
@@ -793,6 +801,15 @@ class FundingRateTrader:
             logger.info("1. 获取市场信息...")
             self.market_info = await self.get_market_info(symbol)
 
+            # 检查交易量是否满足要求
+            if not self.market_info['volume_check_passed']:
+                logger.warning("=" * 60)
+                logger.warning("⚠️  交易量不满足最小要求，跳过套利策略")
+                logger.warning(f"当前每分钟交易量: {self.market_info['volume_per_minute']:,.2f} USDT")
+                logger.warning(f"最小要求: {self.min_volume_per_minute:,.0f} USDT/分钟")
+                logger.warning("=" * 60)
+                return
+
             # 2. 获取资金费率信息
             logger.info("2. 获取资金费率信息...")
             funding_info = await self.get_funding_rate_info(symbol)
@@ -921,6 +938,13 @@ def parse_arguments():
     )
 
     parser.add_argument(
+        '--min-volume',
+        type=float,
+        default=20000,
+        help='最小每分钟交易量要求 (USDT, 默认: 20000)'
+    )
+
+    parser.add_argument(
         '--manual-time',
         help='手动指定检查时间 (ISO格式, 例如: 2024-01-01T08:00:00+00:00)',
         default=None
@@ -952,7 +976,7 @@ async def main():
             return
 
         # 创建交易器实例
-        trader = FundingRateTrader(args.exchange, args.min_funding_rate, args.manual_time)
+        trader = FundingRateTrader(args.exchange, args.min_funding_rate, args.manual_time, args.min_volume)
 
         # 执行套利策略
         await trader.execute_arbitrage_strategy(symbol)
