@@ -102,13 +102,14 @@ class FundingRateTrader:
         }
     }
 
-    def __init__(self, exchange_name: str, min_funding_rate: float = -0.005):
+    def __init__(self, exchange_name: str, min_funding_rate: float = -0.005, manual_time: Optional[str] = None):
         """
         初始化交易器
         
         Args:
             exchange_name: 交易所名称 (binance, gateio, bybit, bitget)
             min_funding_rate: 触发套利的最小资金费率阈值
+            manual_time: 手动指定的下次结算时间（ISO格式）
         """
         self.exchange_name = exchange_name.lower()
         self.exchange = None
@@ -126,6 +127,16 @@ class FundingRateTrader:
         # 止损参数
         self.stop_loss_threshold = 0.001  # 0.1% 止损阈值
         self.max_monitor_duration = 600  # 最大监控时间10分钟
+
+        # 下次结算时间（手动指定或从API获取）
+        self.next_funding_time = None
+        if manual_time:
+            try:
+                self.next_funding_time = datetime.fromisoformat(manual_time.replace('Z', '+00:00')).astimezone()
+                logger.info(f"使用手动指定的下次结算时间: {self.next_funding_time}")
+            except Exception as e:
+                logger.error(f"解析手动时间失败: {e}")
+                raise
 
         self._initialize_exchange()
 
@@ -183,32 +194,33 @@ class FundingRateTrader:
             # 获取当前资金费率
             current_funding_rate = funding_rate_info['fundingRate']
 
-            # 获取下次结算时间并转换为本地时区
-            if self.exchange_name == 'bitget':
-                info = funding_rate_info.get('info', {})
-                next_update = info.get('nextUpdate')
-                if next_update:
-                    # nextUpdate是毫秒时间戳，转换为本地时区
-                    funding_datetime_ms = int(next_update)
-                    next_funding_time = datetime.fromtimestamp(funding_datetime_ms / 1000)
-                    logger.info(f"Bitget下次结算时间 (来自nextUpdate): {next_funding_time}")
+            # 获取下次结算时间（如果未手动设置）
+            if self.next_funding_time is None:
+                if self.exchange_name == 'bitget':
+                    info = funding_rate_info.get('info', {})
+                    next_update = info.get('nextUpdate')
+                    if next_update:
+                        # nextUpdate是毫秒时间戳，转换为本地时区
+                        funding_datetime_ms = int(next_update)
+                        self.next_funding_time = datetime.fromtimestamp(funding_datetime_ms / 1000)
+                        logger.info(f"Bitget下次结算时间 (来自nextUpdate): {self.next_funding_time}")
+                    else:
+                        # 如果没有nextUpdate，尝试使用默认方式
+                        funding_time_str = funding_rate_info['fundingDatetime']
+                        self.next_funding_time = datetime.fromisoformat(funding_time_str.replace('Z', '+00:00')).astimezone()
                 else:
-                    # 如果没有nextUpdate，尝试使用默认方式
+                    # 其他交易所使用标准方式，转换为本地时区
                     funding_time_str = funding_rate_info['fundingDatetime']
-                    next_funding_time = datetime.fromisoformat(funding_time_str.replace('Z', '+00:00')).astimezone()
-            else:
-                # 其他交易所使用标准方式，转换为本地时区
-                funding_time_str = funding_rate_info['fundingDatetime']
-                next_funding_time = datetime.fromisoformat(funding_time_str.replace('Z', '+00:00')).astimezone()
+                    self.next_funding_time = datetime.fromisoformat(funding_time_str.replace('Z', '+00:00')).astimezone()
 
             logger.info(f"交易对: {symbol}")
             logger.info(f"当前资金费率: {current_funding_rate:.6f} ({current_funding_rate * 100:.4f}%)")
-            logger.info(f"下次结算时间: {next_funding_time}")
+            logger.info(f"下次结算时间: {self.next_funding_time}")
 
             return {
                 'symbol': symbol,
                 'funding_rate': current_funding_rate,
-                'next_funding_time': next_funding_time
+                'next_funding_time': self.next_funding_time
             }
 
         except Exception as e:
@@ -319,34 +331,23 @@ class FundingRateTrader:
             logger.error(f"获取市场信息失败: {e}")
             raise
 
-    async def wait_until_funding_time(self, next_funding_time: datetime, seconds_before: int,
-                                      manual_time: Optional[str] = None):
+    async def wait_until_funding_time(self, seconds_before: int):
         """
         等待到资金费率结算前指定秒数的时间点
         
         Args:
-            next_funding_time: 下次资金费率结算时间
             seconds_before: 提前多少秒（例如：15表示结算前15秒）
-            manual_time: 手动指定的时间（用于测试）
         """
-        if manual_time:
-            if seconds_before == 5:
-                # 下单时间在手动模式下立即执行
-                logger.info("手动时间模式: 立即执行下单")
-                return
-            else:
-                # 检查时间使用手动指定时间
-                target_time = datetime.fromisoformat(manual_time)
-                logger.info(f"使用手动指定时间: {target_time}")
-        else:
-            target_time = next_funding_time
+        if self.next_funding_time is None:
+            logger.error("下次结算时间未设置")
+            return
 
-        current_time = datetime.now(target_time.tzinfo)
-        wait_seconds = (target_time - current_time - timedelta(seconds=seconds_before)).total_seconds()
+        current_time = datetime.now(self.next_funding_time.tzinfo)
+        wait_seconds = (self.next_funding_time - current_time - timedelta(seconds=seconds_before)).total_seconds()
 
         if wait_seconds > 0:
             action_desc = "检查条件" if seconds_before == 15 else "下单"
-            logger.info(f"等待 {wait_seconds:.1f} 秒到{action_desc}时间（结算前{seconds_before}秒）: {target_time}")
+            logger.info(f"等待 {wait_seconds:.1f} 秒到{action_desc}时间（结算前{seconds_before}秒）: {self.next_funding_time}")
             await asyncio.sleep(wait_seconds)
         else:
             logger.info(f"已到达{'检查' if seconds_before == 15 else '下单'}时间")
@@ -603,8 +604,7 @@ class FundingRateTrader:
             logger.error(f"下平仓订单失败: {e}")
             raise
 
-    async def monitor_stop_loss(self, symbol: str, open_price: float, quantity: float, next_funding_time: datetime,
-                                limit_order_id: str):
+    async def monitor_stop_loss(self, symbol: str, open_price: float, quantity: float, limit_order_id: str):
         """
         监控止损，在资金结算后监控价格变化
         
@@ -612,17 +612,18 @@ class FundingRateTrader:
             symbol: 交易对符号
             open_price: 开仓价格
             quantity: 持仓数量
-            next_funding_time: 资金结算时间
             limit_order_id: 限价平仓订单ID
         """
         try:
             # 等待到资金结算时间
-            current_time = datetime.now(next_funding_time.tzinfo)  # 使用相同的时区
-            wait_seconds = (next_funding_time - current_time).total_seconds()
+            current_time = datetime.now(self.next_funding_time.tzinfo)
+            wait_seconds = (self.next_funding_time - current_time).total_seconds()
 
             if wait_seconds > 0:
                 logger.info(f"等待 {wait_seconds:.1f} 秒到资金结算时间，然后开始止损监控")
                 await asyncio.sleep(wait_seconds)
+            else:
+                logger.info("已到达或超过结算时间，立即开始止损监控")
 
             logger.info("=" * 50)
             logger.info("开始止损监控")
@@ -754,13 +755,12 @@ class FundingRateTrader:
             logger.error(f"执行止损平仓失败: {e}")
             raise
 
-    async def execute_arbitrage_strategy(self, symbol: str, manual_time: Optional[str] = None):
+    async def execute_arbitrage_strategy(self, symbol: str):
         """
         执行套利策略
         
         Args:
             symbol: 交易对符号
-            manual_time: 手动指定时间（测试用）
         """
         try:
             logger.info("=" * 60)
@@ -779,7 +779,7 @@ class FundingRateTrader:
 
             # 3. 等待检查时间（结算前15秒）
             logger.info("3. 等待资金费率检查时间...")
-            await self.wait_until_funding_time(funding_info['next_funding_time'], 15, manual_time)
+            await self.wait_until_funding_time(15)
 
             # 4. 检查资金费率条件
             logger.info("4. 检查资金费率条件...")
@@ -801,7 +801,7 @@ class FundingRateTrader:
 
             # 7. 等待到下单时间（结算前5秒）
             logger.info("7. 等待到下单时间（结算前5秒）...")
-            await self.wait_until_funding_time(funding_info['next_funding_time'], 5, manual_time)
+            await self.wait_until_funding_time(5)
 
             # 8. 下空单
             logger.info("8. 下空单...")
@@ -868,7 +868,6 @@ class FundingRateTrader:
                 symbol,
                 avg_price,
                 filled_quantity,
-                funding_info['next_funding_time'],
                 close_order['id']
             )
 
@@ -933,10 +932,10 @@ async def main():
             return
 
         # 创建交易器实例
-        trader = FundingRateTrader(args.exchange, args.min_funding_rate)
+        trader = FundingRateTrader(args.exchange, args.min_funding_rate, args.manual_time)
 
         # 执行套利策略
-        await trader.execute_arbitrage_strategy(symbol, args.manual_time)
+        await trader.execute_arbitrage_strategy(symbol)
 
     except KeyboardInterrupt:
         logger.info("用户中断程序")
