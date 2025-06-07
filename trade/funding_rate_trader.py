@@ -97,7 +97,7 @@ class FundingRateTrader:
             'class': ccxt.bitget,
             'api_key': lambda: bitget_api_key,
             'api_secret': lambda: bitget_api_secret,
-            # 'options': {'defaultType': 'swap'},
+            'options': {},
             'name': 'Bitget'
         }
     }
