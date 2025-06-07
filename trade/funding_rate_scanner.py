@@ -222,7 +222,8 @@ class FundingRateScanner:
                     # 提取关键信息
                     funding_rate = funding_rate_info.get('fundingRate')
                     funding_datetime = funding_rate_info.get('fundingDatetime') or funding_rate_info.get('datetime')
-                    
+                    logger.info(f"{exchange_name} {symbol} {funding_rate} {funding_datetime}")
+
                     if funding_rate is None:
                         logger.debug(f"{exchange_name.upper()} {symbol}: 资金费率为空")
                         continue
