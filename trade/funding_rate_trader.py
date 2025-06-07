@@ -665,10 +665,17 @@ class FundingRateTrader:
                         if symbol.endswith('/USDT'):
                             query_symbol = f"{symbol}:USDT"
 
-                    limit_order_status = self.exchange.fetch_order(limit_order_id, query_symbol)
-                    if limit_order_status['status'] == 'closed':
-                        logger.info("限价平仓订单已成交，停止止损监控")
-                        return
+                    if self.exchange_name == 'bybit':
+                        closed_orders = self.exchange.fetch_closed_orders(query_symbol, limit=10)
+                        for order in closed_orders:
+                            if order.get('id') == limit_order_id:
+                                logger.info("限价平仓订单已成交，停止止损监控")
+                                return
+                    else:
+                        limit_order_status = self.exchange.fetch_order(limit_order_id, query_symbol)
+                        if limit_order_status['status'] == 'closed':
+                            logger.info("限价平仓订单已成交，停止止损监控")
+                            return
 
                 except Exception as e:
                     logger.warning(f"检查限价订单状态失败: {e}")
