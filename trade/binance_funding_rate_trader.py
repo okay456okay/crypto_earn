@@ -555,20 +555,49 @@ class BinanceFundingRateTrader:
 
             # 8. 下空单
             logger.info("8. 下空单...")
+            # 记录下单前时间戳
+            order_start_time = time.time()
             short_order = await self.place_short_order(symbol, order_amount)
 
-            # 9. 等待3秒后检查订单状态
-            logger.info("9. 等待3秒后检查订单状态...")
-            await asyncio.sleep(3)
-
-            order_info = await self.check_order_status(short_order['id'], symbol)
-
-            if order_info['status'] != 'closed':
-                logger.warning("开仓订单未完全成交，请手动处理")
-                return
+            # 9. 监控订单状态直到成交
+            logger.info("9. 监控订单状态直到成交...")
+            order_info = None
+            check_count = 0
+            
+            while True:
+                check_count += 1
+                try:
+                    order_info = await self.check_order_status(short_order['id'], symbol)
+                    
+                    if order_info['status'] == 'closed':
+                        # 记录订单完成时间
+                        order_end_time = time.time()
+                        execution_time = order_end_time - order_start_time
+                        
+                        logger.info("=" * 50)
+                        logger.info("✅ 开仓订单执行完成")
+                        logger.info(f"检查次数: {check_count}")
+                        logger.info(f"执行时长: {execution_time:.3f} 秒")
+                        logger.info(f"平均检查间隔: {execution_time/check_count:.3f} 秒")
+                        logger.info("=" * 50)
+                        break
+                    else:
+                        logger.info(f"订单状态检查 #{check_count}: {order_info['status']}, 已成交: {order_info.get('filled', 0):.6f}")
+                        
+                except Exception as e:
+                    logger.error(f"检查订单状态失败: {e}")
+                
+                # 等待0.2秒后继续检查
+                await asyncio.sleep(0.2)
 
             # 10. 下平仓订单
             logger.info("10. 下平仓订单...")
+            
+            # 确保订单信息有效
+            if order_info is None or order_info['status'] != 'closed':
+                logger.error("开仓订单未完全成交，无法继续执行套利策略")
+                return
+            
             filled_quantity = order_info['filled']
             avg_price = order_info['average']
 
