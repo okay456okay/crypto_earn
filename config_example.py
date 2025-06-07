@@ -1,14 +1,53 @@
-# Binance API密钥（请替换为您自己的密钥）
-# zxl
-api_key = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-api_secret = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+# -*- coding: utf-8 -*-
+"""
+多交易所API配置示例文件
+请复制此文件为 config.py 并填入真实的API密钥
 
+安全提醒：
+1. 请勿将真实的API密钥提交到版本控制系统
+2. 建议只给API密钥最小必要的权限（期货交易权限）
+3. 启用IP白名单以增加安全性
+"""
+
+# Binance API配置
+binance_api_key = "your_binance_api_key_here"
+binance_api_secret = "your_binance_api_secret_here"
+
+# Gate.io API配置
+gateio_api_key = "your_gateio_api_key_here"
+gateio_api_secret = "your_gateio_api_secret_here"
+
+# Bybit API配置
+bybit_api_key = "your_bybit_api_key_here"
+bybit_api_secret = "your_bybit_api_secret_here"
+
+# Bitget API配置
+bitget_api_key = "your_bitget_api_key_here"
+bitget_api_secret = "your_bitget_api_secret_here"
+
+# 代理配置（可选）
 proxies = {
-    # 'http': 'socks5://127.0.0.1:7890',
-    # 'https': 'socks5://127.0.0.1:7890',
-    # 如果不用代理，把下面这两行注释掉
-    'http': 'http://127.0.0.1:7890',
-    'https': 'http://127.0.0.1:7890',
+    # 'http': 'http://proxy.example.com:8080',
+    # 'https': 'https://proxy.example.com:8080'
+}
+
+# 交易所特殊配置（可选）
+exchange_specific_configs = {
+    'binance': {
+        'testnet': False,  # 是否使用测试网
+        'sandbox': False,  # 是否使用沙盒环境
+    },
+    'bybit': {
+        'testnet': False,
+        'demo': False,  # 是否使用模拟交易
+    },
+    'gateio': {
+        'testnet': False,
+    },
+    'bitget': {
+        'testnet': False,
+        'sandbox': False,
+    }
 }
 
 import logging

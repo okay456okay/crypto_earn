@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Binance资金费率套利交易脚本
+多交易所资金费率套利交易脚本
 功能：自动检测资金费率机会并执行套利交易
+支持交易所：Binance、GateIO、Bybit、Bitget
 作者：加密货币套利专家
-版本：1.0.0
+版本：2.0.0
 """
 
 import argparse
@@ -24,11 +25,20 @@ import ccxt.pro as ccxtpro
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
-    from config import binance_api_key, binance_api_secret, proxies
+    from config import (
+        binance_api_key, binance_api_secret,
+        gateio_api_key, gateio_api_secret,
+        bybit_api_key, bybit_api_secret,
+        bitget_api_key, bitget_api_secret,
+        proxies
+    )
 except ImportError:
-    print("警告: 无法导入配置文件，请确保config.py存在并包含API密钥")
-    binance_api_key = ""
-    binance_api_secret = ""
+    print("警告: 无法导入配置文件，请确保config.py存在并包含所有交易所的API密钥")
+    # 设置默认空值
+    binance_api_key = binance_api_secret = ""
+    gateio_api_key = gateio_api_secret = ""
+    bybit_api_key = bybit_api_secret = ""
+    bitget_api_key = bitget_api_secret = ""
     proxies = {}
 
 
@@ -38,7 +48,7 @@ def setup_logging():
     log_dir = os.path.join(os.path.dirname(__file__), 'logs')
     os.makedirs(log_dir, exist_ok=True)
 
-    log_filename = os.path.join(log_dir, f'binance_funding_trader_{datetime.now().strftime("%Y%m%d")}.log')
+    log_filename = os.path.join(log_dir, f'funding_rate_trader_{datetime.now().strftime("%Y%m%d")}.log')
 
     logging.basicConfig(
         level=logging.INFO,
@@ -54,13 +64,52 @@ def setup_logging():
 logger = setup_logging()
 
 
-class BinanceFundingRateTrader:
-    """Binance资金费率交易器"""
+class FundingRateTrader:
+    """多交易所资金费率交易器"""
 
-    def __init__(self):
+    # 支持的交易所配置
+    EXCHANGE_CONFIGS = {
+        'binance': {
+            'class': ccxt.binance,
+            'api_key': lambda: binance_api_key,
+            'api_secret': lambda: binance_api_secret,
+            'options': {'defaultType': 'future'},
+            'name': 'Binance'
+        },
+        'gateio': {
+            'class': ccxt.gateio,
+            'api_key': lambda: gateio_api_key,
+            'api_secret': lambda: gateio_api_secret,
+            'options': {'defaultType': 'swap'},
+            'name': 'Gate.io'
+        },
+        'bybit': {
+            'class': ccxt.bybit,
+            'api_key': lambda: bybit_api_key,
+            'api_secret': lambda: bybit_api_secret,
+            'options': {
+                'defaultType': 'linear',
+                'createMarketBuyOrderRequiresPrice': False,
+            },
+            'name': 'Bybit'
+        },
+        'bitget': {
+            'class': ccxt.bitget,
+            'api_key': lambda: bitget_api_key,
+            'api_secret': lambda: bitget_api_secret,
+            # 'options': {'defaultType': 'swap'},
+            'name': 'Bitget'
+        }
+    }
+
+    def __init__(self, exchange_name: str):
         """
         初始化交易器
+        
+        Args:
+            exchange_name: 交易所名称 (binance, gateio, bybit, bitget)
         """
+        self.exchange_name = exchange_name.lower()
         self.exchange = None
         self.symbol = None
         self.position_info = {}
@@ -69,9 +118,10 @@ class BinanceFundingRateTrader:
         # 交易参数
         self.min_funding_rate = -0.005  # -0.5%
         self.max_leverage = 20
+        self.leverage = self.max_leverage
         self.min_order_amount = 100  # USDT
         self.funding_rate_buffer = 0.005  # 0.5% 缓冲
-        
+
         # 止损参数
         self.stop_loss_threshold = 0.001  # 0.1% 止损阈值
         self.max_monitor_duration = 600  # 最大监控时间10分钟
@@ -81,23 +131,26 @@ class BinanceFundingRateTrader:
     def _initialize_exchange(self):
         """初始化交易所连接"""
         try:
+            if self.exchange_name not in self.EXCHANGE_CONFIGS:
+                raise ValueError(f"不支持的交易所: {self.exchange_name}")
+
+            config_info = self.EXCHANGE_CONFIGS[self.exchange_name]
+
             config = {
-                'apiKey': binance_api_key,
-                'secret': binance_api_secret,
+                'apiKey': config_info['api_key'](),
+                'secret': config_info['api_secret'](),
                 'enableRateLimit': True,
-                'options': {
-                    'defaultType': 'future',  # 使用合约交易
-                }
+                'options': config_info['options']
             }
 
             if proxies:
                 config['proxies'] = proxies
 
-            self.exchange = ccxt.binance(config)
+            self.exchange = config_info['class'](config)
 
             # 测试连接
             self.exchange.load_markets()
-            logger.info("交易所连接成功 (实盘模式)")
+            logger.info(f"交易所连接成功: {config_info['name']} (实盘模式)")
 
         except Exception as e:
             logger.error(f"交易所连接失败: {e}")
@@ -182,7 +235,8 @@ class BinanceFundingRateTrader:
             logger.error(f"获取市场信息失败: {e}")
             raise
 
-    async def wait_until_funding_time(self, next_funding_time: datetime, seconds_before: int, manual_time: Optional[str] = None):
+    async def wait_until_funding_time(self, next_funding_time: datetime, seconds_before: int,
+                                      manual_time: Optional[str] = None):
         """
         等待到资金费率结算前指定秒数的时间点
         
@@ -276,13 +330,29 @@ class BinanceFundingRateTrader:
             leverage: 杠杆倍数
         """
         try:
-            result = self.exchange.set_leverage(leverage, symbol)
+            if self.exchange_name == 'binance':
+                result = self.exchange.set_leverage(leverage, symbol)
+            elif self.exchange_name == 'bybit':
+                # Bybit 需要设置保证金模式和杠杆
+                result = self.exchange.set_leverage(leverage, symbol, params={'marginMode': 'cross'})
+            elif self.exchange_name == 'gateio':
+                # Gate.io 通过私有API设置杠杆
+                result = self.exchange.set_leverage(leverage, symbol)
+            elif self.exchange_name == 'bitget':
+                # Bitget 设置杠杆
+                result = self.exchange.set_leverage(leverage, symbol, params={'marginMode': 'cross'})
+            else:
+                # 通用方法
+                result = self.exchange.set_leverage(leverage, symbol)
+
             logger.info(f"设置杠杆倍数成功: {leverage}x")
             return result
 
         except Exception as e:
             logger.error(f"设置杠杆倍数失败: {e}")
-            raise
+            # 某些交易所可能不支持动态设置杠杆，记录警告但不抛出异常
+            logger.warning(f"注意: {self.EXCHANGE_CONFIGS[self.exchange_name]['name']} 可能需要手动设置杠杆倍数")
+            return None
 
     async def place_short_order(self, symbol: str, amount_usdt: float) -> Dict[str, Any]:
         """
@@ -303,9 +373,31 @@ class BinanceFundingRateTrader:
             # 计算数量（基于USDT金额）
             quantity = amount_usdt / current_price
 
+            # 根据不同交易所设置下单参数
+            if self.exchange_name == 'binance':
+                order_params = {'positionSide': 'SHORT'}
+            elif self.exchange_name == 'bybit':
+                order_params = {
+                    "category": "linear",
+                    "positionIdx": 0,  # 单向持仓
+                    "reduceOnly": False
+                }
+            elif self.exchange_name == 'gateio':
+                order_params = {
+                    'reduceOnly': False,
+                    "crossLeverageLimit": self.leverage,
+                    "account": "cross_margin",
+                }
+            elif self.exchange_name == 'bitget':
+                order_params = {"reduceOnly": False}
+            else:
+                order_params = {}
+
             # 下市价空单
-            order = self.exchange.create_market_sell_order(symbol, quantity, params={'positionSide': 'SHORT'})
+            order = self.exchange.create_market_sell_order(symbol, quantity, params=order_params)
+
             logger.info(f"空单下单成功:")
+            logger.info(f"交易所: {self.EXCHANGE_CONFIGS[self.exchange_name]['name']}")
             logger.info(f"订单ID: {order['id']}")
             logger.info(f"交易对: {symbol}")
             logger.info(f"数量: {quantity:.6f}")
@@ -330,7 +422,14 @@ class BinanceFundingRateTrader:
             订单详细信息
         """
         try:
-            order_info = self.exchange.fetch_order(order_id, symbol)
+            if self.exchange_name == 'bybit':
+                closed_orders = await self.exchange.fetch_closed_orders(symbol, limit=10)
+                for order in closed_orders:
+                    if order.get('id') == order_id:
+                        order_info = order
+                        break
+            else:
+                order_info = self.exchange.fetch_order(order_id, symbol)
 
             logger.info(f"订单状态检查:")
             logger.info(f"订单ID: {order_id}")
@@ -344,7 +443,8 @@ class BinanceFundingRateTrader:
             logger.error(f"检查订单状态失败: {e}")
             raise
 
-    async def place_close_order(self, symbol: str, quantity: float, open_price: float, funding_rate: float) -> Dict[str, Any]:
+    async def place_close_order(self, symbol: str, quantity: float, open_price: float, funding_rate: float) -> Dict[
+        str, Any]:
         """
         下平仓订单
         
@@ -366,14 +466,23 @@ class BinanceFundingRateTrader:
             logger.info(f"资金费率: {funding_rate:.6f}")
             logger.info(f"平仓价格: {close_price:.4f}")
 
+            # 根据不同交易所设置平仓参数
+            if self.exchange_name == 'binance':
+                order_params = {'positionSide': 'SHORT'}
+            elif self.exchange_name == 'bybit':
+                order_params = {'reduceOnly': True}
+            elif self.exchange_name == 'gateio':
+                order_params = {'reduceOnly': True}
+            elif self.exchange_name == 'bitget':
+                order_params = {'reduceOnly': True}
+            else:
+                order_params = {'reduceOnly': True}
+
             # 下限价买入平仓单
-            order = self.exchange.create_limit_buy_order(
-                symbol, quantity, close_price,
-                params={
-                    "positionSide": "SHORT"  # 指定是平空单
-                })
+            order = self.exchange.create_limit_buy_order(symbol, quantity, close_price, params=order_params)
 
             logger.info(f"平仓订单下单成功:")
+            logger.info(f"交易所: {self.EXCHANGE_CONFIGS[self.exchange_name]['name']}")
             logger.info(f"订单ID: {order['id']}")
             logger.info(f"类型: 限价买入")
             logger.info(f"数量: {quantity:.6f}")
@@ -385,7 +494,8 @@ class BinanceFundingRateTrader:
             logger.error(f"下平仓订单失败: {e}")
             raise
 
-    async def monitor_stop_loss(self, symbol: str, open_price: float, quantity: float, funding_time: datetime, limit_order_id: str):
+    async def monitor_stop_loss(self, symbol: str, open_price: float, quantity: float, funding_time: datetime,
+                                limit_order_id: str):
         """
         监控止损，在资金结算后监控价格变化
         
@@ -400,70 +510,72 @@ class BinanceFundingRateTrader:
             # 等待到资金结算时间
             current_time = datetime.now(funding_time.tzinfo)
             wait_seconds = (funding_time - current_time).total_seconds()
-            
+
             if wait_seconds > 0:
                 logger.info(f"等待 {wait_seconds:.1f} 秒到资金结算时间，然后开始止损监控")
                 await asyncio.sleep(wait_seconds)
-            
+
             logger.info("=" * 50)
             logger.info("开始止损监控")
             logger.info(f"开仓价格: {open_price:.4f}")
-            logger.info(f"止损阈值: +{self.stop_loss_threshold*100:.1f}%")
+            logger.info(f"止损阈值: +{self.stop_loss_threshold * 100:.1f}%")
             logger.info(f"监控持仓数量: {quantity:.6f}")
             logger.info("=" * 50)
-            
+
             start_time = datetime.now()
             check_count = 0
-            
+
             while True:
                 check_count += 1
-                
+
                 # 检查是否超过最大监控时间
                 elapsed_time = (datetime.now() - start_time).total_seconds()
                 if elapsed_time > self.max_monitor_duration:
                     logger.info(f"达到最大监控时间 {self.max_monitor_duration} 秒，停止监控")
                     break
-                
+
                 # 检查限价订单是否已成交
                 try:
                     limit_order_status = self.exchange.fetch_order(limit_order_id, symbol)
                     if limit_order_status['status'] == 'closed':
                         logger.info("限价平仓订单已成交，停止止损监控")
                         return
-                
+
                 except Exception as e:
                     logger.warning(f"检查限价订单状态失败: {e}")
-                
+
                 # 获取当前价格
                 try:
                     ticker = self.exchange.fetch_ticker(symbol)
                     current_price = ticker['last']
-                    
+
                     # 计算价格变化百分比
                     price_change_pct = (current_price - open_price) / open_price
-                    
-                    logger.info(f"止损监控 #{check_count}: 当前价格 {current_price:.4f}, 变化 {price_change_pct*100:+.3f}%")
-                    
+
+                    logger.info(
+                        f"止损监控 #{check_count}: 当前价格 {current_price:.4f}, 变化 {price_change_pct * 100:+.3f}%")
+
                     # 检查是否触发止损
                     if price_change_pct > self.stop_loss_threshold:
                         logger.warning("=" * 50)
                         logger.warning("🚨 触发止损条件！")
                         logger.warning(f"当前价格: {current_price:.4f}")
                         logger.warning(f"开仓价格: {open_price:.4f}")
-                        logger.warning(f"价格上涨: {price_change_pct*100:.3f}% > {self.stop_loss_threshold*100:.1f}%")
+                        logger.warning(
+                            f"价格上涨: {price_change_pct * 100:.3f}% > {self.stop_loss_threshold * 100:.1f}%")
                         logger.warning("立即执行市价平仓...")
                         logger.warning("=" * 50)
-                        
+
                         # 执行市价平仓
                         await self.execute_stop_loss(symbol, quantity, limit_order_id)
                         return
-                        
+
                 except Exception as e:
                     logger.error(f"获取价格失败: {e}")
-                
+
                 # 等待1秒后继续监控
                 await asyncio.sleep(1)
-                
+
         except Exception as e:
             logger.error(f"止损监控失败: {e}")
             logger.error(f"错误详情: {traceback.format_exc()}")
@@ -485,21 +597,32 @@ class BinanceFundingRateTrader:
                 logger.info(f"限价订单取消成功: {limit_order_id}")
             except Exception as e:
                 logger.warning(f"取消限价订单失败 (可能已成交): {e}")
-            
+
             # 2. 执行市价平仓
             logger.info("2. 执行市价平仓...")
-            stop_loss_order = self.exchange.create_market_buy_order(
-                symbol, quantity,
-                params={"positionSide": "SHORT"}  # 平空单
-            )
-            
+
+            # 根据不同交易所设置止损平仓参数
+            if self.exchange_name == 'binance':
+                order_params = {'positionSide': 'SHORT'}
+            elif self.exchange_name == 'bybit':
+                order_params = {'reduceOnly': True}
+            elif self.exchange_name == 'gateio':
+                order_params = {'reduceOnly': True}
+            elif self.exchange_name == 'bitget':
+                order_params = {'reduceOnly': True}
+            else:
+                order_params = {'reduceOnly': True}
+
+            stop_loss_order = self.exchange.create_market_buy_order(symbol, quantity, params=order_params)
+
             logger.info("🔴 止损平仓订单执行成功:")
+            logger.info(f"交易所: {self.EXCHANGE_CONFIGS[self.exchange_name]['name']}")
             logger.info(f"订单ID: {stop_loss_order['id']}")
             logger.info(f"类型: 市价买入")
             logger.info(f"数量: {quantity:.6f}")
-            
+
             return stop_loss_order
-                
+
         except Exception as e:
             logger.error(f"执行止损平仓失败: {e}")
             raise
@@ -514,7 +637,7 @@ class BinanceFundingRateTrader:
         """
         try:
             logger.info("=" * 60)
-            logger.info("开始执行Binance资金费率套利策略")
+            logger.info("开始执行资金费率套利策略")
             logger.info("=" * 60)
 
             self.symbol = symbol
@@ -541,13 +664,13 @@ class BinanceFundingRateTrader:
 
             # 5. 计算订单参数
             logger.info("5. 计算订单参数...")
-            leverage, order_amount = await self.calculate_order_size(
+            self.leverage, order_amount = await self.calculate_order_size(
                 symbol, self.market_info['volume_per_minute']
             )
 
             # 6. 设置杠杆
             logger.info("6. 设置杠杆倍数...")
-            await self.set_leverage(symbol, leverage)
+            await self.set_leverage(symbol, self.leverage)
 
             # 7. 等待到下单时间（结算前5秒）
             logger.info("7. 等待到下单时间（结算前5秒）...")
@@ -563,41 +686,42 @@ class BinanceFundingRateTrader:
             logger.info("9. 监控订单状态直到成交...")
             order_info = None
             check_count = 0
-            
+
             while True:
                 check_count += 1
                 try:
                     order_info = await self.check_order_status(short_order['id'], symbol)
-                    
+
                     if order_info['status'] == 'closed':
                         # 记录订单完成时间
                         order_end_time = time.time()
                         execution_time = order_end_time - order_start_time
-                        
+
                         logger.info("=" * 50)
                         logger.info("✅ 开仓订单执行完成")
                         logger.info(f"检查次数: {check_count}")
                         logger.info(f"执行时长: {execution_time:.3f} 秒")
-                        logger.info(f"平均检查间隔: {execution_time/check_count:.3f} 秒")
+                        logger.info(f"平均检查间隔: {execution_time / check_count:.3f} 秒")
                         logger.info("=" * 50)
                         break
                     else:
-                        logger.info(f"订单状态检查 #{check_count}: {order_info['status']}, 已成交: {order_info.get('filled', 0):.6f}")
-                        
+                        logger.info(
+                            f"订单状态检查 #{check_count}: {order_info['status']}, 已成交: {order_info.get('filled', 0):.6f}")
+
                 except Exception as e:
                     logger.error(f"检查订单状态失败: {e}")
-                
+
                 # 等待0.2秒后继续检查
                 await asyncio.sleep(0.2)
 
             # 10. 下平仓订单
             logger.info("10. 下平仓订单...")
-            
+
             # 确保订单信息有效
             if order_info is None or order_info['status'] != 'closed':
                 logger.error("开仓订单未完全成交，无法继续执行套利策略")
                 return
-            
+
             filled_quantity = order_info['filled']
             avg_price = order_info['average']
 
@@ -614,9 +738,9 @@ class BinanceFundingRateTrader:
             # 11. 启动止损监控
             logger.info("11. 启动止损监控...")
             await self.monitor_stop_loss(
-                symbol, 
-                avg_price, 
-                filled_quantity, 
+                symbol,
+                avg_price,
+                filled_quantity,
                 funding_info['next_funding_time'],
                 close_order['id']
             )
@@ -629,11 +753,18 @@ class BinanceFundingRateTrader:
 
 def parse_arguments():
     """解析命令行参数"""
-    parser = argparse.ArgumentParser(description='Binance资金费率套利交易脚本')
+    parser = argparse.ArgumentParser(description='多交易所资金费率套利交易脚本')
 
     parser.add_argument(
         'symbol',
         help='合约交易对符号 (例如: BTC/USDT)'
+    )
+
+    parser.add_argument(
+        '--exchange',
+        choices=['binance', 'gateio', 'bybit', 'bitget'],
+        default='binance',
+        help='选择交易所 (默认: binance)'
     )
 
     parser.add_argument(
@@ -668,7 +799,7 @@ async def main():
             return
 
         # 创建交易器实例
-        trader = BinanceFundingRateTrader()
+        trader = FundingRateTrader(args.exchange)
 
         # 执行套利策略
         await trader.execute_arbitrage_strategy(symbol, args.manual_time)
