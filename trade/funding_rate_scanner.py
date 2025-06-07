@@ -540,7 +540,7 @@ async def main():
         scanner = FundingRateScanner()
         
         # 如果指定了阈值，更新扫描器的阈值
-        if args.threshold != -0.001:
+        if args.threshold != -0.005:
             scanner.funding_rate_threshold = args.threshold
             logger.info(f"使用自定义资金费率阈值: {args.threshold*100:.3f}%")
         
