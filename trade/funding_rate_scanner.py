@@ -434,7 +434,7 @@ async def main():
         # 添加命令行参数解析
         parser = argparse.ArgumentParser(description='多交易所资金费率扫描器')
         parser.add_argument('--debug', action='store_true', help='启用调试模式，显示详细信息')
-        parser.add_argument('--threshold', type=float, default=-0.001, help='资金费率阈值 (默认: -0.001 即 -0.1%%)')
+        parser.add_argument('--threshold', type=float, default=-0.005, help='资金费率阈值 (默认: -0.005 即 -0.5%%)')
         parser.add_argument('--log-level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'], default='INFO', help='日志级别')
         
         args = parser.parse_args()
