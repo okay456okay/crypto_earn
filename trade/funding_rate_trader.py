@@ -432,7 +432,7 @@ class FundingRateTrader:
                 # result = self.exchange.set_leverage(leverage, leverage_symbol, params={'marginMode': 'cross'})
                 params = {
                     'category': 'linear',
-                    'symbol': leverage_symbol,
+                    'symbol': symbol.replace('/', ''),
                     'buyLeverage': str(leverage),
                     'sellLeverage': str(leverage)
                 }
