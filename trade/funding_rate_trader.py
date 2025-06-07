@@ -429,7 +429,16 @@ class FundingRateTrader:
                 result = self.exchange.set_leverage(leverage, leverage_symbol)
             elif self.exchange_name == 'bybit':
                 # Bybit 需要设置保证金模式和杠杆
-                result = self.exchange.set_leverage(leverage, leverage_symbol, params={'marginMode': 'cross'})
+                # result = self.exchange.set_leverage(leverage, leverage_symbol, params={'marginMode': 'cross'})
+                params = {
+                    'category': 'linear',
+                    'symbol': leverage_symbol,
+                    'buyLeverage': str(leverage),
+                    'sellLeverage': str(leverage)
+                }
+                logger.info(f"使用Bybit支持的最大杠杆倍数: {leverage}倍")
+                self.exchange.privatePostV5PositionSetLeverage(params)
+                logger.info(f"设置Bybit {leverage_symbol}合约杠杆倍数为: {leverage}x")
             elif self.exchange_name == 'gateio':
                 # Gate.io 通过私有API设置杠杆
                 result = self.exchange.set_leverage(leverage, leverage_symbol)
