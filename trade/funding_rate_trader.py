@@ -97,7 +97,7 @@ class FundingRateTrader:
             'class': ccxt.bitget,
             'api_key': lambda: bitget_api_key,
             'api_secret': lambda: bitget_api_secret,
-            'options': {},
+            'options': {'defaultType': 'swap'},
             'name': 'Bitget'
         }
     }
@@ -169,15 +169,37 @@ class FundingRateTrader:
             包含资金费率信息的字典
         """
         try:
-            # 获取资金费率
-            funding_rate_info = self.exchange.fetch_funding_rate(symbol)
+            # 对特定交易所进行格式处理
+            query_symbol = symbol
+            if self.exchange_name in ['bitget', 'bybit', 'gateio']:
+                # 这些交易所需要特殊格式: LA/USDT -> LA/USDT:USDT
+                if symbol.endswith('/USDT'):
+                    query_symbol = f"{symbol}:USDT"
+                    logger.info(f"{self.EXCHANGE_CONFIGS[self.exchange_name]['name']}交易对格式转换: {symbol} -> {query_symbol}")
 
-            # 获取下次结算时间
-            funding_time = funding_rate_info['fundingDatetime']
-            next_funding_time = datetime.fromisoformat(funding_time.replace('Z', '+00:00'))
+            # 获取资金费率
+            funding_rate_info = self.exchange.fetch_funding_rate(query_symbol)
 
             # 获取当前资金费率
             current_funding_rate = funding_rate_info['fundingRate']
+
+            # 获取下次结算时间并转换为本地时区
+            if self.exchange_name == 'bitget':
+                info = funding_rate_info.get('info', {})
+                next_update = info.get('nextUpdate')
+                if next_update:
+                    # nextUpdate是毫秒时间戳，转换为本地时区
+                    funding_datetime_ms = int(next_update)
+                    next_funding_time = datetime.fromtimestamp(funding_datetime_ms / 1000)
+                    logger.info(f"Bitget下次结算时间 (来自nextUpdate): {next_funding_time}")
+                else:
+                    # 如果没有nextUpdate，尝试使用默认方式
+                    funding_time_str = funding_rate_info['fundingDatetime']
+                    next_funding_time = datetime.fromisoformat(funding_time_str.replace('Z', '+00:00')).astimezone()
+            else:
+                # 其他交易所使用标准方式，转换为本地时区
+                funding_time_str = funding_rate_info['fundingDatetime']
+                next_funding_time = datetime.fromisoformat(funding_time_str.replace('Z', '+00:00')).astimezone()
 
             logger.info(f"交易对: {symbol}")
             logger.info(f"当前资金费率: {current_funding_rate:.6f} ({current_funding_rate * 100:.4f}%)")
@@ -186,13 +208,53 @@ class FundingRateTrader:
             return {
                 'symbol': symbol,
                 'funding_rate': current_funding_rate,
-                'next_funding_time': next_funding_time,
-                'funding_time': funding_time
+                'next_funding_time': next_funding_time
             }
 
         except Exception as e:
             logger.error(f"获取资金费率信息失败: {e}")
+            # 如果是特定交易所且出现格式问题，提供帮助信息
+            if self.exchange_name in ['bitget', 'bybit', 'gateio']:
+                logger.error(f"提示: {self.EXCHANGE_CONFIGS[self.exchange_name]['name']}交易对可能需要特殊格式")
+                logger.error(f"尝试的格式: {query_symbol if 'query_symbol' in locals() else symbol}")
             raise
+
+    async def get_binance_max_leverage(self, symbol: str) -> int:
+        """
+        获取Binance交易所支持的最大杠杆倍数
+        
+        Args:
+            symbol: 交易对符号
+            
+        Returns:
+            int: 最大杠杆倍数
+        """
+        try:
+            # 将symbol格式转换为Binance格式 (BTC/USDT -> BTCUSDT)
+            contract_symbol = symbol.replace('/', '')
+            
+            # 获取交易对信息 (同步方法，不需要await)
+            response = self.exchange.fapiPublicGetExchangeInfo()
+            
+            if response and 'symbols' in response:
+                for symbol_info in response['symbols']:
+                    if symbol_info['symbol'] == contract_symbol:
+                        # 获取杠杆倍数信息 (同步方法，不需要await)
+                        leverage_info = self.exchange.fapiPrivateGetLeverageBracket({
+                            'symbol': contract_symbol
+                        })
+                        
+                        if leverage_info and 'brackets' in leverage_info[0]:
+                            max_leverage = int(leverage_info[0]['brackets'][0]['initialLeverage'])
+                            logger.info(f"获取到{symbol}最大杠杆倍数: {max_leverage}倍")
+                            return max_leverage
+            
+            raise Exception(f"未能获取到{symbol}的最大杠杆倍数")
+            
+        except Exception as e:
+            logger.warning(f"获取Binance最大杠杆倍数失败: {e}")
+            logger.info("使用默认杠杆倍数: 20倍")
+            return 20
 
     async def get_market_info(self, symbol: str) -> Dict[str, Any]:
         """
@@ -205,16 +267,36 @@ class FundingRateTrader:
             市场信息字典
         """
         try:
+            # 对特定交易所进行格式处理
+            query_symbol = symbol
+            if self.exchange_name in ['bitget', 'bybit', 'gateio']:
+                if symbol.endswith('/USDT'):
+                    query_symbol = f"{symbol}:USDT"
+
             # 获取市场信息
-            market = self.exchange.market(symbol)
+            market = self.exchange.market(query_symbol)
 
             # 获取24小时交易量
-            ticker = self.exchange.fetch_ticker(symbol)
+            ticker = self.exchange.fetch_ticker(query_symbol)
             volume_24h = ticker['quoteVolume']  # USDT计价的交易量
 
             # 获取交易对的最大杠杆倍数
-            # 注意：ccxt可能不直接提供这个信息，我们设置一个默认值
-            max_leverage = market.get('info', {}).get('maxLeverage', 125)
+            if self.exchange_name == 'binance':
+                # Binance使用专门的API获取真实杠杆倍数
+                max_leverage = await self.get_binance_max_leverage(symbol)
+            else:
+                # 其他交易所从市场信息中获取
+                max_leverage = market.get('limits', {}).get('leverage', {}).get('max')
+                if not max_leverage:
+                    # 如果获取不到，使用默认值
+                    default_leverages = {
+                        'bybit': 100,
+                        'gateio': 100, 
+                        'bitget': 125
+                    }
+                    max_leverage = default_leverages.get(self.exchange_name, 20)
+                    logger.info(f"使用{self.EXCHANGE_CONFIGS[self.exchange_name]['name']}默认杠杆倍数: {max_leverage}倍")
+                    
             if isinstance(max_leverage, str):
                 max_leverage = int(max_leverage)
 
@@ -332,20 +414,26 @@ class FundingRateTrader:
             leverage: 杠杆倍数
         """
         try:
+            # 对特定交易所进行格式处理
+            leverage_symbol = symbol
+            if self.exchange_name in ['bitget', 'bybit', 'gateio']:
+                if symbol.endswith('/USDT'):
+                    leverage_symbol = f"{symbol}:USDT"
+                    
             if self.exchange_name == 'binance':
-                result = self.exchange.set_leverage(leverage, symbol)
+                result = self.exchange.set_leverage(leverage, leverage_symbol)
             elif self.exchange_name == 'bybit':
                 # Bybit 需要设置保证金模式和杠杆
-                result = self.exchange.set_leverage(leverage, symbol, params={'marginMode': 'cross'})
+                result = self.exchange.set_leverage(leverage, leverage_symbol, params={'marginMode': 'cross'})
             elif self.exchange_name == 'gateio':
                 # Gate.io 通过私有API设置杠杆
-                result = self.exchange.set_leverage(leverage, symbol)
+                result = self.exchange.set_leverage(leverage, leverage_symbol)
             elif self.exchange_name == 'bitget':
                 # Bitget 设置杠杆
-                result = self.exchange.set_leverage(leverage, symbol, params={'marginMode': 'cross'})
+                result = self.exchange.set_leverage(leverage, leverage_symbol, params={'marginMode': 'cross'})
             else:
                 # 通用方法
-                result = self.exchange.set_leverage(leverage, symbol)
+                result = self.exchange.set_leverage(leverage, leverage_symbol)
 
             logger.info(f"设置杠杆倍数成功: {leverage}x")
             return result
@@ -368,8 +456,15 @@ class FundingRateTrader:
             订单信息
         """
         try:
+            # 对特定交易所进行格式处理
+            trading_symbol = symbol
+            if self.exchange_name in ['bitget', 'bybit', 'gateio']:
+                if symbol.endswith('/USDT'):
+                    trading_symbol = f"{symbol}:USDT"
+                    logger.info(f"{self.EXCHANGE_CONFIGS[self.exchange_name]['name']}下单格式转换: {symbol} -> {trading_symbol}")
+
             # 获取当前价格
-            ticker = self.exchange.fetch_ticker(symbol)
+            ticker = self.exchange.fetch_ticker(trading_symbol)
             current_price = ticker['last']
 
             # 计算数量（基于USDT金额）
@@ -396,7 +491,7 @@ class FundingRateTrader:
                 order_params = {}
 
             # 下市价空单
-            order = self.exchange.create_market_sell_order(symbol, quantity, params=order_params)
+            order = self.exchange.create_market_sell_order(trading_symbol, quantity, params=order_params)
 
             logger.info(f"空单下单成功:")
             logger.info(f"交易所: {self.EXCHANGE_CONFIGS[self.exchange_name]['name']}")
@@ -424,14 +519,20 @@ class FundingRateTrader:
             订单详细信息
         """
         try:
+            # 对特定交易所进行格式处理
+            query_symbol = symbol
+            if self.exchange_name in ['bitget', 'bybit', 'gateio']:
+                if symbol.endswith('/USDT'):
+                    query_symbol = f"{symbol}:USDT"
+
             if self.exchange_name == 'bybit':
-                closed_orders = await self.exchange.fetch_closed_orders(symbol, limit=10)
+                closed_orders = await self.exchange.fetch_closed_orders(query_symbol, limit=10)
                 for order in closed_orders:
                     if order.get('id') == order_id:
                         order_info = order
                         break
             else:
-                order_info = self.exchange.fetch_order(order_id, symbol)
+                order_info = self.exchange.fetch_order(order_id, query_symbol)
 
             logger.info(f"订单状态检查:")
             logger.info(f"订单ID: {order_id}")
@@ -460,6 +561,12 @@ class FundingRateTrader:
             平仓订单信息
         """
         try:
+            # 对特定交易所进行格式处理
+            trading_symbol = symbol
+            if self.exchange_name in ['bitget', 'bybit', 'gateio']:
+                if symbol.endswith('/USDT'):
+                    trading_symbol = f"{symbol}:USDT"
+
             # 计算平仓价格: 开仓价格 * (1 + 资金费率 - 0.5%)
             close_price = open_price * (1 + funding_rate - self.funding_rate_buffer)
 
@@ -481,7 +588,7 @@ class FundingRateTrader:
                 order_params = {'reduceOnly': True}
 
             # 下限价买入平仓单
-            order = self.exchange.create_limit_buy_order(symbol, quantity, close_price, params=order_params)
+            order = self.exchange.create_limit_buy_order(trading_symbol, quantity, close_price, params=order_params)
 
             logger.info(f"平仓订单下单成功:")
             logger.info(f"交易所: {self.EXCHANGE_CONFIGS[self.exchange_name]['name']}")
@@ -496,7 +603,7 @@ class FundingRateTrader:
             logger.error(f"下平仓订单失败: {e}")
             raise
 
-    async def monitor_stop_loss(self, symbol: str, open_price: float, quantity: float, funding_time: datetime,
+    async def monitor_stop_loss(self, symbol: str, open_price: float, quantity: float, next_funding_time: datetime,
                                 limit_order_id: str):
         """
         监控止损，在资金结算后监控价格变化
@@ -505,13 +612,13 @@ class FundingRateTrader:
             symbol: 交易对符号
             open_price: 开仓价格
             quantity: 持仓数量
-            funding_time: 资金结算时间
+            next_funding_time: 资金结算时间
             limit_order_id: 限价平仓订单ID
         """
         try:
             # 等待到资金结算时间
-            current_time = datetime.now(funding_time.tzinfo)
-            wait_seconds = (funding_time - current_time).total_seconds()
+            current_time = datetime.now()
+            wait_seconds = (next_funding_time - current_time).total_seconds()
 
             if wait_seconds > 0:
                 logger.info(f"等待 {wait_seconds:.1f} 秒到资金结算时间，然后开始止损监控")
@@ -538,7 +645,13 @@ class FundingRateTrader:
 
                 # 检查限价订单是否已成交
                 try:
-                    limit_order_status = self.exchange.fetch_order(limit_order_id, symbol)
+                    # 对特定交易所进行格式处理
+                    query_symbol = symbol
+                    if self.exchange_name in ['bitget', 'bybit', 'gateio']:
+                        if symbol.endswith('/USDT'):
+                            query_symbol = f"{symbol}:USDT"
+
+                    limit_order_status = self.exchange.fetch_order(limit_order_id, query_symbol)
                     if limit_order_status['status'] == 'closed':
                         logger.info("限价平仓订单已成交，停止止损监控")
                         return
@@ -548,7 +661,13 @@ class FundingRateTrader:
 
                 # 获取当前价格
                 try:
-                    ticker = self.exchange.fetch_ticker(symbol)
+                    # 对特定交易所进行格式处理
+                    ticker_symbol = symbol
+                    if self.exchange_name in ['bitget', 'bybit', 'gateio']:
+                        if symbol.endswith('/USDT'):
+                            ticker_symbol = f"{symbol}:USDT"
+
+                    ticker = self.exchange.fetch_ticker(ticker_symbol)
                     current_price = ticker['last']
 
                     # 计算价格变化百分比
@@ -592,10 +711,16 @@ class FundingRateTrader:
             limit_order_id: 需要取消的限价订单ID
         """
         try:
+            # 对特定交易所进行格式处理
+            trading_symbol = symbol
+            if self.exchange_name in ['bitget', 'bybit', 'gateio']:
+                if symbol.endswith('/USDT'):
+                    trading_symbol = f"{symbol}:USDT"
+
             # 1. 取消原限价订单
             logger.info("1. 取消原限价平仓订单...")
             try:
-                cancel_result = self.exchange.cancel_order(limit_order_id, symbol)
+                cancel_result = self.exchange.cancel_order(limit_order_id, trading_symbol)
                 logger.info(f"限价订单取消成功: {limit_order_id}")
             except Exception as e:
                 logger.warning(f"取消限价订单失败 (可能已成交): {e}")
@@ -615,7 +740,7 @@ class FundingRateTrader:
             else:
                 order_params = {'reduceOnly': True}
 
-            stop_loss_order = self.exchange.create_market_buy_order(symbol, quantity, params=order_params)
+            stop_loss_order = self.exchange.create_market_buy_order(trading_symbol, quantity, params=order_params)
 
             logger.info("🔴 止损平仓订单执行成功:")
             logger.info(f"交易所: {self.EXCHANGE_CONFIGS[self.exchange_name]['name']}")

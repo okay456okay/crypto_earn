@@ -112,21 +112,26 @@ python funding_rate_trader.py BTC/USDT --exchange binance --manual-time "2024-01
 - 使用期货合约 (defaultType: 'future')
 - 支持双向持仓模式
 - 需要设置positionSide参数
+- 交易对格式: 标准格式 (BTC/USDT)
 
 ### Bybit  
 - 使用线性合约 (defaultType: 'linear')
 - 双向持仓模式 (positionIdx: 2)
 - 支持全仓和逐仓模式
+- 交易对格式: 需要添加:USDT后缀 (BTC/USDT:USDT)
 
 ### Gate.io
 - 使用永续合约 (defaultType: 'swap')
 - 通过reduceOnly参数控制平仓
 - 支持杠杆动态调整
+- 交易对格式: 需要添加:USDT后缀 (BTC/USDT:USDT)
 
 ### Bitget
 - 使用永续合约 (defaultType: 'swap')  
 - 需要指定holdSide参数
 - 支持全仓交易模式
+- 交易对格式: 需要添加:USDT后缀 (BTC/USDT:USDT)
+- 时间戳处理: 使用特殊的nextUpdate毫秒时间戳
 
 ## 日志文件
 
@@ -167,6 +172,11 @@ python funding_rate_trader.py BTC/USDT --exchange binance --manual-time "2024-01
    - 考虑使用代理服务器
    - 调整请求超时参数
 
+5. **交易对格式错误**
+   - Binance: 使用标准格式 (BTC/USDT)
+   - Bybit/Gate.io/Bitget: 使用扩展格式 (BTC/USDT:USDT)
+   - 系统会自动转换，无需手动修改
+
 ### 获取帮助
 
 如遇到问题，请检查：
@@ -178,4 +188,4 @@ python funding_rate_trader.py BTC/USDT --exchange binance --manual-time "2024-01
 
 **开发版本**: v2.0.0  
 **更新时间**: 2024年  
-**作者**: 加密货币套利专家 
+**作者**: 加密货币套利专家
