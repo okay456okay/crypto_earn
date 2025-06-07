@@ -8,6 +8,7 @@
 """
 
 import asyncio
+import argparse
 import logging
 import sys
 import time
@@ -17,6 +18,7 @@ from typing import Dict, List, Tuple, Optional
 import os
 
 import ccxt
+import pytz
 
 # 添加项目根目录到Python路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -68,7 +70,7 @@ class FundingRateScanner:
     def __init__(self):
         """初始化扫描器"""
         self.exchanges = {}
-        self.funding_rate_threshold = -0.005  # -0.5%
+        self.funding_rate_threshold = -0.001  # -0.5%
         self.results = []
         
         self._initialize_exchanges()
@@ -138,6 +140,11 @@ class FundingRateScanner:
         Returns:
             下一个整点时间
         """
+        # 确保使用UTC时间
+        if current_time.tzinfo is None:
+            # 如果是naive时间，假设它是UTC时间
+            current_time = current_time.replace(tzinfo=pytz.UTC)
+        
         next_hour = current_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
         return next_hour
     
@@ -152,6 +159,17 @@ class FundingRateScanner:
         Returns:
             是否为下一个整点
         """
+        # 统一处理时区，将所有时间转换为UTC
+        if funding_time.tzinfo is None:
+            funding_time = funding_time.replace(tzinfo=pytz.UTC)
+        elif funding_time.tzinfo != pytz.UTC:
+            funding_time = funding_time.astimezone(pytz.UTC)
+            
+        if current_time.tzinfo is None:
+            current_time = current_time.replace(tzinfo=pytz.UTC)
+        elif current_time.tzinfo != pytz.UTC:
+            current_time = current_time.astimezone(pytz.UTC)
+        
         next_hour = self.get_next_hour_time(current_time)
         # 允许5分钟的误差
         time_diff = abs((funding_time - next_hour).total_seconds())
@@ -185,7 +203,12 @@ class FundingRateScanner:
             logger.info(f"{exchange_name.upper()} 找到 {len(future_symbols)} 个合约交易对")
             
             current_time = datetime.now()
+            next_hour = self.get_next_hour_time(current_time)
+            logger.info(f"{exchange_name.upper()} 当前时间: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
+            logger.info(f"{exchange_name.upper()} 下个整点: {next_hour.strftime('%Y-%m-%d %H:%M:%S')}")
+            
             checked_count = 0
+            error_count = 0
             
             for symbol in future_symbols:
                 try:
@@ -193,26 +216,46 @@ class FundingRateScanner:
                     funding_rate_info = exchange.fetch_funding_rate(symbol)
                     
                     if not funding_rate_info:
+                        logger.debug(f"{exchange_name.upper()} {symbol}: 无资金费率信息")
                         continue
                     
                     # 提取关键信息
                     funding_rate = funding_rate_info.get('fundingRate')
                     funding_datetime = funding_rate_info.get('fundingDatetime') or funding_rate_info.get('datetime')
                     
-                    if funding_rate is None or funding_datetime is None:
+                    if funding_rate is None:
+                        logger.debug(f"{exchange_name.upper()} {symbol}: 资金费率为空")
+                        continue
+                        
+                    if funding_datetime is None:
+                        logger.debug(f"{exchange_name.upper()} {symbol}: 结算时间为空")
                         continue
                     
                     # 转换时间格式
                     if isinstance(funding_datetime, str):
                         funding_time = datetime.fromisoformat(funding_datetime.replace('Z', '+00:00'))
+                    elif isinstance(funding_datetime, (int, float)):
+                        # 处理时间戳格式（毫秒或秒）
+                        if funding_datetime > 10**10:  # 毫秒时间戳
+                            funding_time = datetime.fromtimestamp(funding_datetime / 1000, tz=pytz.UTC)
+                        else:  # 秒时间戳
+                            funding_time = datetime.fromtimestamp(funding_datetime, tz=pytz.UTC)
                     else:
                         funding_time = funding_datetime
+                    
+                    # 确保时间有时区信息
+                    if funding_time.tzinfo is None:
+                        funding_time = funding_time.replace(tzinfo=pytz.UTC)
                     
                     checked_count += 1
                     
                     # 检查条件
                     is_negative_enough = funding_rate < self.funding_rate_threshold
                     is_next_hour = self.is_next_hour_settlement(funding_time, current_time)
+                    
+                    # 添加详细的调试信息
+                    logger.debug(f"{exchange_name.upper()} {symbol}: 费率={funding_rate:.6f} ({funding_rate*100:.4f}%), "
+                               f"结算时间={funding_time}, 费率条件={is_negative_enough}, 时间条件={is_next_hour}")
                     
                     if is_negative_enough and is_next_hour:
                         qualified_pairs.append({
@@ -225,24 +268,47 @@ class FundingRateScanner:
                         })
                         
                         logger.info(f"✅ {exchange_name.upper()} {symbol}: {funding_rate*100:.4f}% @ {funding_time}")
+                    elif is_negative_enough:
+                        # 费率满足但时间不满足的情况
+                        logger.debug(f"🟡 {exchange_name.upper()} {symbol}: 费率满足({funding_rate*100:.4f}%)但时间不满足({funding_time})")
+                    elif is_next_hour:
+                        # 时间满足但费率不满足的情况
+                        logger.debug(f"🟡 {exchange_name.upper()} {symbol}: 时间满足({funding_time})但费率不满足({funding_rate*100:.4f}%)")
                     
                     # 每检查100个交易对暂停一下，避免API限制
                     if checked_count % 100 == 0:
                         await asyncio.sleep(1)
-                        logger.info(f"{exchange_name.upper()} 已检查 {checked_count}/{len(future_symbols)} 个交易对")
+                        logger.info(f"{exchange_name.upper()} 已检查 {checked_count}/{len(future_symbols)} 个交易对, 发现 {len(qualified_pairs)} 个机会")
                 
                 except Exception as e:
-                    if "rate limit" in str(e).lower():
-                        logger.warning(f"{exchange_name.upper()} API限制，等待5秒...")
+                    error_count += 1
+                    error_msg = str(e)
+                    
+                    if "rate limit" in error_msg.lower():
+                        logger.warning(f"{exchange_name.upper()} {symbol}: API限制 - {error_msg}")
+                        logger.info(f"{exchange_name.upper()} API限制，等待5秒...")
                         await asyncio.sleep(5)
+                    elif "funding" in error_msg.lower() or "not supported" in error_msg.lower():
+                        # 某些交易对可能不支持资金费率
+                        logger.debug(f"{exchange_name.upper()} {symbol}: 不支持资金费率 - {error_msg}")
                     else:
-                        # 只在调试模式下显示详细错误
-                        pass
+                        # 其他未知错误，打印详细信息
+                        logger.warning(f"{exchange_name.upper()} {symbol}: 处理失败 - {error_msg}")
+                        if logger.level <= logging.DEBUG:
+                            logger.debug(f"{exchange_name.upper()} {symbol}: 错误详情: {traceback.format_exc()}")
             
-            logger.info(f"{exchange_name.upper()} 扫描完成: 共检查 {checked_count} 个交易对，找到 {len(qualified_pairs)} 个符合条件")
+            logger.info(f"{exchange_name.upper()} 扫描完成: 共检查 {checked_count} 个交易对，发生 {error_count} 个错误，找到 {len(qualified_pairs)} 个符合条件")
+            
+            # 如果没有找到符合条件的交易对，提供一些统计信息
+            if len(qualified_pairs) == 0:
+                logger.info(f"{exchange_name.upper()} 未找到符合条件的交易对，建议检查:")
+                logger.info(f"  - 当前资金费率阈值: {self.funding_rate_threshold*100:.3f}%")
+                logger.info(f"  - 当前时间: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
+                logger.info(f"  - 目标结算时间: {next_hour.strftime('%Y-%m-%d %H:%M:%S')}")
             
         except Exception as e:
             logger.error(f"扫描 {exchange_name.upper()} 交易所失败: {e}")
+            logger.error(f"错误详情: {traceback.format_exc()}")
         
         return qualified_pairs
     
@@ -348,7 +414,27 @@ class FundingRateScanner:
 async def main():
     """主函数"""
     try:
+        # 添加命令行参数解析
+        parser = argparse.ArgumentParser(description='多交易所资金费率扫描器')
+        parser.add_argument('--debug', action='store_true', help='启用调试模式，显示详细信息')
+        parser.add_argument('--threshold', type=float, default=-0.001, help='资金费率阈值 (默认: -0.001 即 -0.1%%)')
+        parser.add_argument('--log-level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'], default='INFO', help='日志级别')
+        
+        args = parser.parse_args()
+        
+        # 设置日志级别
+        if args.debug:
+            logging.getLogger().setLevel(logging.DEBUG)
+        else:
+            logging.getLogger().setLevel(getattr(logging, args.log_level))
+        
         scanner = FundingRateScanner()
+        
+        # 如果指定了阈值，更新扫描器的阈值
+        if args.threshold != -0.001:
+            scanner.funding_rate_threshold = args.threshold
+            logger.info(f"使用自定义资金费率阈值: {args.threshold*100:.3f}%")
+        
         await scanner.run_scan()
         
     except KeyboardInterrupt:
