@@ -156,6 +156,9 @@ class FundingRateTrader:
                 'options': config_info['options']
             }
 
+            if self.exchange_name == 'bitget':
+                config['password'] = config_info['password']
+
             if proxies:
                 config['proxies'] = proxies
 
