@@ -29,7 +29,7 @@ try:
         binance_api_key, binance_api_secret,
         gateio_api_key, gateio_api_secret,
         bybit_api_key, bybit_api_secret,
-        bitget_api_key, bitget_api_secret,
+        bitget_api_key, bitget_api_secret, bitget_api_passphrase,
         proxies
     )
 except ImportError:
@@ -97,6 +97,7 @@ class FundingRateTrader:
             'class': ccxt.bitget,
             'api_key': lambda: bitget_api_key,
             'api_secret': lambda: bitget_api_secret,
+            'password': bitget_api_passphrase,
             'options': {'defaultType': 'swap'},
             'name': 'Bitget'
         }
