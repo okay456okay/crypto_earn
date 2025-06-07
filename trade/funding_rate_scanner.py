@@ -16,9 +16,11 @@ import traceback
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
 import os
+import json
 
 import ccxt
 import pytz
+import requests
 
 # 添加项目根目录到Python路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -29,6 +31,7 @@ try:
         bybit_api_key, bybit_api_secret,
         bitget_api_key, bitget_api_secret,
         gateio_api_key, gateio_api_secret,
+        funding_rate_scanner_webhook_url,
         proxies
     )
 except ImportError:
@@ -42,6 +45,7 @@ except ImportError:
     bitget_api_secret = ""
     gateio_api_key = ""
     gateio_api_secret = ""
+    funding_rate_scanner_webhook_url = ""
     proxies = {}
 
 # 配置日志
@@ -70,7 +74,7 @@ class FundingRateScanner:
     def __init__(self):
         """初始化扫描器"""
         self.exchanges = {}
-        self.funding_rate_threshold = -0.001  # -0.5%
+        self.funding_rate_threshold = -0.005  # -0.5%
         self.results = []
         
         self._initialize_exchanges()
@@ -421,12 +425,100 @@ class FundingRateScanner:
             logger.info("")
             logger.info(f"扫描完成，耗时: {duration:.1f} 秒")
             
+            # 发送企业微信消息
+            self.send_wechat_message(qualified_pairs)
+            
             return qualified_pairs
             
         except Exception as e:
             logger.error(f"扫描过程出错: {e}")
             logger.error(f"错误详情: {traceback.format_exc()}")
             return []
+
+    def send_wechat_message(self, qualified_pairs: List[Dict]):
+        """
+        发送企业微信群消息通知
+        
+        Args:
+            qualified_pairs: 符合条件的交易对列表
+        """
+        if not funding_rate_scanner_webhook_url or not qualified_pairs:
+            return
+        
+        try:
+            # 构造消息内容
+            current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
+            # 统计各交易所数量
+            exchange_stats = {}
+            for pair in qualified_pairs:
+                exchange = pair['exchange']
+                exchange_stats[exchange] = exchange_stats.get(exchange, 0) + 1
+            
+            # 构造消息文本
+            message_lines = [
+                f"🎯 **资金费率套利机会发现** 🎯",
+                f"⏰ 扫描时间：{current_time}",
+                f"📊 发现 **{len(qualified_pairs)}** 个符合条件的交易对",
+                f"💰 条件：资金费率 < {self.funding_rate_threshold*100:.1f}% 且下次结算为下个整点",
+                "",
+                "📈 **详细列表：**"
+            ]
+            
+            # 添加前10个最优机会
+            top_pairs = qualified_pairs[:10]  # 取前10个最优机会
+            for i, pair in enumerate(top_pairs, 1):
+                funding_pct = pair['funding_rate_pct']
+                settlement_time = pair['next_funding_time'].strftime('%H:%M')
+                message_lines.append(
+                    f"`{i:>2}.` **{pair['exchange']}** {pair['symbol']} "
+                    f"`{funding_pct:>7.3f}%` @{settlement_time}"
+                )
+            
+            if len(qualified_pairs) > 10:
+                message_lines.append(f"... 还有 {len(qualified_pairs) - 10} 个机会")
+            
+            message_lines.extend([
+                "",
+                "📊 **各交易所统计：**"
+            ])
+            
+            for exchange, count in exchange_stats.items():
+                message_lines.append(f"• **{exchange}**: {count} 个机会")
+            
+            message_text = "\n".join(message_lines)
+            
+            # 发送企业微信消息
+            payload = {
+                "msgtype": "markdown",
+                "markdown": {
+                    "content": message_text
+                }
+            }
+            
+            headers = {
+                'Content-Type': 'application/json'
+            }
+            
+            response = requests.post(
+                funding_rate_scanner_webhook_url,
+                json=payload,
+                headers=headers,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                if result.get('errcode') == 0:
+                    logger.info("✅ 企业微信消息发送成功")
+                else:
+                    logger.warning(f"⚠️ 企业微信消息发送失败: {result}")
+            else:
+                logger.warning(f"⚠️ 企业微信消息发送失败，HTTP状态码: {response.status_code}")
+                
+        except Exception as e:
+            logger.error(f"❌ 发送企业微信消息时出错: {e}")
+            logger.error(f"错误详情: {traceback.format_exc()}")
 
 async def main():
     """主函数"""
