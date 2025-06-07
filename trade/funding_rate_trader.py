@@ -531,7 +531,7 @@ class FundingRateTrader:
                     query_symbol = f"{symbol}:USDT"
 
             if self.exchange_name == 'bybit':
-                closed_orders = await self.exchange.fetch_closed_orders(query_symbol, limit=10)
+                closed_orders = self.exchange.fetch_closed_orders(query_symbol, limit=10)
                 for order in closed_orders:
                     if order.get('id') == order_id:
                         order_info = order
