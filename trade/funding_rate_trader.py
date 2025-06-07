@@ -436,9 +436,9 @@ class FundingRateTrader:
                     'buyLeverage': str(leverage),
                     'sellLeverage': str(leverage)
                 }
-                logger.info(f"使用Bybit支持的最大杠杆倍数: {leverage}倍")
+                logger.info(f"设置Bybit {symbol}合约杠杆倍数为: {leverage}x")
                 self.exchange.privatePostV5PositionSetLeverage(params)
-                logger.info(f"设置Bybit {leverage_symbol}合约杠杆倍数为: {leverage}x")
+                logger.info(f"Bybit杠杆设置成功: {leverage}x")
             elif self.exchange_name == 'gateio':
                 # Gate.io 通过私有API设置杠杆
                 result = self.exchange.set_leverage(leverage, leverage_symbol)
