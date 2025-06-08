@@ -218,6 +218,7 @@ class FundingRateScanner:
             
             checked_count = 0
             error_count = 0
+            volume_filtered_count = 0
             
             for symbol in future_symbols:
                 try:
@@ -276,16 +277,46 @@ class FundingRateScanner:
                                f"结算时间={funding_time}, 费率条件={is_negative_enough}, 时间条件={is_next_hour}")
                     
                     if is_negative_enough and is_next_hour:
-                        qualified_pairs.append({
-                            'exchange': exchange_name.upper(),
-                            'symbol': symbol,
-                            'funding_rate': funding_rate,
-                            'funding_rate_pct': funding_rate * 100,
-                            'next_funding_time': funding_time,
-                            'current_time': current_time
-                        })
-                        
-                        logger.info(f"✅ {exchange_name.upper()} {symbol}: {funding_rate*100:.4f}% @ {funding_time}")
+                        # 获取24小时交易量数据
+                        try:
+                            ticker = exchange.fetch_ticker(symbol)
+                            quote_volume_24h = ticker.get('quoteVolume')  # 24小时成交额（USDT）
+                            
+                            if quote_volume_24h is None or quote_volume_24h <= 0:
+                                logger.debug(f"{exchange_name.upper()} {symbol}: 无24小时交易量数据")
+                                continue
+                            
+                            # 计算平均每分钟交易额（USDT）
+                            avg_volume_per_minute = quote_volume_24h / (24 * 60)
+                            
+                            # 检查平均每分钟交易额是否满足条件（至少2万USDT）
+                            min_volume_threshold = 20000  # 2万USDT
+                            
+                            if avg_volume_per_minute < min_volume_threshold:
+                                volume_filtered_count += 1
+                                logger.debug(f"{exchange_name.upper()} {symbol}: 交易量不足，"
+                                           f"平均每分钟交易额={avg_volume_per_minute:.0f} USDT < {min_volume_threshold} USDT")
+                                continue
+                            
+                            # 添加到符合条件的列表
+                            qualified_pairs.append({
+                                'exchange': exchange_name.upper(),
+                                'symbol': symbol,
+                                'funding_rate': funding_rate,
+                                'funding_rate_pct': funding_rate * 100,
+                                'next_funding_time': funding_time,
+                                'current_time': current_time,
+                                'volume_24h_usdt': quote_volume_24h,
+                                'avg_volume_per_minute_usdt': avg_volume_per_minute
+                            })
+                            
+                            logger.info(f"✅ {exchange_name.upper()} {symbol}: {funding_rate*100:.4f}% @ {funding_time.strftime('%H:%M')} "
+                                      f"(24h成交额: {quote_volume_24h/1000000:.1f}M USDT, 平均/分钟: {avg_volume_per_minute:.0f} USDT)")
+                            
+                        except Exception as volume_error:
+                            logger.warning(f"{exchange_name.upper()} {symbol}: 获取交易量失败 - {volume_error}")
+                            continue
+                            
                     elif is_negative_enough:
                         # 费率满足但时间不满足的情况
                         if 'LA/USDT' in symbol:  # 特别关注LA/USDT
@@ -299,7 +330,8 @@ class FundingRateScanner:
                     # 每检查100个交易对暂停一下，避免API限制
                     if checked_count % 100 == 0:
                         await asyncio.sleep(1)
-                        logger.info(f"{exchange_name.upper()} 已检查 {checked_count}/{len(future_symbols)} 个交易对, 发现 {len(qualified_pairs)} 个机会")
+                        logger.info(f"{exchange_name.upper()} 已检查 {checked_count}/{len(future_symbols)} 个交易对, "
+                                  f"发现 {len(qualified_pairs)} 个机会, 交易量过滤 {volume_filtered_count} 个")
                 
                 except Exception as e:
                     error_count += 1
@@ -318,7 +350,8 @@ class FundingRateScanner:
                         if logger.level <= logging.DEBUG:
                             logger.debug(f"{exchange_name.upper()} {symbol}: 错误详情: {traceback.format_exc()}")
             
-            logger.info(f"{exchange_name.upper()} 扫描完成: 共检查 {checked_count} 个交易对，发生 {error_count} 个错误，找到 {len(qualified_pairs)} 个符合条件")
+            logger.info(f"{exchange_name.upper()} 扫描完成: 共检查 {checked_count} 个交易对，发生 {error_count} 个错误，"
+                       f"交易量过滤 {volume_filtered_count} 个，最终找到 {len(qualified_pairs)} 个符合条件")
             
             # 如果没有找到符合条件的交易对，提供一些统计信息
             if len(qualified_pairs) == 0:
@@ -326,6 +359,7 @@ class FundingRateScanner:
                 logger.info(f"  - 当前资金费率阈值: {self.funding_rate_threshold*100:.3f}%")
                 logger.info(f"  - 当前时间: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
                 logger.info(f"  - 目标结算时间: {next_hour.strftime('%Y-%m-%d %H:%M:%S')}")
+                logger.info(f"  - 最小交易量要求: 平均每分钟 20,000 USDT")
             
         except Exception as e:
             logger.error(f"扫描 {exchange_name.upper()} 交易所失败: {e}")
@@ -386,15 +420,18 @@ class FundingRateScanner:
         logger.info("")
         
         # 表头
-        logger.info(f"{'序号':<4} {'交易所':<8} {'交易对':<15} {'资金费率':<10} {'下次结算时间':<20}")
-        logger.info("-" * 70)
+        logger.info(f"{'序号':<4} {'交易所':<8} {'交易对':<15} {'资金费率':<10} {'24h成交额':<12} {'平均/分钟':<12} {'下次结算时间':<20}")
+        logger.info("-" * 90)
         
         # 详细信息
         for i, pair in enumerate(qualified_pairs, 1):
+            volume_24h_m = pair['volume_24h_usdt'] / 1000000  # 转换为百万USDT
+            avg_volume_k = pair['avg_volume_per_minute_usdt'] / 1000  # 转换为千USDT
             logger.info(f"{i:<4} {pair['exchange']:<8} {pair['symbol']:<15} "
-                       f"{pair['funding_rate_pct']:>7.4f}%  {pair['next_funding_time'].strftime('%Y-%m-%d %H:%M:%S')}")
+                       f"{pair['funding_rate_pct']:>7.4f}%  {volume_24h_m:>8.1f}M    {avg_volume_k:>8.1f}K     "
+                       f"{pair['next_funding_time'].strftime('%Y-%m-%d %H:%M:%S')}")
         
-        logger.info("-" * 70)
+        logger.info("-" * 90)
         logger.info(f"总计: {len(qualified_pairs)} 个机会")
         
         # 统计每个交易所的数量
@@ -407,6 +444,22 @@ class FundingRateScanner:
         logger.info("各交易所统计:")
         for exchange, count in exchange_stats.items():
             logger.info(f"  {exchange}: {count} 个机会")
+        
+        # 添加交易量统计
+        if qualified_pairs:
+            total_volume_24h = sum(pair['volume_24h_usdt'] for pair in qualified_pairs)
+            avg_volume_24h = total_volume_24h / len(qualified_pairs)
+            max_volume_pair = max(qualified_pairs, key=lambda x: x['volume_24h_usdt'])
+            min_volume_pair = min(qualified_pairs, key=lambda x: x['volume_24h_usdt'])
+            
+            logger.info("")
+            logger.info("交易量统计:")
+            logger.info(f"  总24h成交额: {total_volume_24h/1000000:.1f}M USDT")
+            logger.info(f"  平均24h成交额: {avg_volume_24h/1000000:.1f}M USDT")
+            logger.info(f"  最高交易量: {max_volume_pair['exchange']} {max_volume_pair['symbol']} "
+                       f"({max_volume_pair['volume_24h_usdt']/1000000:.1f}M USDT)")
+            logger.info(f"  最低交易量: {min_volume_pair['exchange']} {min_volume_pair['symbol']} "
+                       f"({min_volume_pair['volume_24h_usdt']/1000000:.1f}M USDT)")
     
     async def run_scan(self):
         """运行完整扫描流程"""
@@ -461,6 +514,7 @@ class FundingRateScanner:
                 f"⏰ 扫描时间：{current_time}",
                 f"📊 发现 **{len(qualified_pairs)}** 个符合条件的交易对",
                 f"💰 条件：资金费率 < {self.funding_rate_threshold*100:.1f}% 且下次结算为下个整点",
+                f"📈 交易量：平均每分钟 ≥ 20,000 USDT",
                 "",
                 "📈 **详细列表：**"
             ]
@@ -470,9 +524,12 @@ class FundingRateScanner:
             for i, pair in enumerate(top_pairs, 1):
                 funding_pct = pair['funding_rate_pct']
                 settlement_time = pair['next_funding_time'].strftime('%H:%M')
+                volume_24h_m = pair['volume_24h_usdt'] / 1000000  # 转换为百万USDT
+                avg_volume_k = pair['avg_volume_per_minute_usdt'] / 1000  # 转换为千USDT
                 message_lines.append(
                     f"`{i:>2}.` **{pair['exchange']}** {pair['symbol']} "
-                    f"`{funding_pct:>7.3f}%` @{settlement_time}"
+                    f"`{funding_pct:>7.3f}%` @{settlement_time} "
+                    f"(24h: {volume_24h_m:.1f}M, 平均/分钟: {avg_volume_k:.0f}K)"
                 )
             
             if len(qualified_pairs) > 10:
@@ -485,6 +542,17 @@ class FundingRateScanner:
             
             for exchange, count in exchange_stats.items():
                 message_lines.append(f"• **{exchange}**: {count} 个机会")
+            
+            # 添加交易量统计
+            if qualified_pairs:
+                total_volume_24h = sum(pair['volume_24h_usdt'] for pair in qualified_pairs)
+                avg_volume_24h = total_volume_24h / len(qualified_pairs)
+                message_lines.extend([
+                    "",
+                    "💹 **交易量统计：**",
+                    f"• 总24h成交额: **{total_volume_24h/1000000:.1f}M USDT**",
+                    f"• 平均24h成交额: **{avg_volume_24h/1000000:.1f}M USDT**"
+                ])
             
             message_text = "\n".join(message_lines)
             
