@@ -416,8 +416,8 @@ class ExchangeArbitrageCalculator:
                 bybit_positions = [p for p in self.positions['bybit'] if p['token'] == token]
                 for pos in bybit_positions:
                     contracts = abs(pos['contracts'])
-                    if contracts == 0:
-                        continue
+                    # if contracts == 0:
+                    #     continue
 
                     # 获取资金费率信息
                     funding_info = self.exchange_api.get_bybit_futures_funding_rate(token + 'USDT')
