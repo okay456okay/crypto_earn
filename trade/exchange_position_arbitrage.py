@@ -34,6 +34,7 @@ from config import (
     binance_api_key, binance_api_secret,
     bybit_api_key, bybit_api_secret,
     bitget_api_key, bitget_api_secret, bitget_api_passphrase,
+    gateio_api_key, gateio_api_secret,
     proxies,
     project_root, earn_auto_sell
 )
@@ -62,6 +63,7 @@ class ExchangeArbitrageCalculator:
         self.aggregated_positions = defaultdict(lambda: {'long': 0, 'short': 0})
         self.token_prices = {}
         self.gateio_earn_positions = []
+        self.gateio_spot_balances = {}  # 添加GateIO现货余额字典
         self.exchange_api = ExchangeAPI()  # 初始化ExchangeAPI实例
 
     def init_exchanges(self):
@@ -91,6 +93,15 @@ class ExchangeArbitrageCalculator:
             'enableRateLimit': True,
             'proxies': proxies,
             'aiohttp_proxy': proxies.get('https', None)
+        })
+
+        self.gateio = ccxtpro.gateio({
+            'apiKey': gateio_api_key,
+            'secret': gateio_api_secret,
+            'enableRateLimit': True,
+            'proxies': proxies,
+            'aiohttp_proxy': proxies.get('https', None),
+            'options': {'defaultType': 'spot'}  # 设置为现货账户
         })
 
     def get_token_from_symbol(self, symbol):
@@ -276,6 +287,27 @@ class ExchangeArbitrageCalculator:
             logger.error(f"获取GateIO理财持仓失败: {str(e)}")
             return []
 
+    async def fetch_gateio_spot_balances(self):
+        """获取GateIO现货余额"""
+        try:
+            balance = await self.gateio.fetch_balance()
+            self.gateio_spot_balances = {}
+            
+            for currency, info in balance.items():
+                if currency == 'info' or not isinstance(info, dict):
+                    continue
+                    
+                total_amount = float(info.get('total', 0))
+                if total_amount > 0:
+                    self.gateio_spot_balances[currency] = total_amount
+                    
+            logger.info(f"获取GateIO现货余额成功: {len(self.gateio_spot_balances)}个币种")
+            return self.gateio_spot_balances
+
+        except Exception as e:
+            logger.error(f"获取GateIO现货余额失败: {str(e)}")
+            return {}
+
     def calculate_arbitrage(self):
         """计算GateIO理财和合约持仓对冲情况"""
         arbitrage_results = []
@@ -359,6 +391,7 @@ class ExchangeArbitrageCalculator:
         arbitrage_table = Table(title="GateIO理财与套利情况", box=box.ROUNDED)
         arbitrage_table.add_column("代币", justify="left", style="cyan")
         arbitrage_table.add_column("理财数量", justify="right")
+        arbitrage_table.add_column("现货余额", justify="right")
         arbitrage_table.add_column("合约净仓位", justify="right")
         arbitrage_table.add_column("对冲差额", justify="right")
         arbitrage_table.add_column("当前价格", justify="right")
@@ -382,13 +415,16 @@ class ExchangeArbitrageCalculator:
             total_lend_amount = earn_position.get('total_lend_amount', 0)
             total_lend_available = earn_position.get('total_lend_available', 0)
 
+            # 获取GateIO现货余额
+            spot_balance = self.gateio_spot_balances.get(token, 0)
+
             # 只计算在合约中也有的代币
             if token in self.aggregated_positions:
                 net_position = self.aggregated_positions[token]['long'] - self.aggregated_positions[token]['short']
 
                 # 如果合约净仓位为0，则跳过显示
-                # if net_position == 0:
-                #     continue
+                if net_position == 0:
+                    continue
 
                 # 计算合约资金费率年化收益率
                 funding_rate_apy = 0
@@ -460,14 +496,15 @@ class ExchangeArbitrageCalculator:
                 else:
                     combined_apy = 0
 
-                # 理财多少，合约应该空多少 (净空仓)，所以理财量+净仓位应该接近0
-                hedge_diff = earn_amount + net_position
+                # 修改对冲差额计算逻辑：gateio现货+gateio理财-合约仓位
+                hedge_diff = (spot_balance + earn_amount) - (-net_position)  # 合约净仓位为负数表示空仓
                 arbitrage_value = hedge_diff * price
                 arbitrage_rate = (arbitrage_value / earn_value * 100) if earn_value > 0 else 0  # 套利收益率
 
                 arbitrage_summary.append({
                     'token': token,
                     'earn_amount': earn_amount,
+                    'spot_balance': spot_balance,
                     'net_position': net_position,
                     'hedge_diff': hedge_diff,
                     'price': price,
@@ -528,6 +565,7 @@ class ExchangeArbitrageCalculator:
             arbitrage_table.add_row(
                 pos['token'],
                 f"{pos['earn_amount']:.2f}",
+                f"{pos['spot_balance']:.2f}",
                 f"{pos['net_position']:.2f}",
                 f"{pos['hedge_diff']:.2f}",
                 f"{pos['price']:.6f}",
@@ -555,6 +593,65 @@ class ExchangeArbitrageCalculator:
         # 打印GateIO理财与套利情况表格
         console.print(arbitrage_table)
 
+        # 打印合约净仓位为0但gateio现货+理财大于0的代币
+        console.print("\n【合约净仓位为0但有GateIO现货+理财的代币】")
+        no_contract_positions = []
+        
+        # 检查所有理财代币
+        for earn_position in self.gateio_earn_positions:
+            token = earn_position['token']
+            earn_amount = earn_position['amount']
+            spot_balance = self.gateio_spot_balances.get(token, 0)
+            total_amount = spot_balance + earn_amount
+            
+            # 检查是否有合约仓位
+            net_position = 0
+            if token in self.aggregated_positions:
+                net_position = self.aggregated_positions[token]['long'] - self.aggregated_positions[token]['short']
+            
+            if net_position == 0 and total_amount > 0:
+                price = self.token_prices.get(token, earn_position['price'])
+                total_value = total_amount * price
+                no_contract_positions.append({
+                    'token': token,
+                    'spot_balance': spot_balance,
+                    'earn_amount': earn_amount,
+                    'total_amount': total_amount,
+                    'price': price,
+                    'total_value': total_value
+                })
+        
+        # 检查纯现货持仓（没有理财的）
+        for token, spot_balance in self.gateio_spot_balances.items():
+            if spot_balance > 0:
+                # 检查是否已在理财列表中
+                if not any(p['token'] == token for p in self.gateio_earn_positions):
+                    # 检查是否有合约仓位
+                    net_position = 0
+                    if token in self.aggregated_positions:
+                        net_position = self.aggregated_positions[token]['long'] - self.aggregated_positions[token]['short']
+                    
+                    if net_position == 0:
+                        price = self.token_prices.get(token, 0)
+                        if price == 0:
+                            continue  # 跳过没有价格信息的代币
+                        
+                        total_value = spot_balance * price
+                        no_contract_positions.append({
+                            'token': token,
+                            'spot_balance': spot_balance,
+                            'earn_amount': 0,
+                            'total_amount': spot_balance,
+                            'price': price,
+                            'total_value': total_value
+                        })
+        
+        # 按总价值排序并打印
+        no_contract_positions.sort(key=lambda x: x['total_value'], reverse=True)
+        for pos in no_contract_positions:
+            console.print(f"  {pos['token']}: 现货={pos['spot_balance']:.2f}, 理财={pos['earn_amount']:.2f}, "
+                         f"总计={pos['total_amount']:.2f}, 价值={pos['total_value']:.2f} USDT")
+
         # 打印合约中有但理财没有的代币
         for token, positions in self.aggregated_positions.items():
             if token not in [p['token'] for p in self.gateio_earn_positions]:
@@ -570,10 +667,10 @@ class ExchangeArbitrageCalculator:
                     arbitrage_table.add_row(
                         token,
                         "0.00",
+                        f"{self.gateio_spot_balances.get(token, 0):.2f}",
                         f"{net_position:.2f}",
                         f"{-net_position:.2f}",
                         f"{price:.6f}",
-                        "0.00",
                         "0.00",
                         "0.00",
                         "0.00",
@@ -614,15 +711,17 @@ class ExchangeArbitrageCalculator:
         await self.binance.close()
         await self.bybit.close()
         await self.bitget.close()
+        await self.gateio.close()
 
     async def run(self):
         """运行主程序"""
         try:
-            # 获取所有交易所的持仓信息
+            # 获取所有交易所的持仓信息和GateIO现货余额
             await asyncio.gather(
                 self.fetch_binance_positions(),
                 self.fetch_bybit_positions(),
-                self.fetch_bitget_positions()
+                self.fetch_bitget_positions(),
+                self.fetch_gateio_spot_balances()
             )
 
             # 获取GateIO理财持仓
