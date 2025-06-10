@@ -516,9 +516,9 @@ class ExchangeArbitrageCalculator:
         for pos in arbitrage_summary:
             # 检查是否需要标红和加粗
             should_highlight = (
-                pos['funding_rate_apy'] < 0 or  # 合约年化为负
-                pos['last_rate_year'] < 3 or    # 理财年化小于3%
-                pos['combined_apy'] < 15         # 综合年化小于3%
+                # pos['funding_rate_apy'] < 0 or  # 合约年化为负
+                # pos['last_rate_year'] < 3 or    # 理财年化小于3%
+                pos['combined_apy'] < 10         # 综合年化小于3%
             )
             
             # 设置样式
