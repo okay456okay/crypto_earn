@@ -387,8 +387,8 @@ class ExchangeArbitrageCalculator:
                 net_position = self.aggregated_positions[token]['long'] - self.aggregated_positions[token]['short']
 
                 # 如果合约净仓位为0，则跳过显示
-                if net_position == 0:
-                    continue
+                # if net_position == 0:
+                #     continue
 
                 # 计算合约资金费率年化收益率
                 funding_rate_apy = 0
@@ -416,8 +416,8 @@ class ExchangeArbitrageCalculator:
                 bybit_positions = [p for p in self.positions['bybit'] if p['token'] == token]
                 for pos in bybit_positions:
                     contracts = abs(pos['contracts'])
-                    # if contracts == 0:
-                    #     continue
+                    if contracts == 0:
+                        continue
 
                     # 获取资金费率信息
                     funding_info = self.exchange_api.get_bybit_futures_funding_rate(token + 'USDT')
@@ -518,7 +518,7 @@ class ExchangeArbitrageCalculator:
             should_highlight = (
                 # pos['funding_rate_apy'] < 0 or  # 合约年化为负
                 # pos['last_rate_year'] < 3 or    # 理财年化小于3%
-                pos['combined_apy'] < 10 or       # 综合年化小于10%
+                pos['combined_apy'] < 20 or       # 综合年化小于10%
                 (pos['earn_amount'] > 0 and abs(pos['hedge_diff']) / pos['earn_amount'] > 0.1)  # 对冲差额/理财数量超过10%
             )
             
