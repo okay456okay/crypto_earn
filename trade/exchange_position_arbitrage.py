@@ -518,7 +518,8 @@ class ExchangeArbitrageCalculator:
             should_highlight = (
                 # pos['funding_rate_apy'] < 0 or  # 合约年化为负
                 # pos['last_rate_year'] < 3 or    # 理财年化小于3%
-                pos['combined_apy'] < 10         # 综合年化小于3%
+                pos['combined_apy'] < 10 or       # 综合年化小于10%
+                (pos['earn_amount'] > 0 and abs(pos['hedge_diff']) / pos['earn_amount'] > 0.1)  # 对冲差额/理财数量超过10%
             )
             
             # 设置样式
