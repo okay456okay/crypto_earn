@@ -401,8 +401,6 @@ class ExchangeArbitrageCalculator:
         arbitrage_table.add_column("综合年化", justify="right")
         arbitrage_table.add_column("套利价值", justify="right")
         arbitrage_table.add_column("套利收益率", justify="right")
-        arbitrage_table.add_column("借出总额", justify="right")
-        arbitrage_table.add_column("可借总额", justify="right")
 
         # 计算套利情况
         arbitrage_summary = []
@@ -418,16 +416,18 @@ class ExchangeArbitrageCalculator:
             # 获取GateIO现货余额
             spot_balance = self.gateio_spot_balances.get(token, 0)
 
-            # 只计算在合约中也有的代币
+            # 计算合约净仓位
+            net_position = 0
             if token in self.aggregated_positions:
                 net_position = self.aggregated_positions[token]['long'] - self.aggregated_positions[token]['short']
 
-                # 如果合约净仓位为0，则跳过显示
-                if net_position == 0:
-                    continue
+            # 如果合约净仓位为0且现货+理财总量为0，则跳过显示
+            if net_position == 0 and (spot_balance + earn_amount) == 0:
+                continue
 
-                # 计算合约资金费率年化收益率
-                funding_rate_apy = 0
+            # 计算合约资金费率年化收益率（仅在有合约仓位时计算）
+            funding_rate_apy = 0
+            if net_position != 0:
                 total_contract_value = 0
 
                 # Binance资金费率
@@ -488,79 +488,159 @@ class ExchangeArbitrageCalculator:
                 if total_contract_value > 0:
                     funding_rate_apy = funding_rate_apy / total_contract_value
 
-                # 计算综合加权收益率
-                total_value = total_contract_value + earn_value
+            # 计算综合加权收益率
+            if net_position != 0:
+                total_value = abs(net_position) * price + earn_value
                 if total_value > 0:
-                    # combined_apy = (funding_rate_apy * total_contract_value + last_rate_year * earn_value) / total_value
                     combined_apy = funding_rate_apy + last_rate_year
                 else:
                     combined_apy = 0
+            else:
+                # 没有合约仓位时，综合年化等于理财年化
+                combined_apy = last_rate_year
 
-                # 修改对冲差额计算逻辑：gateio现货+gateio理财-合约仓位
-                hedge_diff = (spot_balance + earn_amount) - (-net_position)  # 合约净仓位为负数表示空仓
-                arbitrage_value = hedge_diff * price
-                arbitrage_rate = (arbitrage_value / earn_value * 100) if earn_value > 0 else 0  # 套利收益率
+            # 修改对冲差额计算逻辑：gateio现货+gateio理财-合约仓位
+            hedge_diff = (spot_balance + earn_amount) - (-net_position)  # 合约净仓位为负数表示空仓
+            arbitrage_value = hedge_diff * price
+            arbitrage_rate = (arbitrage_value / earn_value * 100) if earn_value > 0 else 0  # 套利收益率
 
-                arbitrage_summary.append({
-                    'token': token,
-                    'earn_amount': earn_amount,
-                    'spot_balance': spot_balance,
-                    'net_position': net_position,
-                    'hedge_diff': hedge_diff,
-                    'price': price,
-                    'earn_value': earn_value,
-                    'last_rate_year': last_rate_year,
-                    'funding_rate_apy': funding_rate_apy,
-                    'combined_apy': combined_apy,
-                    'arbitrage_value': arbitrage_value,
-                    'arbitrage_rate': arbitrage_rate,
-                    'total_lend_amount': total_lend_amount,
-                    'total_lend_available': total_lend_available
-                })
+            arbitrage_summary.append({
+                'token': token,
+                'earn_amount': earn_amount,
+                'spot_balance': spot_balance,
+                'net_position': net_position,
+                'hedge_diff': hedge_diff,
+                'price': price,
+                'earn_value': earn_value,
+                'last_rate_year': last_rate_year,
+                'funding_rate_apy': funding_rate_apy,
+                'combined_apy': combined_apy,
+                'arbitrage_value': arbitrage_value,
+                'arbitrage_rate': arbitrage_rate,
+                'total_lend_amount': total_lend_amount,
+                'total_lend_available': total_lend_available
+            })
 
-                # 检查是否需要关闭仓位
-                if last_rate_year < 5 and funding_rate_apy < 12:
-                    # 找出空仓持仓量最大的交易所
-                    binance_short = sum(p['contracts'] for p in self.positions['binance'] if p['token'] == token and p['side'] == 'short')
-                    bybit_short = sum(p['contracts'] for p in self.positions['bybit'] if p['token'] == token and p['side'] == 'short')
-                    bitget_short = sum(p['contracts'] for p in self.positions['bitget'] if p['token'] == token and p['side'] == 'short')
+            # 检查是否需要关闭仓位（仅在有合约仓位时检查）
+            if net_position != 0 and last_rate_year < 5 and funding_rate_apy < 12:
+                # 找出空仓持仓量最大的交易所
+                binance_short = sum(p['contracts'] for p in self.positions['binance'] if p['token'] == token and p['side'] == 'short')
+                bybit_short = sum(p['contracts'] for p in self.positions['bybit'] if p['token'] == token and p['side'] == 'short')
+                bitget_short = sum(p['contracts'] for p in self.positions['bitget'] if p['token'] == token and p['side'] == 'short')
+                
+                exchange_shorts = {
+                    'binance': binance_short,
+                    'bybit': bybit_short,
+                    'bitget': bitget_short
+                }
+                
+                logger.info(f"代币 {token} 各交易所空仓持仓量: Binance={binance_short}, Bybit={bybit_short}, Bitget={bitget_short}")
+                
+                # 找出空仓持仓量最大的交易所
+                max_short_exchange = max(exchange_shorts.items(), key=lambda x: x[1])
+                
+                if max_short_exchange[1] > 0 and earn_auto_sell:  # 如果有空仓
+                    try:
+                        # 运行close.sh脚本
+                        cmd = f"{project_root}/scripts/close.sh -e {max_short_exchange[0]} -s {token}"
+                        logger.info(f"执行关闭仓位命令: {cmd}")
+                        subprocess.run(cmd, shell=True, check=True)
+                        sleep(1)
+                    except Exception as e:
+                        logger.error(f"关闭仓位失败: {str(e)}")
+
+        # 添加合约中有但理财和现货都没有的代币到表格中
+        for token, positions in self.aggregated_positions.items():
+            # 检查是否已在理财列表中
+            if not any(p['token'] == token for p in self.gateio_earn_positions):
+                # 检查是否已在现货列表中
+                spot_balance = self.gateio_spot_balances.get(token, 0)
+                if spot_balance == 0:
+                    net_position = positions['long'] - positions['short']
+
+                    # 如果合约净仓位为0，则跳过显示
+                    if net_position == 0:
+                        continue
+
+                    price = self.token_prices.get(token, 0)
+                    if price == 0:
+                        continue
                     
-                    exchange_shorts = {
-                        'binance': binance_short,
-                        'bybit': bybit_short,
-                        'bitget': bitget_short
-                    }
+                    # 计算对冲差额
+                    hedge_diff = 0 - (-net_position)  # 没有现货和理财，只有合约
+                    arbitrage_value = hedge_diff * price
                     
-                    logger.info(f"代币 {token} 各交易所空仓持仓量: Binance={binance_short}, Bybit={bybit_short}, Bitget={bitget_short}")
+                    arbitrage_summary.append({
+                        'token': token,
+                        'earn_amount': 0,
+                        'spot_balance': 0,
+                        'net_position': net_position,
+                        'hedge_diff': hedge_diff,
+                        'price': price,
+                        'earn_value': 0,
+                        'last_rate_year': 0,
+                        'funding_rate_apy': 0,
+                        'combined_apy': 0,
+                        'arbitrage_value': arbitrage_value,
+                        'arbitrage_rate': 0,
+                        'total_lend_amount': 0,
+                        'total_lend_available': 0
+                    })
+
+        # 添加纯现货持仓（没有理财的）到表格中
+        for token, spot_balance in self.gateio_spot_balances.items():
+            if spot_balance > 0:
+                # 检查是否已在理财列表中
+                if not any(p['token'] == token for p in self.gateio_earn_positions):
+                    # 计算合约净仓位
+                    net_position = 0
+                    if token in self.aggregated_positions:
+                        net_position = self.aggregated_positions[token]['long'] - self.aggregated_positions[token]['short']
                     
-                    # 找出空仓持仓量最大的交易所
-                    max_short_exchange = max(exchange_shorts.items(), key=lambda x: x[1])
+                    price = self.token_prices.get(token, 0)
+                    if price == 0:
+                        continue  # 跳过没有价格信息的代币
                     
-                    if max_short_exchange[1] > 0 and earn_auto_sell:  # 如果有空仓
-                        try:
-                            # 运行close.sh脚本
-                            cmd = f"{project_root}/scripts/close.sh -e {max_short_exchange[0]} -s {token}"
-                            logger.info(f"执行关闭仓位命令: {cmd}")
-                            subprocess.run(cmd, shell=True, check=True)
-                            sleep(1)
-                        except Exception as e:
-                            logger.error(f"关闭仓位失败: {str(e)}")
+                    # 计算对冲差额
+                    hedge_diff = spot_balance - (-net_position)
+                    arbitrage_value = hedge_diff * price
+                    
+                    arbitrage_summary.append({
+                        'token': token,
+                        'earn_amount': 0,
+                        'spot_balance': spot_balance,
+                        'net_position': net_position,
+                        'hedge_diff': hedge_diff,
+                        'price': price,
+                        'earn_value': 0,
+                        'last_rate_year': 0,
+                        'funding_rate_apy': 0,
+                        'combined_apy': 0,
+                        'arbitrage_value': arbitrage_value,
+                        'arbitrage_rate': 0,
+                        'total_lend_amount': 0,
+                        'total_lend_available': 0
+                    })
 
         # 按理财金额降序排序
         arbitrage_summary.sort(key=lambda x: x['earn_value'], reverse=True)
 
         # 添加数据到表格
         for pos in arbitrage_summary:
-            # 检查是否需要标红和加粗
-            should_highlight = (
-                # pos['funding_rate_apy'] < 0 or  # 合约年化为负
-                # pos['last_rate_year'] < 3 or    # 理财年化小于3%
-                pos['combined_apy'] < 20 or       # 综合年化小于10%
-                (pos['earn_amount'] > 0 and abs(pos['hedge_diff']) / pos['earn_amount'] > 0.2)  # 对冲差额/理财数量超过10%
-            )
+            # 检查需要标红加粗的条件：对冲差额/(理财数量+现货数量) 大于20%
+            total_amount = pos['earn_amount'] + pos['spot_balance']
+            should_red_highlight = (total_amount > 0 and abs(pos['hedge_diff']) / total_amount > 0.2)
+            
+            # 检查需要标黄加粗的条件：综合年化小于10%
+            should_yellow_highlight = (pos['combined_apy'] < 10)
             
             # 设置样式
-            style = "bold red" if should_highlight else None
+            if should_red_highlight:
+                style = "bold red"
+            elif should_yellow_highlight:
+                style = "bold yellow"
+            else:
+                style = None
             
             arbitrage_table.add_row(
                 pos['token'],
@@ -575,8 +655,6 @@ class ExchangeArbitrageCalculator:
                 f"{pos['combined_apy']:.2f}",
                 f"{pos['arbitrage_value']:.2f}",
                 f"{pos['arbitrage_rate']:.2f}",
-                f"{pos['total_lend_amount']:.2f}",
-                f"{pos['total_lend_available']:.2f}",
                 style=style
             )
             # 更新套利结果和总价值
@@ -592,96 +670,6 @@ class ExchangeArbitrageCalculator:
 
         # 打印GateIO理财与套利情况表格
         console.print(arbitrage_table)
-
-        # 打印合约净仓位为0但gateio现货+理财大于0的代币
-        console.print("\n【合约净仓位为0但有GateIO现货+理财的代币】")
-        no_contract_positions = []
-        
-        # 检查所有理财代币
-        for earn_position in self.gateio_earn_positions:
-            token = earn_position['token']
-            earn_amount = earn_position['amount']
-            spot_balance = self.gateio_spot_balances.get(token, 0)
-            total_amount = spot_balance + earn_amount
-            
-            # 检查是否有合约仓位
-            net_position = 0
-            if token in self.aggregated_positions:
-                net_position = self.aggregated_positions[token]['long'] - self.aggregated_positions[token]['short']
-            
-            if net_position == 0 and total_amount > 0:
-                price = self.token_prices.get(token, earn_position['price'])
-                total_value = total_amount * price
-                no_contract_positions.append({
-                    'token': token,
-                    'spot_balance': spot_balance,
-                    'earn_amount': earn_amount,
-                    'total_amount': total_amount,
-                    'price': price,
-                    'total_value': total_value
-                })
-        
-        # 检查纯现货持仓（没有理财的）
-        for token, spot_balance in self.gateio_spot_balances.items():
-            if spot_balance > 0:
-                # 检查是否已在理财列表中
-                if not any(p['token'] == token for p in self.gateio_earn_positions):
-                    # 检查是否有合约仓位
-                    net_position = 0
-                    if token in self.aggregated_positions:
-                        net_position = self.aggregated_positions[token]['long'] - self.aggregated_positions[token]['short']
-                    
-                    if net_position == 0:
-                        price = self.token_prices.get(token, 0)
-                        if price == 0:
-                            continue  # 跳过没有价格信息的代币
-                        
-                        total_value = spot_balance * price
-                        no_contract_positions.append({
-                            'token': token,
-                            'spot_balance': spot_balance,
-                            'earn_amount': 0,
-                            'total_amount': spot_balance,
-                            'price': price,
-                            'total_value': total_value
-                        })
-        
-        # 按总价值排序并打印
-        no_contract_positions.sort(key=lambda x: x['total_value'], reverse=True)
-        for pos in no_contract_positions:
-            console.print(f"  {pos['token']}: 现货={pos['spot_balance']:.2f}, 理财={pos['earn_amount']:.2f}, "
-                         f"总计={pos['total_amount']:.2f}, 价值={pos['total_value']:.2f} USDT")
-
-        # 打印合约中有但理财没有的代币
-        for token, positions in self.aggregated_positions.items():
-            if token not in [p['token'] for p in self.gateio_earn_positions]:
-                net_position = positions['long'] - positions['short']
-
-                # 如果合约净仓位为0，则跳过显示
-                if net_position == 0:
-                    continue
-
-                price = self.token_prices.get(token, 0)
-                arbitrage_value = 0
-                try:
-                    arbitrage_table.add_row(
-                        token,
-                        "0.00",
-                        f"{self.gateio_spot_balances.get(token, 0):.2f}",
-                        f"{net_position:.2f}",
-                        f"{-net_position:.2f}",
-                        f"{price:.6f}",
-                        "0.00",
-                        "0.00",
-                        "0.00",
-                        f"{arbitrage_value:.2f}",
-                        "0.00",
-                        "0.00",
-                        "0.00"
-                    )
-                except Exception as e:
-                    logger.error(f"print failed, info: {token} {net_position} {price} {arbitrage_value}", exc_info=True)
-                    continue
 
         # 打印套利总和
         console.print("\n【套利汇总】")
