@@ -226,57 +226,55 @@ class ExchangeAPI:
                     apy_day = []
                     duration = int(item['duration'])
                     token = item.get("asset", "")
-                    if duration == 0:
-                        apy = float(item.get("highestApy", 0)) * 100
-                        # apy_percentile = -1
-                        startTime = int(time.time() * 1000) - 30 * 24 * 60 * 60 * 1000
-                        try:
-                            if apy > stability_buy_apy_threshold:
-                                url = f'https://www.binance.com/bapi/earn/v1/friendly/lending/daily/product/position-market-apr?productId={prouct_id}&startTime={startTime}'
-                                response = requests.get(url, proxies=proxies)
-                                if response.status_code == 200:
-                                    apy_month = [{'timestamp': int(i['calcTime']), 'apy': float(i['marketApr']) * 100}
-                                                 for i in response.json().get('data', {}).get('marketAprList', [])]
-                                    apy_day = sorted(apy_month[-24:], key=lambda item: item['timestamp'], reverse=False)
-                                else:
-                                    logger.error(
-                                        f"binance get asset charts, url: {url}, status: {response.status_code}, response: {response.text}")
-                        except Exception as e:
-                            logger.error(f"binance get asset charts, url: {url}, error: {str(e)}")
-                        product = {
-                            "exchange": "Binance",
-                            "token": token,
-                            "apy": apy,
-                            # 'apy_percentile': apy_percentile,
-                            'apy_day': apy_day,
-                            'apy_month': apy_month,
-                            "duration": duration,
-                            "min_purchase": float(item.get('productDetailList', [])[0].get("minPurchaseAmount", 0)),
-                            "max_purchase": float(
-                                item.get('productDetailList', [])[0].get("maxPurchaseAmountPerUser", 0)),
-                            "volume_24h": self.binance_volumes.get(token, 0)
-                        }
-                        products.append(product)
-                        sleep(0.1)
-                    elif duration > 0:
-                        for item_sub in item.get('productDetailList', []):
-                            if item_sub.get('productType') == 'POS_FIXED':
-                                apy = float(item_sub.get("apy", 0)) * 100
-                                duration = int(item_sub.get("duration", 0))
-                                # apy_percentile = -1
-                                product = {
-                                    "exchange": "Binance",
-                                    "token": token,
-                                    "apy": apy,
-                                    # 'apy_percentile': apy_percentile,
-                                    'apy_day': apy_day,
-                                    'apy_month': apy_month,
-                                    "duration": duration,
-                                    "min_purchase": float(item_sub.get("minPurchaseAmount", 0)),
-                                    "max_purchase": float(item_sub.get("maxPurchaseAmountPerUser", 0)),
-                                    "volume_24h": self.binance_volumes.get(token, 0)
-                                }
-                                products.append(product)
+                    apy = float(item.get("highestApy", 0)) * 100
+                    # apy_percentile = -1
+                    startTime = int(time.time() * 1000) - 30 * 24 * 60 * 60 * 1000
+                    try:
+                        if apy > stability_buy_apy_threshold:
+                            url = f'https://www.binance.com/bapi/earn/v1/friendly/lending/daily/product/position-market-apr?productId={prouct_id}&startTime={startTime}'
+                            response = requests.get(url, proxies=proxies)
+                            if response.status_code == 200:
+                                apy_month = [{'timestamp': int(i['calcTime']), 'apy': float(i['marketApr']) * 100}
+                                             for i in response.json().get('data', {}).get('marketAprList', [])]
+                                apy_day = sorted(apy_month[-24:], key=lambda item: item['timestamp'], reverse=False)
+                            else:
+                                logger.error(
+                                    f"binance get asset charts, url: {url}, status: {response.status_code}, response: {response.text}")
+                    except Exception as e:
+                        logger.error(f"binance get asset charts, url: {url}, error: {str(e)}")
+                    product = {
+                        "exchange": "Binance",
+                        "token": token,
+                        "apy": apy,
+                        # 'apy_percentile': apy_percentile,
+                        'apy_day': apy_day,
+                        'apy_month': apy_month,
+                        "duration": duration,
+                        "min_purchase": float(item.get('productDetailList', [])[0].get("minPurchaseAmount", 0)),
+                        "max_purchase": float(
+                            item.get('productDetailList', [])[0].get("maxPurchaseAmountPerUser", 0)),
+                        "volume_24h": self.binance_volumes.get(token, 0)
+                    }
+                    products.append(product)
+                    sleep(0.1)
+                    for item_sub in item.get('productDetailList', []):
+                        if item_sub.get('productType') == 'POS_FIXED':
+                            apy = float(item_sub.get("apy", 0)) * 100
+                            duration = int(item_sub.get("duration", 0))
+                            # apy_percentile = -1
+                            product = {
+                                "exchange": "Binance",
+                                "token": token,
+                                "apy": apy,
+                                # 'apy_percentile': apy_percentile,
+                                'apy_day': apy_day,
+                                'apy_month': apy_month,
+                                "duration": duration,
+                                "min_purchase": float(item_sub.get("minPurchaseAmount", 0)),
+                                "max_purchase": float(item_sub.get("maxPurchaseAmountPerUser", 0)),
+                                "volume_24h": self.binance_volumes.get(token, 0)
+                            }
+                            products.append(product)
                 return products
         except Exception as e:
             logger.error(f"获取Binance活期理财产品时出错: {str(e)}")
@@ -1151,8 +1149,8 @@ class ExchangeAPI:
 
 if __name__ == "__main__":
     api = ExchangeAPI()
-    # print(api.get_binance_flexible_products())
-    print(api.get_bybit_flexible_products())
+    print(api.get_binance_flexible_products())
+    # print(api.get_bybit_flexible_products())
     # print(api.get_bitget_futures_funding_rate('ETHUSDT'))
     # print(api.get_bitget_futures_funding_rate('GMUSDT'))
     # # print(api.get_binance_futures_funding_rate('ETHUSDT'))
