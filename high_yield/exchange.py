@@ -221,13 +221,13 @@ class ExchangeAPI:
                 products = []
                 for item in data["data"]['list']:
                     # 适配新的API返回结构
-                    # prouct_id = item['productId']
                     # duration = int(item['duration'])
                     token = item.get("asset", "")
                     # apy = float(item.get("highestApy", 0)) * 100
                     # apy_percentile = -1
                     for item_sub in item.get('productDetailList', []):
                         apy = float(item_sub.get("apy", 0)) * 100
+                        prouct_id = item_sub.get('productId')
                         duration = int(item_sub.get("duration", 0))
                         apy_month = []
                         apy_day = []
