@@ -198,7 +198,7 @@ class ExchangeAPI:
             # 新的Binance API接口
             url = "https://www.binance.com/bapi/earn/v1/friendly/finance-earn/simple-earn/homepage/details"
             params = {
-                "pageSize": 100,
+                "pageSize": 500,
                 "pageIndex": 1,
                 "includeEthStaking": True,
                 "includeSolStaking": True,
