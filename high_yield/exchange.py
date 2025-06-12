@@ -345,12 +345,22 @@ class ExchangeAPI:
 
 
             # 定期理财产品
+            product_type = 6
             url = 'https://api2.bybit.com/s1/byfi/get-saving-homepage-product-cards'
-            data = {"product_area":[0],"page":1,"limit":20,"product_type":6,"coin_name":"","sort_apr":1,"match_user_asset":False,"show_available":True,"fixed_saving_version":1}
+            data = {"product_area":[0],"page":1,"limit":20,"product_type":product_type,"coin_name":"","sort_apr":1,"match_user_asset":False,"show_available":True,"fixed_saving_version":1}
             r = requests.post(url, json=data, proxies=proxies)
             data = r.json()
             for item in data['result']['coin_products']:
                 for item_sub in item.get('saving_products', []):
+                    # 获取最大、最小购买额
+                    min_purchase = 0
+                    max_purchase = 0
+                    params = {"product_type": product_type, "product_id": item_sub.get('product_id')}
+                    r = requests.post('https://api2.bybit.com/s1/byfi/get-product-detail', proxies=proxies, json=params)
+                    if r.status_code == 200 and r.json().get('result', {}).get('status_code') == 200:
+                        product_detail = r.json().get('result', {}).get('fixed_term_saving_product_detail')
+                        min_purchase = float(product_detail.get('individual_min_share'))/100000000
+                        max_purchase = float(product_detail.get('individual_max_share')) / 100000000
                     token = coins[item_sub['coin']]
                     product = {
                         "exchange": "Bybit",
@@ -359,8 +369,8 @@ class ExchangeAPI:
                         'apy_month': [],
                         'apy_day': [],
                         'duration': int(item_sub.get('staking_term')),
-                        "min_purchase": 0,
-                        "max_purchase": 0,
+                        "min_purchase": min_purchase,
+                        "max_purchase": max_purchase,
                         "volume_24h": self.bybit_volumes.get(token, 0)
                     }
                     products.append(product)
@@ -1155,8 +1165,8 @@ class ExchangeAPI:
 if __name__ == "__main__":
     api = ExchangeAPI()
     # print(api.get_binance_flexible_products())
-    # print(json.dumps(api.get_bybit_flexible_products(), indent=2))
-    print(json.dumps(api.get_okx_flexible_products(), indent=2))
+    print(json.dumps(api.get_bybit_flexible_products(), indent=2))
+    # print(json.dumps(api.get_okx_flexible_products(), indent=2))
     # print(api.get_bitget_futures_funding_rate('ETHUSDT'))
     # print(api.get_bitget_futures_funding_rate('GMUSDT'))
     # # print(api.get_binance_futures_funding_rate('ETHUSDT'))
