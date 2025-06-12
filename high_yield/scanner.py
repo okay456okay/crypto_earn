@@ -398,7 +398,7 @@ class CryptoYieldMonitor:
             gateio_products = self.exchange_api.get_gateio_flexible_products()
             if gateio_products:
                 self.print_products_count(gateio_products)
-                products = gateio_products
+                products += gateio_products
 
             bitget_products = self.exchange_api.get_bitget_flexible_products()
             if bitget_products:
