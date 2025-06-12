@@ -7,6 +7,7 @@ import requests
 import os
 import sys
 import argparse
+import json
 
 
 # 获取当前脚本的目录
@@ -345,21 +346,22 @@ class ExchangeAPI:
 
             # 定期理财产品
             url = 'https://api2.bybit.com/s1/byfi/get-saving-homepage-product-cards'
-            data = {"product_area":[0],"page":1,"limit":20,"product_type":6,"coin_name":"","sort_apr":1,"match_user_asset":False,"show_available":False,"fixed_saving_version":1}
+            data = {"product_area":[0],"page":1,"limit":20,"product_type":6,"coin_name":"","sort_apr":1,"match_user_asset":False,"show_available":True,"fixed_saving_version":1}
             r = requests.post(url, json=data, proxies=proxies)
             data = r.json()
             for item in data['result']['coin_products']:
                 for item_sub in item.get('saving_products', []):
+                    token = coins[item_sub['coin']]
                     product = {
                         "exchange": "Bybit",
-                        "token": coins[item_sub['coin']],
+                        "token": token,
                         "apy": float(item_sub['apy'].replace('%','')),
                         'apy_month': [],
                         'apy_day': [],
                         'duration': int(item_sub.get('staking_term')),
                         "min_purchase": 0,
                         "max_purchase": 0,
-                        "volume_24h": self.bybit_volumes.get(item_sub["coin"], 0)
+                        "volume_24h": self.bybit_volumes.get(token, 0)
                     }
                     products.append(product)
             # 活期期理财产品
@@ -635,20 +637,20 @@ class ExchangeAPI:
                                          data.get('lastOneMonthRates', {}).get('rates', [])]
                         except Exception as e:
                             logger.error(f"get asset chart {item['asset']} error: {str(e)}")
-                        product = {
-                            "exchange": "OKX",
-                            "token": token,
-                            "apy": apy * (1 - okx_earn_insurance_keep_ratio),
-                            # "apy_percentile": apy_percentile*(1-okx_earn_insurance_keep_ratio),
-                            'apy_day': apy_day,
-                            'apy_month': apy_month,
-                            'duration': 0,
-                            "min_purchase": 0,
-                            "max_purchase": 0,
-                            "volume_24h": self.okx_volumes.get(token, 0)
-                        }
-                        products.append(product)
-                        sleep(0.1)
+                    product = {
+                        "exchange": "OKX",
+                        "token": token,
+                        "apy": apy * (1 - okx_earn_insurance_keep_ratio),
+                        # "apy_percentile": apy_percentile*(1-okx_earn_insurance_keep_ratio),
+                        'apy_day': apy_day,
+                        'apy_month': apy_month,
+                        'duration': 0,
+                        "min_purchase": 0,
+                        "max_purchase": 0,
+                        "volume_24h": self.okx_volumes.get(token, 0)
+                    }
+                    products.append(product)
+                    sleep(0.1)
             else:
                 logger.error(f"OKX API返回错误: {data}")
         except Exception as e:
@@ -1152,8 +1154,9 @@ class ExchangeAPI:
 
 if __name__ == "__main__":
     api = ExchangeAPI()
-    print(api.get_binance_flexible_products())
-    # print(api.get_bybit_flexible_products())
+    # print(api.get_binance_flexible_products())
+    # print(json.dumps(api.get_bybit_flexible_products(), indent=2))
+    print(json.dumps(api.get_okx_flexible_products(), indent=2))
     # print(api.get_bitget_futures_funding_rate('ETHUSDT'))
     # print(api.get_bitget_futures_funding_rate('GMUSDT'))
     # # print(api.get_binance_futures_funding_rate('ETHUSDT'))

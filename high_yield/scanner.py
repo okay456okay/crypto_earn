@@ -366,6 +366,10 @@ class CryptoYieldMonitor:
             logger.info(f"已添加{len(notifications)}个订阅理财Token到通知列表")
             self._send_product_notifications(notifications, product_type='subscribed')
 
+    def print_products_count(self, products):
+        logger.info(
+            f"从{products[0]['exchange']}获取到{len([i for i in products if i['duration'] == 0])}个活期理财和{len([i for i in products if i['duration'] > 0])}个定期理财产品")
+
     def run(self):
         # 尝试获取外网出口IP
         proxy_ip = get_proxy_ip()
@@ -380,40 +384,42 @@ class CryptoYieldMonitor:
                 with open(self.combined_file, 'w', encoding='utf-8') as f:
                     f.write('')
 
+            products = []
             # 获取所有交易所的活期理财产品
             binance_products = self.exchange_api.get_binance_flexible_products()
-            products = binance_products
-            if products:
-                logger.info(f"从{products[0]['exchange']}获取到{len([i for i in products if i['duration'] ==0])}个活期理财和{len([i for i in products if i['duration'] > 0])}个定期理财产品")
+            if binance_products:
+                self.print_products_count(binance_products)
+                products += binance_products
 
             gateio_products = self.exchange_api.get_gateio_flexible_products()
-            products = gateio_products
-            if products:
-                logger.info(f"从{products[0]['exchange']}获取到{len([i for i in products if i['duration'] ==0])}个活期理财和{len([i for i in products if i['duration'] > 0])}个定期理财产品")
+            if gateio_products:
+                self.print_products_count(gateio_products)
+                products = gateio_products
 
             bitget_products = self.exchange_api.get_bitget_flexible_products()
-            products = bitget_products
-            if products:
-                logger.info(f"从{products[0]['exchange']}获取到{len([i for i in products if i['duration'] ==0])}个活期理财和{len([i for i in products if i['duration'] > 0])}个定期理财产品")
+            if bitget_products:
+                self.print_products_count(bitget_products)
+                products += bitget_products
 
             bybit_products = self.exchange_api.get_bybit_flexible_products()
-            products = bybit_products
-            if products:
-                logger.info(f"从{products[0]['exchange']}获取到{len([i for i in products if i['duration'] ==0])}个活期理财和{len([i for i in products if i['duration'] > 0])}个定期理财产品")
+            if bybit_products:
+                self.print_products_count(bybit_products)
+                products += bybit_products
 
             okx_products = self.exchange_api.get_okx_flexible_products()
-            products = okx_products
-            if products:
+            if okx_products:
                 logger.info(f"从{products[0]['exchange']}获取到{len([i for i in products if i['duration'] ==0])}个活期理财和{len([i for i in products if i['duration'] > 0])}个定期理财产品")
+                self.print_products_count(okx_products)
+                products += okx_products
 
             # 合并所有产品
-            all_products = binance_products + bitget_products + bybit_products + gateio_products + okx_products
+            # all_products = binance_products + bitget_products + bybit_products + gateio_products + okx_products
             # logger.info(f"总共获取到{len(all_products)}个活期理财产品")
             self.exchange_api.get_binance_funding_info()
 
             # 过滤和处理高收益理财产品
-            self.product_filter(all_products)
-            self.check_tokens(all_products)
+            self.product_filter(products)
+            self.check_tokens(products)
             # self.position_check(all_products)
         except Exception as e:
             logger.exception(f"运行监控任务时发生错误: {str(e)}")
