@@ -228,6 +228,7 @@ class CryptoYieldMonitor:
         fixedterm_product_notifications = []
 
         for product in eligible_products:
+            logger.info(f"check token {product['exchange']}, 年化:{product['apy']}, 期限: {product['duration']}, 现货交易额:{product['volume_24h']}")
             token = product["token"]
             logger.debug(f"检查Token {token} 的合约交易情况")
             # 检查合约交易条件
@@ -237,6 +238,11 @@ class CryptoYieldMonitor:
             # 如果没有合约支持，跳过
             if not futures_results:
                 continue
+
+            future_info_str = '\n'.join([
+                f"   • {i['exchange']}: {i['volume_24h'] / 10000:.2f}万USDT, {i['fundingRate']:.4f}%, {get_percentile([i['fundingRate'] for i in i['d7history']], future_percentile):.4f}%, {i['markPrice']:.5f}, {self.get_estimate_apy(product['apy'], i['fundingRate'], i['fundingIntervalHours']):.2f}%, {self.get_estimate_apy(apy_percentile, i['fundingRate'], i['fundingIntervalHours']):.2f}%, {i['fundingIntervalHoursText']}, {datetime.fromtimestamp(i['fundingTime'] / 1000)}"
+                for i in
+                futures_results])
             # 是否有预估收益率低于最低收率益的交易所（合约负费率太多了）
             eligible_funding_rate = [
                 i for i in futures_results if
@@ -248,6 +254,7 @@ class CryptoYieldMonitor:
             ]
             illegible_funding_rate = [i for i in futures_results if i['fundingRate'] < illegal_funding_rate]
             if len(eligible_funding_rate) == 0:
+                logger.warning(f"check token {product['exchange']}，合约价格或交易额不达标，合约信息如下\n{future_info_str}")
                 continue
             # if len(eligible_funding_rate) == 0 or len(illegible_funding_rate) > 0:
             #     continue
@@ -255,10 +262,6 @@ class CryptoYieldMonitor:
             if product['apy_day']:
                 apy_percentile = get_percentile([i['apy'] for i in product['apy_day']], yield_percentile)
 
-            future_info_str = '\n'.join([
-                f"   • {i['exchange']}: {i['volume_24h'] / 10000:.2f}万USDT, {i['fundingRate']:.4f}%, {get_percentile([i['fundingRate'] for i in i['d7history']], future_percentile):.4f}%, {i['markPrice']:.5f}, {self.get_estimate_apy(product['apy'], i['fundingRate'], i['fundingIntervalHours']):.2f}%, {self.get_estimate_apy(apy_percentile, i['fundingRate'], i['fundingIntervalHours']):.2f}%, {i['fundingIntervalHoursText']}, {datetime.fromtimestamp(i['fundingTime'] / 1000)}"
-                for i in
-                futures_results])
             # 生成通知内容
             notification = {
                 "exchange": product["exchange"],
@@ -274,16 +277,17 @@ class CryptoYieldMonitor:
             }
             # 定期理财产品
             if product['apy'] > stability_buy_apy_threshold and product['duration'] > 0:
+                logger.info(f"add token {product['exchange']} {token} to fixedterm_product_notifications")
                 fixedterm_product_notifications.append(notification)
             # 稳定收益理财产品： 24小时Pxx收益率达到最低k
             if apy_percentile > stability_buy_apy_threshold:
-                logger.debug(f"add {product} to stability_product_notifications, future results: {futures_results}")
+                logger.info(f"add token {product['exchange']} {token} to stability_product_notifications")
                 stability_product_notifications.append(notification)
             # 高收益产品
             if len([i for i in product['apy_day'][0 - highyield_checkpoints:] if
                     i['apy'] >= highyield_buy_apy_threshold]) == highyield_checkpoints and product[
                 'apy'] >= highyield_buy_apy_threshold:
-                logger.debug(f"add {product} to highyield_product_notifications, future results: {futures_results}")
+                logger.info(f"add token {product['exchange']} {token} to highyield_product_notifications")
                 highyield_product_notifications.append(notification)
 
                 # 如果是GateIO的产品，执行对冲开仓
@@ -408,7 +412,6 @@ class CryptoYieldMonitor:
 
             okx_products = self.exchange_api.get_okx_flexible_products()
             if okx_products:
-                logger.info(f"从{products[0]['exchange']}获取到{len([i for i in products if i['duration'] ==0])}个活期理财和{len([i for i in products if i['duration'] > 0])}个定期理财产品")
                 self.print_products_count(okx_products)
                 products += okx_products
 
