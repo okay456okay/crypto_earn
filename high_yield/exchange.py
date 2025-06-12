@@ -336,8 +336,10 @@ class ExchangeAPI:
         products = []
         try:
             # 检查并获取交易量数据
+            logger.info("获取bybit交易量信息")
             if not self.bybit_volumes:
                 self.get_bybit_volumes()
+            logger.info("获取bybit币种和产品id对应关系信息")
             r = requests.get('https://api2.bybit.com/s1/byfi/get-coins', proxies=proxies)
             coins = {}
             for coin in r.json().get('result', {}).get('coins', []):
@@ -345,6 +347,7 @@ class ExchangeAPI:
 
 
             # 定期理财产品
+            logger.info("获取bybit定期理财产品")
             product_type = 6
             url = 'https://api2.bybit.com/s1/byfi/get-saving-homepage-product-cards'
             data = {"product_area":[0],"page":1,"limit":20,"product_type":product_type,"coin_name":"","sort_apr":1,"match_user_asset":False,"show_available":True,"fixed_saving_version":1}
@@ -352,16 +355,17 @@ class ExchangeAPI:
             data = r.json()
             for item in data['result']['coin_products']:
                 for item_sub in item.get('saving_products', []):
+                    token = coins[item_sub['coin']]
                     # 获取最大、最小购买额
                     min_purchase = 0
                     max_purchase = 0
                     params = {"product_type": product_type, "product_id": item_sub.get('product_id')}
+                    logger.info(f"获取bybit定期理财产品{token}购买额度")
                     r = requests.post('https://api2.bybit.com/s1/byfi/get-product-detail', proxies=proxies, json=params)
                     if r.status_code == 200 and r.json().get('result', {}).get('status_code') == 200:
                         product_detail = r.json().get('result', {}).get('fixed_term_saving_product_detail')
                         min_purchase = float(product_detail.get('individual_min_share'))/100000000
                         max_purchase = float(product_detail.get('individual_max_share')) / 100000000
-                    token = coins[item_sub['coin']]
                     product = {
                         "exchange": "Bybit",
                         "token": token,
@@ -374,13 +378,14 @@ class ExchangeAPI:
                         "volume_24h": self.bybit_volumes.get(token, 0)
                     }
                     products.append(product)
+                    sleep(0.1)
             # 活期期理财产品
             # https://api.bybit.com/v5/earn/product?category=FlexibleSaving
             url = "https://api.bybit.com/v5/earn/product"
             params = {
                 "category": "FlexibleSaving",
             }
-            logger.info(f"开始获取bybit储蓄产品")
+            logger.info(f"开始获取bybit活期储蓄产品")
             response = self.session.get(url, params=params)
             if response.status_code != 200:
                 logger.error(
