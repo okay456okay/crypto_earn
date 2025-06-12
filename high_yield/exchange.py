@@ -360,7 +360,7 @@ class ExchangeAPI:
                     min_purchase = 0
                     max_purchase = 0
                     params = {"product_type": product_type, "product_id": item_sub.get('product_id')}
-                    logger.debug(f"获取bybit定期理财产品{token}购买额度")
+                    logger.info(f"获取bybit定期理财产品{token}购买额度, params: {params}")
                     r = requests.post('https://api2.bybit.com/s1/byfi/get-product-detail', proxies=proxies, json=params)
                     if r.status_code == 200 and r.json().get('result', {}).get('status_code') == 200:
                         product_detail = r.json().get('result', {}).get('fixed_term_saving_product_detail')
