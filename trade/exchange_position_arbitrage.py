@@ -638,7 +638,7 @@ class ExchangeArbitrageCalculator:
             if should_red_highlight:
                 style = "bold red"
             elif should_yellow_highlight:
-                style = "bold yellow"
+                style = "bold blue"
             else:
                 style = None
             
