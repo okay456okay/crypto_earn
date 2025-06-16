@@ -168,3 +168,4 @@ logs/
 /trade/logs
 /trade/reports/
 /trade/charts/
+/trade/cache/
