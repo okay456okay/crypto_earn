@@ -742,7 +742,7 @@ class BinancePriceHighScanner:
                 processed_count += 1
                 
                 # 避免API限制，添加短暂延迟
-                time.sleep(0.1)
+                time.sleep(0.3)
                 
             except Exception as e:
                 logger.error(f"❌ 处理{symbol}时发生错误: {str(e)}")
