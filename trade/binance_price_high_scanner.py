@@ -372,6 +372,7 @@ class BinancePriceHighScanner:
                     'ath_price': token_data.get('athpu', 0),  # 历史最高价
                     'atl_price': token_data.get('atlpu', 0),  # 历史最低价
                     'twitter_username': token_data.get('xhn', ''),  # Twitter用户名
+                    'twitter_id': token_data.get('xu', ''),  # Twitter ID
                     'github_url': token_data.get('ru', ''),  # Github地址
                     'launch_date': token_data.get('ald', 0),  # 发行日期时间戳
                     'website_url': token_data.get('ws', ''),  # 官网地址
@@ -427,6 +428,7 @@ class BinancePriceHighScanner:
             'ath_price': 0,
             'atl_price': 0,
             'twitter_username': '',
+            'twitter_id': '',
             'github_url': '',
             'launch_date': 0,
             'launch_date_str': 'Unknown',
@@ -600,10 +602,13 @@ class BinancePriceHighScanner:
                 message_lines.append(f"• 官网: {analysis_data['token_info']['website_url']}")
             
             if analysis_data['token_info']['twitter_username']:
-                message_lines.append(f"• Twitter: @{analysis_data['token_info']['twitter_username']}")
+                message_lines.append(f"• X用户名: @{analysis_data['token_info']['twitter_username']}")
+            
+            # if analysis_data['token_info']['twitter_id']:
+            #     message_lines.append(f"• X ID: {analysis_data['token_info']['twitter_id']}")
             
             if analysis_data['token_info']['twitter_last_update_str'] != 'Unknown':
-                message_lines.append(f"• Twitter更新: {analysis_data['token_info']['twitter_last_update_str']}")
+                message_lines.append(f"• X更新: {analysis_data['token_info']['twitter_last_update_str']}")
             
             if analysis_data['token_info']['github_url']:
                 message_lines.append(f"• Github: {analysis_data['token_info']['github_url']}")
