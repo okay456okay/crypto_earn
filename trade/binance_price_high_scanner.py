@@ -38,6 +38,9 @@ import requests
 import pickle
 import hashlib
 import argparse
+import sqlite3
+import asyncio
+import ccxt.pro as ccxtpro
 
 # 设置日志级别
 logger.setLevel(logging.INFO)
@@ -45,7 +48,7 @@ logger.setLevel(logging.INFO)
 class BinancePriceHighScanner:
     """Binance价格高点扫描器"""
     
-    def __init__(self, api_key: str = None, api_secret: str = None, days_to_analyze: int = 30):
+    def __init__(self, api_key: str = None, api_secret: str = None, days_to_analyze: int = 30, enable_trading: bool = False):
         """
         初始化Binance客户端
         
@@ -53,6 +56,7 @@ class BinancePriceHighScanner:
             api_key: Binance API Key
             api_secret: Binance API Secret
             days_to_analyze: 分析历史天数
+            enable_trading: 是否启用自动交易功能
         """
         self.client = Client(
             api_key or binance_api_key, 
@@ -66,6 +70,31 @@ class BinancePriceHighScanner:
         # 分析天数
         self.days_to_analyze = days_to_analyze
         
+        # 交易功能
+        self.enable_trading = enable_trading
+        
+        # 交易参数
+        self.leverage = 10  # 杠杆倍数
+        self.margin_amount = 20  # 保证金金额(USDT)
+        
+        # 过滤条件
+        self.min_launch_days = 15  # 最小上市天数
+        self.max_market_rank = 100  # 最大市值排名
+        self.min_funding_rate = -0.005  # 最小资金费率 (-0.005%)
+        
+        # 交易所客户端(用于交易)
+        self.binance_trading = None
+        if self.enable_trading:
+            self.binance_trading = ccxtpro.binance({
+                'apiKey': api_key or binance_api_key,
+                'secret': api_secret or binance_api_secret,
+                'enableRateLimit': True,
+                'proxies': proxies,
+                'options': {
+                    'defaultType': 'future',  # 设置为合约模式
+                }
+            })
+        
         # 缓存目录
         self.cache_dir = os.path.join(project_root, 'trade/cache')
         os.makedirs(self.cache_dir, exist_ok=True)
@@ -73,6 +102,11 @@ class BinancePriceHighScanner:
         # 通知记录目录
         self.notifications_dir = os.path.join(project_root, 'trade/notifications')
         os.makedirs(self.notifications_dir, exist_ok=True)
+        
+        # 交易记录数据库
+        self.db_path = os.path.join(project_root, 'trade/trading_records.db')
+        if self.enable_trading:
+            self.init_trading_db()
         
         # 缓存文件路径
         self.token_info_cache = os.path.join(self.cache_dir, 'token_info_cache.pkl')
@@ -87,7 +121,123 @@ class BinancePriceHighScanner:
         self.symbol_description_data = self.load_cache_with_expiry(self.symbol_description_cache)
         self.products_data = self.load_cache_with_expiry(self.products_cache)
         
-        logger.info(f"Binance价格高点扫描器初始化完成，分析天数: {self.days_to_analyze}天")
+        logger.info(f"Binance价格高点扫描器初始化完成，分析天数: {self.days_to_analyze}天，自动交易: {'启用' if self.enable_trading else '禁用'}")
+
+    def init_trading_db(self):
+        """初始化交易记录数据库"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # 创建交易记录表
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS trading_records (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    exchange TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    order_time TIMESTAMP NOT NULL,
+                    open_price REAL NOT NULL,
+                    quantity REAL NOT NULL,
+                    leverage INTEGER NOT NULL,
+                    direction TEXT NOT NULL,
+                    order_id TEXT,
+                    margin_amount REAL NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(exchange, symbol, order_time)
+                )
+            ''')
+            
+            conn.commit()
+            conn.close()
+            logger.info(f"交易记录数据库初始化完成: {self.db_path}")
+            
+        except Exception as e:
+            logger.error(f"交易记录数据库初始化失败: {str(e)}")
+
+    def get_latest_trade_record(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """获取某个交易对的最新交易记录"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT * FROM trading_records 
+                WHERE symbol = ? 
+                ORDER BY order_time DESC 
+                LIMIT 1
+            ''', (symbol,))
+            
+            result = cursor.fetchone()
+            conn.close()
+            
+            if result:
+                columns = ['id', 'exchange', 'symbol', 'order_time', 'open_price', 
+                          'quantity', 'leverage', 'direction', 'order_id', 'margin_amount', 'created_at']
+                return dict(zip(columns, result))
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"获取{symbol}最新交易记录失败: {str(e)}")
+            return None
+
+    def save_trade_record(self, symbol: str, open_price: float, quantity: float, order_id: str = None) -> bool:
+        """保存交易记录"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                INSERT INTO trading_records 
+                (exchange, symbol, order_time, open_price, quantity, leverage, direction, order_id, margin_amount)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', ('Binance', symbol, datetime.now(), open_price, quantity, self.leverage, 'SHORT', order_id, self.margin_amount))
+            
+            conn.commit()
+            conn.close()
+            logger.info(f"交易记录已保存: {symbol} 价格={open_price} 数量={quantity}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"保存{symbol}交易记录失败: {str(e)}")
+            return False
+
+    def remove_trade_record(self, symbol: str) -> bool:
+        """删除交易对的所有交易记录"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('DELETE FROM trading_records WHERE symbol = ?', (symbol,))
+            deleted_count = cursor.rowcount
+            
+            conn.commit()
+            conn.close()
+            
+            if deleted_count > 0:
+                logger.info(f"已删除{symbol}的{deleted_count}条交易记录")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"删除{symbol}交易记录失败: {str(e)}")
+            return False
+
+    def get_all_traded_symbols(self) -> List[str]:
+        """获取所有有交易记录的交易对"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('SELECT DISTINCT symbol FROM trading_records')
+            results = cursor.fetchall()
+            conn.close()
+            
+            return [row[0] for row in results]
+            
+        except Exception as e:
+            logger.error(f"获取交易对列表失败: {str(e)}")
+            return []
 
     def load_cache_with_expiry(self, cache_file: str) -> Dict:
         """加载带过期时间的缓存数据"""
@@ -722,7 +872,197 @@ class BinancePriceHighScanner:
         except Exception as e:
             logger.error(f"❌ 保存{symbol}通知到文件失败: {str(e)}")
 
-    def analyze_symbol(self, symbol: str) -> bool:
+    def should_filter_symbol(self, symbol: str, analysis_data: Dict[str, Any]) -> Tuple[bool, str]:
+        """
+        检查交易对是否应该被过滤掉
+        
+        Args:
+            symbol: 交易对符号
+            analysis_data: 分析数据
+            
+        Returns:
+            Tuple[bool, str]: (是否过滤, 过滤原因)
+        """
+        token_info = analysis_data['token_info']
+        funding_rate = analysis_data['funding_rate']
+        
+        # 检查上市日期
+        launch_date = token_info.get('launch_date', 0)
+        if not launch_date or launch_date == 0:
+            return True, "上市日期数据为空"
+        
+        launch_datetime = datetime.fromtimestamp(launch_date / 1000)
+        days_since_launch = (datetime.now() - launch_datetime).days
+        
+        if days_since_launch < self.min_launch_days:
+            return True, f"上市仅{days_since_launch}天，小于{self.min_launch_days}天"
+        
+        # 检查市值排名
+        market_rank = token_info.get('market_rank', 0)
+        if not market_rank or market_rank == 0:
+            return True, "市值排名数据为空"
+        
+        if market_rank <= self.max_market_rank:
+            return True, f"市值排名{market_rank}，在{self.max_market_rank}名以内"
+        
+        # 检查资金费率
+        current_rate = funding_rate.get('current_rate', 0)
+        if current_rate == 0:
+            return True, "资金费率数据为空"
+        
+        if current_rate < self.min_funding_rate:
+            return True, f"资金费率{current_rate*100:.4f}%，小于{self.min_funding_rate*100:.4f}%"
+        
+        return False, "通过过滤条件"
+
+    async def get_current_positions(self) -> Dict[str, float]:
+        """获取当前合约持仓"""
+        try:
+            if not self.binance_trading:
+                return {}
+                
+            positions = await self.binance_trading.fetch_positions()
+            position_dict = {}
+            
+            for position in positions:
+                symbol = position['symbol']
+                size = float(position['contracts'])
+                if size != 0:  # 只记录有持仓的
+                    position_dict[symbol] = size
+                    
+            return position_dict
+            
+        except Exception as e:
+            logger.error(f"获取当前持仓失败: {str(e)}")
+            return {}
+
+    async def clean_trade_records(self):
+        """清理交易记录 - 删除没有持仓的交易对记录"""
+        if not self.enable_trading:
+            return
+            
+        try:
+            # 获取当前持仓
+            current_positions = await self.get_current_positions()
+            
+            # 获取所有有交易记录的交易对
+            traded_symbols = self.get_all_traded_symbols()
+            
+            # 检查哪些交易对没有持仓了
+            for symbol in traded_symbols:
+                if symbol not in current_positions:
+                    logger.info(f"检测到{symbol}已无持仓，删除交易记录")
+                    self.remove_trade_record(symbol)
+                    
+        except Exception as e:
+            logger.error(f"清理交易记录失败: {str(e)}")
+
+    async def execute_short_order(self, symbol: str, current_price: float) -> bool:
+        """
+        执行卖空订单
+        
+        Args:
+            symbol: 交易对符号
+            current_price: 当前价格
+            
+        Returns:
+            bool: 是否执行成功
+        """
+        try:
+            if not self.binance_trading:
+                logger.error("交易客户端未初始化")
+                return False
+            
+            # 计算交易数量 (保证金 * 杠杆 / 价格)
+            quantity = (self.margin_amount * self.leverage) / current_price
+            
+            # 设置杠杆
+            # await self.binance_trading.set_leverage(self.leverage, symbol)
+            # 设置Binance合约参数
+            await self.binance_trading.fapiPrivatePostLeverage({
+                'symbol': symbol,
+                'leverage': self.leverage
+            })
+            logger.info(f"已设置{symbol}杠杆为{self.leverage}倍")
+
+            # 执行市价卖空订单
+            order = await self.binance_trading.create_market_sell_order(
+                symbol=symbol,
+                amount=quantity,
+                params={'positionSide': 'SHORT'}
+            )
+            
+            if order and order.get('id'):
+                order_id = order.get('id')
+                filled_price = float(order.get('average', 0) or current_price)
+                filled_quantity = float(order.get('filled', 0) or quantity)
+                
+                logger.info(f"✅ 卖空订单执行成功: {symbol}")
+                logger.info(f"订单ID: {order_id}")
+                logger.info(f"成交价格: {filled_price}")
+                logger.info(f"成交数量: {filled_quantity}")
+                
+                # 保存交易记录
+                self.save_trade_record(symbol, filled_price, filled_quantity, order_id)
+                
+                return True
+            else:
+                logger.error(f"❌ 卖空订单执行失败: {symbol}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ 执行{symbol}卖空订单失败: {str(e)}")
+            return False
+
+    async def check_and_execute_trade(self, symbol: str, analysis_data: Dict[str, Any]) -> bool:
+        """
+        检查并执行交易
+        
+        Args:
+            symbol: 交易对符号
+            analysis_data: 分析数据
+            
+        Returns:
+            bool: 是否执行了交易
+        """
+        if not self.enable_trading:
+            return False
+            
+        try:
+            current_price = analysis_data['current_price']
+            
+            # 检查过滤条件
+            should_filter, filter_reason = self.should_filter_symbol(symbol, analysis_data)
+            if should_filter:
+                logger.info(f"🚫 {symbol} 被过滤: {filter_reason}")
+                return False
+            
+            logger.info(f"✅ {symbol} 通过过滤条件，检查交易条件")
+            
+            # 检查交易记录
+            latest_record = self.get_latest_trade_record(symbol)
+            
+            if not latest_record:
+                # 没有交易记录，执行交易
+                logger.info(f"💰 {symbol} 无交易记录，执行首次卖空交易")
+                return await self.execute_short_order(symbol, current_price)
+            else:
+                # 有交易记录，检查价格条件
+                last_price = latest_record['open_price']
+                price_increase = (current_price - last_price) / last_price
+                
+                if price_increase >= 0.1:  # 价格上涨10%以上
+                    logger.info(f"💰 {symbol} 价格较上次开仓上涨{price_increase*100:.2f}%，执行追加卖空交易")
+                    return await self.execute_short_order(symbol, current_price)
+                else:
+                    logger.info(f"⏸️ {symbol} 价格较上次开仓仅上涨{price_increase*100:.2f}%，不满足10%条件")
+                    return False
+                    
+        except Exception as e:
+            logger.error(f"❌ 检查{symbol}交易条件失败: {str(e)}")
+            return False
+
+    async def analyze_symbol(self, symbol: str) -> bool:
         """
         分析单个交易对
         
@@ -775,17 +1115,33 @@ class BinancePriceHighScanner:
             # 发送通知
             self.send_wework_notification(symbol, analysis_data)
             
+            # 如果启用了交易功能，检查并执行交易
+            if self.enable_trading:
+                try:
+                    trade_executed = await self.check_and_execute_trade(symbol, analysis_data)
+                    if trade_executed:
+                        logger.info(f"💰 {symbol} 交易执行成功")
+                    else:
+                        logger.info(f"⏸️ {symbol} 未执行交易")
+                except Exception as e:
+                    logger.error(f"❌ {symbol} 交易执行失败: {str(e)}")
+            
             return True
             
         except Exception as e:
             logger.error(f"分析{symbol}失败: {str(e)}")
             return False
 
-    def run_scan(self):
+    async def run_scan(self):
         """
         运行扫描
         """
         logger.info(f"🚀 开始扫描Binance合约价格突破（{self.days_to_analyze}天历史数据）...")
+        
+        # 清理交易记录
+        if self.enable_trading:
+            logger.info("🧹 清理交易记录...")
+            await self.clean_trade_records()
         
         # 获取所有合约符号
         symbols = self.get_all_futures_symbols()
@@ -797,13 +1153,14 @@ class BinancePriceHighScanner:
         
         found_count = 0
         processed_count = 0
+        trade_count = 0
         
         for i, symbol in enumerate(symbols, 1):
             try:
                 logger.info(f"📈 [{i}/{len(symbols)}] 正在分析 {symbol}...")
                 
                 # 分析交易对
-                is_breakthrough = self.analyze_symbol(symbol)
+                is_breakthrough = await self.analyze_symbol(symbol)
                 
                 if is_breakthrough:
                     found_count += 1
@@ -811,12 +1168,15 @@ class BinancePriceHighScanner:
                 processed_count += 1
                 
                 # 避免API限制，添加短暂延迟
-                time.sleep(0.3)
+                await asyncio.sleep(0.3)
                 
             except Exception as e:
                 logger.error(f"❌ 处理{symbol}时发生错误: {str(e)}")
                 continue
+                
         logger.info(f"✅ 扫描完成! 处理了 {processed_count} 个交易对，发现 {found_count} 个价格突破")
+        if self.enable_trading:
+            logger.info(f"💰 执行了 {trade_count} 笔交易")
 
 
 def parse_arguments():
@@ -828,19 +1188,27 @@ def parse_arguments():
         default=30, 
         help='历史K线分析天数 (默认: 30天)'
     )
+    parser.add_argument(
+        '--trade',
+        action='store_true',
+        help='启用自动交易功能'
+    )
     return parser.parse_args()
 
 
-def main():
+async def main():
     """主函数"""
     try:
         # 解析命令行参数
         args = parse_arguments()
         
-        logger.info(f"启动参数: 历史分析天数 = {args.days}天")
+        logger.info(f"启动参数: 历史分析天数 = {args.days}天, 自动交易 = {'启用' if args.trade else '禁用'}")
         
-        scanner = BinancePriceHighScanner(days_to_analyze=args.days)
-        scanner.run_scan()
+        if args.trade:
+            logger.warning("⚠️  自动交易功能已启用! 请确保您了解交易风险!")
+        
+        scanner = BinancePriceHighScanner(days_to_analyze=args.days, enable_trading=args.trade)
+        await scanner.run_scan()
         
     except KeyboardInterrupt:
         logger.info("❌ 用户中断扫描")
@@ -849,4 +1217,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main() 
+    asyncio.run(main()) 
