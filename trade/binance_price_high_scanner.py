@@ -1353,6 +1353,15 @@ class BinancePriceHighScanner:
         if self.enable_trading:
             logger.info(f"💰 执行了 {trade_count} 笔交易")
 
+    async def close(self):
+        """关闭交易所连接，释放资源"""
+        if self.binance_trading:
+            try:
+                await self.binance_trading.close()
+                logger.info("✅ 交易所连接已关闭")
+            except Exception as e:
+                logger.error(f"❌ 关闭交易所连接失败: {str(e)}")
+
 
 def parse_arguments():
     """解析命令行参数"""
@@ -1373,6 +1382,7 @@ def parse_arguments():
 
 async def main():
     """主函数"""
+    scanner = None
     try:
         # 解析命令行参数
         args = parse_arguments()
@@ -1389,6 +1399,10 @@ async def main():
         logger.info("❌ 用户中断扫描")
     except Exception as e:
         logger.error(f"❌ 扫描过程中发生错误: {str(e)}")
+    finally:
+        # 确保关闭交易所连接
+        if scanner:
+            await scanner.close()
 
 
 if __name__ == "__main__":
