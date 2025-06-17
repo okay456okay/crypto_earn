@@ -74,8 +74,8 @@ class BinancePriceHighScanner:
         self.enable_trading = enable_trading
         
         # 交易参数
-        self.leverage = 10  # 杠杆倍数
-        self.margin_amount = 20  # 保证金金额(USDT)
+        self.leverage = 5  # 杠杆倍数
+        self.margin_amount = 10  # 保证金金额(USDT)
         
         # 过滤条件
         self.min_launch_days = 15  # 最小上市天数
@@ -814,6 +814,171 @@ class BinancePriceHighScanner:
         except Exception as e:
             logger.error(f"❌ 发送{symbol}企业微信通知失败: {str(e)}")
 
+    def send_trading_notification(self, symbol: str, order_details: Dict[str, Any], analysis_data: Dict[str, Any]):
+        """
+        发送交易下单企业微信通知
+        
+        Args:
+            symbol: 交易对符号
+            order_details: 订单详情
+            analysis_data: 分析数据
+        """
+        try:
+            base_asset = symbol.replace('USDT', '')
+            
+            # 构建交易通知消息
+            message_lines = [
+                f"🚨 **自动交易执行通知**",
+                f"",
+                f"**合约**: {symbol}",
+                f"**交易方向**: 卖空(SHORT)",
+                f"**杠杆倍数**: {self.leverage}倍",
+                f"**保证金**: {self.margin_amount} USDT",
+                f"",
+                f"**订单详情**:",
+                f"• 订单ID: {order_details.get('order_id', 'N/A')}",
+                f"• 成交价格: ${order_details.get('filled_price', 0):.6f}",
+                f"• 成交数量: {order_details.get('filled_quantity', 0):.6f}",
+                f"• 成交金额: ${order_details.get('filled_price', 0) * order_details.get('filled_quantity', 0):.2f}",
+                f"",
+                f"**突破信息**:",
+            ]
+            
+            # 添加突破区间信息
+            breakout_periods = sorted(analysis_data['breakout_periods'])
+            periods_str = ', '.join([f"{days}天" for days in breakout_periods])
+            message_lines.append(f"• 突破区间: {periods_str}")
+            
+            # 添加各时间区间对比
+            for days in [7, 15, 30]:
+                if days in analysis_data['breakouts']:
+                    breakout_info = analysis_data['breakouts'][days]
+                    status = "✅ 突破" if breakout_info['is_high'] else "❌ 未突破"
+                    message_lines.extend([
+                        f"• {days}天: {status}",
+                        f"  └ 最高价: ${breakout_info['max_high']:.6f}",
+                    ])
+            
+            message_lines.extend([
+                f"",
+                f"**资金费率**: {analysis_data['funding_rate']['current_rate_percent']:.4f}%",
+                f"**代币信息**:",
+                f"• 市值排名: #{analysis_data['token_info']['market_rank']}" if analysis_data['token_info']['market_rank'] > 0 else "• 市值排名: 未知",
+                f"• 发行日期: {analysis_data['token_info']['launch_date_str']}",
+            ])
+            
+            # 添加交易原因
+            latest_record = self.get_latest_trade_record(symbol)
+            if not latest_record:
+                message_lines.append(f"**交易原因**: 首次检测到价格突破，执行初始卖空")
+            else:
+                last_price = latest_record['open_price']
+                current_price = analysis_data['current_price']
+                price_increase = (current_price - last_price) / last_price * 100
+                message_lines.append(f"**交易原因**: 价格较上次开仓上涨{price_increase:.2f}%，执行追加卖空")
+            
+            message_lines.extend([
+                f"",
+                f"**风险提示**: 请密切关注仓位风险，及时止盈止损",
+                f"**执行时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            ])
+            
+            # 过滤空行
+            message_lines = [line for line in message_lines if line is not None and line != ""]
+            message_content = "\n".join(message_lines)
+            
+            # 准备请求数据
+            payload = {
+                "msgtype": "markdown",
+                "markdown": {
+                    "content": message_content
+                }
+            }
+            
+            # 发送请求
+            response = requests.post(
+                self.webhook_url,
+                json=payload,
+                proxies=proxies,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                if result.get('errcode') == 0:
+                    logger.info(f"✅ 成功发送{symbol}交易通知到企业微信群")
+                    # 保存交易通知到文件
+                    self.save_trading_notification_to_file(symbol, message_content, order_details, analysis_data)
+                else:
+                    logger.error(f"❌ 发送{symbol}交易通知失败: {result}")
+            else:
+                logger.error(f"❌ 发送{symbol}交易通知失败，状态码: {response.status_code}")
+                
+        except Exception as e:
+            logger.error(f"❌ 发送{symbol}交易企业微信通知失败: {str(e)}")
+
+    def save_trading_notification_to_file(self, symbol: str, message_content: str, order_details: Dict[str, Any], analysis_data: Dict[str, Any]):
+        """
+        保存交易通知内容到文件
+        
+        Args:
+            symbol: 交易对符号
+            message_content: 消息内容
+            order_details: 订单详情
+            analysis_data: 分析数据
+        """
+        try:
+            current_time = datetime.now()
+            
+            # 按日期创建文件名
+            date_str = current_time.strftime('%Y-%m-%d')
+            timestamp_str = current_time.strftime('%H-%M-%S')
+            
+            # 创建日期目录
+            date_dir = os.path.join(self.notifications_dir, date_str)
+            os.makedirs(date_dir, exist_ok=True)
+            
+            # 文件名包含时间戳和交易对
+            filename = f"{timestamp_str}_{symbol}_TRADING.txt"
+            file_path = os.path.join(date_dir, filename)
+            
+            # 准备保存的内容
+            file_content = [
+                f"=" * 80,
+                f"自动交易执行记录",
+                f"=" * 80,
+                f"交易对: {symbol}",
+                f"执行时间: {current_time.strftime('%Y-%m-%d %H:%M:%S')}",
+                f"订单ID: {order_details.get('order_id', 'N/A')}",
+                f"成交价格: ${order_details.get('filled_price', 0):.6f}",
+                f"成交数量: {order_details.get('filled_quantity', 0):.6f}",
+                f"杠杆倍数: {self.leverage}倍",
+                f"保证金: {self.margin_amount} USDT",
+                f"",
+                f"通知内容:",
+                f"-" * 40,
+                message_content,
+                f"",
+                f"=" * 80,
+                f""
+            ]
+            
+            # 写入文件
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(file_content))
+            
+            logger.info(f"💾 交易通知内容已保存到文件: {file_path}")
+            
+            # 同时保存到按日期汇总的交易文件
+            trading_summary_file = os.path.join(date_dir, f"{date_str}_trading_summary.txt")
+            trading_summary_content = f"[{timestamp_str}] {symbol} - 卖空 {order_details.get('filled_quantity', 0):.6f} @ ${order_details.get('filled_price', 0):.6f} (订单ID: {order_details.get('order_id', 'N/A')})\n"
+            
+            with open(trading_summary_file, 'a', encoding='utf-8') as f:
+                f.write(trading_summary_content)
+                
+        except Exception as e:
+            logger.error(f"❌ 保存{symbol}交易通知到文件失败: {str(e)}")
+
     def save_notification_to_file(self, symbol: str, message_content: str, analysis_data: Dict[str, Any]):
         """
         保存通知内容到文件
@@ -958,7 +1123,7 @@ class BinancePriceHighScanner:
         except Exception as e:
             logger.error(f"清理交易记录失败: {str(e)}")
 
-    async def execute_short_order(self, symbol: str, current_price: float) -> bool:
+    async def execute_short_order(self, symbol: str, current_price: float, analysis_data: Dict[str, Any] = None) -> bool:
         """
         执行卖空订单
         
@@ -1006,6 +1171,15 @@ class BinancePriceHighScanner:
                 # 保存交易记录
                 self.save_trade_record(symbol, filled_price, filled_quantity, order_id)
                 
+                # 发送交易通知
+                if analysis_data:
+                    order_details = {
+                        'order_id': order_id,
+                        'filled_price': filled_price,
+                        'filled_quantity': filled_quantity
+                    }
+                    self.send_trading_notification(symbol, order_details, analysis_data)
+                
                 return True
             else:
                 logger.error(f"❌ 卖空订单执行失败: {symbol}")
@@ -1046,7 +1220,7 @@ class BinancePriceHighScanner:
             if not latest_record:
                 # 没有交易记录，执行交易
                 logger.info(f"💰 {symbol} 无交易记录，执行首次卖空交易")
-                return await self.execute_short_order(symbol, current_price)
+                return await self.execute_short_order(symbol, current_price, analysis_data)
             else:
                 # 有交易记录，检查价格条件
                 last_price = latest_record['open_price']
@@ -1054,7 +1228,7 @@ class BinancePriceHighScanner:
                 
                 if price_increase >= 0.1:  # 价格上涨10%以上
                     logger.info(f"💰 {symbol} 价格较上次开仓上涨{price_increase*100:.2f}%，执行追加卖空交易")
-                    return await self.execute_short_order(symbol, current_price)
+                    return await self.execute_short_order(symbol, current_price, analysis_data)
                 else:
                     logger.info(f"⏸️ {symbol} 价格较上次开仓仅上涨{price_increase*100:.2f}%，不满足10%条件")
                     return False
