@@ -70,6 +70,10 @@ class BinancePriceHighScanner:
         self.cache_dir = os.path.join(project_root, 'trade/cache')
         os.makedirs(self.cache_dir, exist_ok=True)
         
+        # 通知记录目录
+        self.notifications_dir = os.path.join(project_root, 'trade/notifications')
+        os.makedirs(self.notifications_dir, exist_ok=True)
+        
         # 缓存文件路径
         self.token_info_cache = os.path.join(self.cache_dir, 'token_info_cache.pkl')
         self.symbol_description_cache = os.path.join(self.cache_dir, 'symbol_description_cache.pkl')
@@ -604,8 +608,8 @@ class BinancePriceHighScanner:
             if analysis_data['token_info']['twitter_username']:
                 message_lines.append(f"• X用户名: @{analysis_data['token_info']['twitter_username']}")
             
-            # if analysis_data['token_info']['twitter_id']:
-            #     message_lines.append(f"• X ID: {analysis_data['token_info']['twitter_id']}")
+            if analysis_data['token_info']['twitter_id']:
+                message_lines.append(f"• X ID: {analysis_data['token_info']['twitter_id']}")
             
             if analysis_data['token_info']['twitter_last_update_str'] != 'Unknown':
                 message_lines.append(f"• X更新: {analysis_data['token_info']['twitter_last_update_str']}")
@@ -650,6 +654,8 @@ class BinancePriceHighScanner:
                 result = response.json()
                 if result.get('errcode') == 0:
                     logger.info(f"✅ 成功发送{symbol}突破通知到企业微信群")
+                    # 保存通知内容到文件
+                    self.save_notification_to_file(symbol, message_content, analysis_data)
                 else:
                     logger.error(f"❌ 发送{symbol}通知失败: {result}")
             else:
@@ -657,6 +663,64 @@ class BinancePriceHighScanner:
                 
         except Exception as e:
             logger.error(f"❌ 发送{symbol}企业微信通知失败: {str(e)}")
+
+    def save_notification_to_file(self, symbol: str, message_content: str, analysis_data: Dict[str, Any]):
+        """
+        保存通知内容到文件
+        
+        Args:
+            symbol: 交易对符号
+            message_content: 消息内容
+            analysis_data: 分析数据
+        """
+        try:
+            current_time = datetime.now()
+            
+            # 按日期创建文件名
+            date_str = current_time.strftime('%Y-%m-%d')
+            timestamp_str = current_time.strftime('%H-%M-%S')
+            
+            # 创建日期目录
+            date_dir = os.path.join(self.notifications_dir, date_str)
+            os.makedirs(date_dir, exist_ok=True)
+            
+            # 文件名包含时间戳和交易对
+            filename = f"{timestamp_str}_{symbol}_breakthrough.txt"
+            file_path = os.path.join(date_dir, filename)
+            
+            # 准备保存的内容
+            file_content = [
+                f"=" * 80,
+                f"价格突破通知记录",
+                f"=" * 80,
+                f"交易对: {symbol}",
+                f"生成时间: {current_time.strftime('%Y-%m-%d %H:%M:%S')}",
+                f"突破区间: {', '.join([f'{days}天' for days in sorted(analysis_data['breakout_periods'])])}",
+                f"当前价格: ${analysis_data['current_price']:.6f}",
+                f"",
+                f"详细信息:",
+                f"-" * 40,
+                message_content,
+                f"",
+                f"=" * 80,
+                f""
+            ]
+            
+            # 写入文件
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(file_content))
+            
+            logger.info(f"💾 通知内容已保存到文件: {file_path}")
+            
+            # 同时保存到按日期汇总的文件
+            summary_file = os.path.join(date_dir, f"{date_str}_summary.txt")
+            summary_content = f"[{timestamp_str}] {symbol} - 突破 {', '.join([f'{days}天' for days in sorted(analysis_data['breakout_periods'])])} 高点 - ${analysis_data['current_price']:.6f}\n"
+            
+            with open(summary_file, 'a', encoding='utf-8') as f:
+                f.write(summary_content)
+                
+        except Exception as e:
+            logger.error(f"❌ 保存{symbol}通知到文件失败: {str(e)}")
 
     def analyze_symbol(self, symbol: str) -> bool:
         """
