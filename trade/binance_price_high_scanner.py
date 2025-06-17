@@ -925,7 +925,7 @@ class BinancePriceHighScanner:
             position_dict = {}
             
             for position in positions:
-                symbol = position['symbol']
+                symbol = position['symbol'].replace(':USDT', '').replace('/', '')
                 size = float(position['contracts'])
                 if size != 0:  # 只记录有持仓的
                     position_dict[symbol] = size
@@ -944,6 +944,7 @@ class BinancePriceHighScanner:
         try:
             # 获取当前持仓
             current_positions = await self.get_current_positions()
+            logger.info(f"获取到账户当前合约持仓为: {current_positions}")
             
             # 获取所有有交易记录的交易对
             traded_symbols = self.get_all_traded_symbols()
