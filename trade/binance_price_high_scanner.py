@@ -78,9 +78,9 @@ class BinancePriceHighScanner:
         self.margin_amount = 10  # 保证金金额(USDT)
         
         # 过滤条件
-        self.min_launch_days = 15  # 最小上市天数
-        self.max_market_rank = 100  # 最大市值排名
-        self.min_funding_rate = -0.005  # 最小资金费率 (-0.005%)
+        self.min_launch_days = 7  # 最小上市天数
+        self.max_market_rank = 50  # 最大市值排名
+        self.min_funding_rate = -0.01  # 最小资金费率 (-0.005%)
         
         # 交易所客户端(用于交易)
         self.binance_trading = None
