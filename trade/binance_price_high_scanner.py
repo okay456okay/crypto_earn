@@ -74,7 +74,7 @@ class BinancePriceHighScanner:
         self.enable_trading = enable_trading
         
         # 交易参数
-        self.leverage = 5  # 杠杆倍数
+        self.leverage = 20  # 杠杆倍数
         self.margin_amount = 10  # 保证金金额(USDT)
         
         # 过滤条件
@@ -266,6 +266,44 @@ class BinancePriceHighScanner:
         except Exception as e:
             logger.error(f"获取交易对列表失败: {str(e)}")
             return []
+
+    async def get_max_leverage(self, symbol: str) -> int:
+        """
+        获取Binance交易所支持的最大杠杆倍数
+        
+        Args:
+            symbol: 交易对符号
+            
+        Returns:
+            int: 最大杠杆倍数
+        """
+        try:
+            if not self.binance_trading:
+                logger.warning("交易客户端未初始化，使用默认杠杆倍数: 20倍")
+                return 20
+                
+            # 获取交易对信息
+            response = await self.binance_trading.fapiPublicGetExchangeInfo()
+            
+            if response and 'symbols' in response:
+                for symbol_info in response['symbols']:
+                    if symbol_info['symbol'] == symbol:
+                        # 获取杠杆倍数信息
+                        leverage_info = await self.binance_trading.fapiPrivateGetLeverageBracket({
+                            'symbol': symbol
+                        })
+                        
+                        if leverage_info and 'brackets' in leverage_info[0]:
+                            max_leverage = int(leverage_info[0]['brackets'][0]['initialLeverage'])
+                            logger.info(f"获取到{symbol}最大杠杆倍数: {max_leverage}倍")
+                            return max_leverage
+            
+            raise Exception(f"未能获取到{symbol}的最大杠杆倍数")
+            
+        except Exception as e:
+            logger.warning(f"获取Binance最大杠杆倍数失败: {e}")
+            logger.info("使用默认杠杆倍数: 20倍")
+            return 20
 
     def save_current_price(self, symbol: str, current_price: float):
         """保存当前价格到缓存"""
@@ -1296,17 +1334,20 @@ class BinancePriceHighScanner:
                 logger.error("交易客户端未初始化")
                 return False
             
-            # 计算交易数量 (保证金 * 杠杆 / 价格)
-            quantity = (self.margin_amount * self.leverage) / current_price
+            # 获取最大杠杆倍数并计算实际使用的杠杆
+            max_leverage = await self.get_max_leverage(symbol)
+            actual_leverage = min(self.leverage, max_leverage)
+            logger.info(f"{symbol} 配置杠杆: {self.leverage}倍, 最大支持: {max_leverage}倍, 实际使用: {actual_leverage}倍")
             
-            # 设置杠杆
-            # await self.binance_trading.set_leverage(self.leverage, symbol)
-            # 设置Binance合约参数
+            # 计算交易数量 (保证金 * 实际杠杆 / 价格)
+            quantity = (self.margin_amount * actual_leverage) / current_price
+            
+            # 设置实际杠杆
             await self.binance_trading.fapiPrivatePostLeverage({
                 'symbol': symbol,
-                'leverage': self.leverage
+                'leverage': actual_leverage
             })
-            logger.info(f"已设置{symbol}杠杆为{self.leverage}倍")
+            logger.info(f"已设置{symbol}杠杆为{actual_leverage}倍")
 
             # 执行市价卖空订单
             order = await self.binance_trading.create_market_sell_order(
@@ -1324,6 +1365,41 @@ class BinancePriceHighScanner:
                 logger.info(f"订单ID: {order_id}")
                 logger.info(f"成交价格: {filled_price}")
                 logger.info(f"成交数量: {filled_quantity}")
+                
+                # 检查订单状态
+                try:
+                    order_status = await self.binance_trading.fetch_order(order_id, symbol)
+                    if order_status and order_status.get('status') == 'closed':
+                        logger.info(f"✅ {symbol} 空单已完成，准备提交止盈限价单")
+                        
+                        # 计算止盈价格 (95% of 空单价格)
+                        take_profit_price = filled_price * 0.95
+                        
+                        # 提交限价平仓单 (买入平仓)
+                        try:
+                            close_order = await self.binance_trading.create_limit_buy_order(
+                                symbol=symbol,
+                                amount=filled_quantity,
+                                price=take_profit_price,
+                                params={'positionSide': 'SHORT'}
+                            )
+                            
+                            if close_order and close_order.get('id'):
+                                close_order_id = close_order.get('id')
+                                logger.info(f"🎯 止盈限价单提交成功: {symbol}")
+                                logger.info(f"止盈订单ID: {close_order_id}")
+                                logger.info(f"止盈价格: ${take_profit_price:.6f}")
+                                logger.info(f"预期盈利: ${(filled_price - take_profit_price) * filled_quantity:.2f}")
+                            else:
+                                logger.error(f"❌ {symbol} 止盈限价单提交失败")
+                                
+                        except Exception as close_e:
+                            logger.error(f"❌ 提交{symbol}止盈限价单失败: {str(close_e)}")
+                    else:
+                        logger.warning(f"⚠️ {symbol} 空单状态: {order_status.get('status', 'unknown')}")
+                        
+                except Exception as status_e:
+                    logger.warning(f"⚠️ 检查{symbol}订单状态失败: {str(status_e)}")
                 
                 # 保存交易记录
                 self.save_trade_record(symbol, filled_price, filled_quantity, order_id)
