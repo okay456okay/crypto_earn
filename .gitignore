@@ -170,3 +170,4 @@ logs/
 /trade/charts/
 /trade/cache/
 /trade/trading_records.db
+/trade/notifications/
