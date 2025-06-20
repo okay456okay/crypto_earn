@@ -83,7 +83,7 @@ class BinancePriceHighScanner:
         # 过滤条件
         self.min_launch_days = 7  # 最小上市天数
         self.max_market_rank = 50  # 最大市值排名
-        self.min_funding_rate = -0.01  # 最小资金费率 (-0.005%)
+        self.min_funding_rate = -0.0001  # 最小资金费率 (-0.01%)，小数点形式
 
         # 交易所客户端(用于交易)
         self.binance_trading = None
@@ -1585,8 +1585,8 @@ class BinancePriceHighScanner:
             # 保存当前价格（无论是否突破）
             self.save_current_price(symbol, current_price)
 
-            if not breakout_result['has_breakout']:
-                return False
+            # if not breakout_result['has_breakout']:
+            #     return False
 
             breakout_periods = breakout_result['breakout_periods']
             periods_str = ', '.join([f"{days}天" for days in sorted(breakout_periods)])
