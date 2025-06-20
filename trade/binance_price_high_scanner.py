@@ -28,7 +28,6 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 from tools.logger import logger
 from config import binance_api_key, binance_api_secret, proxies, project_root
 from binance.client import Client
-from binance.exceptions import BinanceAPIException
 import time
 import json
 import pandas as pd
@@ -86,17 +85,15 @@ class BinancePriceHighScanner:
         self.min_funding_rate = -0.0001  # 最小资金费率 (-0.01%)，小数点形式
 
         # 交易所客户端(用于交易)
-        self.binance_trading = None
-        if self.enable_trading:
-            self.binance_trading = ccxtpro.binance({
-                'apiKey': api_key or binance_api_key,
-                'secret': api_secret or binance_api_secret,
-                'enableRateLimit': True,
-                'proxies': proxies,
-                'options': {
-                    'defaultType': 'future',  # 设置为合约模式
-                }
-            })
+        self.binance_trading = ccxtpro.binance({
+            'apiKey': api_key or binance_api_key,
+            'secret': api_secret or binance_api_secret,
+            'enableRateLimit': True,
+            'proxies': proxies,
+            'options': {
+                'defaultType': 'future',  # 设置为合约模式
+            }
+        })
 
         # 缓存目录
         self.cache_dir = os.path.join(project_root, 'trade/cache')
@@ -126,8 +123,39 @@ class BinancePriceHighScanner:
         self.symbol_description_data = self.load_cache_with_expiry(self.symbol_description_cache)
         self.products_data = self.load_cache_with_expiry(self.products_cache)
 
+        # 资金费率信息缓存（包含结算周期）
+        self.funding_info_data = {}
+        self._load_funding_info()
+
         logger.info(
             f"Binance价格高点扫描器初始化完成，分析天数: {self.days_to_analyze}天，自动交易: {'启用' if self.enable_trading else '禁用'}")
+
+    def _load_funding_info(self):
+        """一次性加载所有合约的资金费率信息（包含结算周期）"""
+        try:
+            logger.info("获取所有合约的资金费率信息...")
+            
+            # 使用Binance API获取资金费率信息
+            funding_info_list = self.client.futures_v1_get_funding_info()
+            
+            if funding_info_list:
+                # 将列表转换为字典，以symbol为key
+                for info in funding_info_list:
+                    symbol = info.get('symbol')
+                    if symbol:
+                        self.funding_info_data[symbol] = {
+                            'funding_interval_hours': int(info.get('fundingIntervalHours', 8)),
+                            'adjusted_funding_rate_cap': float(info.get('adjustedFundingRateCap', 0.0)),
+                            'adjusted_funding_rate_floor': float(info.get('adjustedFundingRateFloor', 0.0))
+                        }
+                
+                logger.info(f"成功获取 {len(self.funding_info_data)} 个合约的资金费率信息")
+            else:
+                logger.warning("未获取到任何合约的资金费率信息")
+                
+        except Exception as e:
+            logger.error(f"获取合约资金费率信息失败: {str(e)}")
+            logger.info("将使用默认的8小时结算周期")
 
     def init_trading_db(self):
         """初始化交易记录数据库"""
@@ -299,10 +327,6 @@ class BinancePriceHighScanner:
             int: 最大杠杆倍数
         """
         try:
-            if not self.binance_trading:
-                logger.warning("交易客户端未初始化，使用默认杠杆倍数: 20倍")
-                return 20
-
             # 获取交易对信息
             response = await self.binance_trading.fapiPublicGetExchangeInfo()
 
@@ -748,17 +772,19 @@ class BinancePriceHighScanner:
             Dict: 资金费率信息
         """
         try:
+            # 获取该交易对的结算周期信息
+            symbol_funding_info = self.funding_info_data.get(symbol, {})
+            settlement_hours = symbol_funding_info.get('funding_interval_hours', 8)
+            
             # 使用ccxt的fetch_funding_rate方法（更准确）
             funding_rate_info = await self.binance_trading.fetch_funding_rate(symbol)
 
             if funding_rate_info and 'fundingRate' in funding_rate_info:
                 current_rate = float(funding_rate_info['fundingRate'])
-                # 资金费率通常每8小时结算一次
-                settlement_hours = 8
-                # 年化资金费率 = 当前费率 * (365 * 24 / 8) * 100
+                # 年化资金费率 = 当前费率 * (365 * 24 / settlement_hours) * 100
                 annualized_rate = current_rate * (365 * 24 / settlement_hours) * 100
 
-                logger.debug(f"{symbol} 资金费率: {current_rate:.6f} ({current_rate * 100:.4f}%)")
+                logger.debug(f"{symbol} 资金费率: {current_rate:.6f} ({current_rate * 100:.4f}%), 结算周期: {settlement_hours}小时")
 
                 return {
                     'current_rate': current_rate,
@@ -770,11 +796,15 @@ class BinancePriceHighScanner:
         except Exception as e:
             logger.error(f"获取{symbol}资金费率失败: {str(e)}")
 
+        # 返回默认值，使用缓存的结算周期
+        symbol_funding_info = self.funding_info_data.get(symbol, {})
+        settlement_hours = symbol_funding_info.get('funding_interval_hours', 8)
+        
         return {
             'current_rate': 0.0,
             'current_rate_percent': 0.0,
             'annualized_rate': 0.0,
-            'settlement_hours': 8
+            'settlement_hours': settlement_hours
         }
 
     def get_token_info(self, base_asset: str) -> Dict[str, Any]:
@@ -1831,7 +1861,8 @@ async def main():
                 logger.warning("⚠️  自动交易功能已启用! 请确保您了解交易风险!")
 
             scanner = BinancePriceHighScanner(days_to_analyze=args.days, enable_trading=args.trade)
-            await scanner.get_funding_rate_info('AERGOUSDT')
+            funding_info = await scanner.get_funding_rate_info('AERGOUSDT')
+            print(funding_info)
             # await scanner.run_scan()
 
     except KeyboardInterrupt:
