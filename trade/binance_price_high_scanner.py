@@ -261,16 +261,32 @@ class BinancePriceHighScanner:
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-
+            
             cursor.execute('SELECT DISTINCT symbol FROM trading_records')
             results = cursor.fetchall()
             conn.close()
-
+            
             return [row[0] for row in results]
-
+            
         except Exception as e:
             logger.error(f"获取交易对列表失败: {str(e)}")
             return []
+
+    def _get_total_trade_records_count(self) -> int:
+        """获取数据库中的交易记录总数"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('SELECT COUNT(*) FROM trading_records')
+            result = cursor.fetchone()
+            conn.close()
+            
+            return result[0] if result else 0
+            
+        except Exception as e:
+            logger.error(f"获取交易记录总数失败: {str(e)}")
+            return 0
 
     async def get_max_leverage(self, symbol: str) -> int:
         """
@@ -1623,10 +1639,13 @@ class BinancePriceHighScanner:
         """
         logger.info(f"🚀 开始扫描Binance合约价格突破（{self.days_to_analyze}天历史数据）...")
 
-        # 清理交易记录
+        # 记录扫描开始时的交易记录数量（用于计算新增交易数）
+        initial_trade_count = 0
         if self.enable_trading:
             logger.info("🧹 清理交易记录...")
             await self.clean_trade_records()
+            # 获取扫描开始时的交易记录数量
+            initial_trade_count = self._get_total_trade_records_count()
 
         # 获取所有合约符号
         symbols = self.get_all_futures_symbols()
@@ -1638,7 +1657,6 @@ class BinancePriceHighScanner:
 
         found_count = 0
         processed_count = 0
-        trade_count = 0
 
         for i, symbol in enumerate(symbols, 1):
             try:
@@ -1659,9 +1677,13 @@ class BinancePriceHighScanner:
                 logger.error(f"❌ 处理{symbol}时发生错误: {str(e)}")
                 continue
 
+        # 计算本次扫描期间执行的交易数量
+        final_trade_count = self._get_total_trade_records_count() if self.enable_trading else 0
+        new_trades_count = final_trade_count - initial_trade_count
+
         logger.info(f"✅ 扫描完成! 处理了 {processed_count} 个交易对，发现 {found_count} 个价格突破")
         if self.enable_trading:
-            logger.info(f"💰 执行了 {trade_count} 笔交易")
+            logger.info(f"💰 执行了 {new_trades_count} 笔交易")
 
         # 更新并显示盈亏信息（不需要重新获取价格，使用扫描过程中的价格数据）
         await self.update_pnl_only(fetch_prices=False)
