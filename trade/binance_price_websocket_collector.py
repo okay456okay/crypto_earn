@@ -310,7 +310,7 @@ class BinancePriceWebSocketCollector:
                     ping_interval=20,
                     ping_timeout=10,
                     close_timeout=10,
-                    proxy=proxies['https']
+                    proxy=proxies.get('https')
                 ) as websocket:
                     self.websocket = websocket
                     logger.info("WebSocket连接成功")
