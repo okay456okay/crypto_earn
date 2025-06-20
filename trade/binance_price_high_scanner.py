@@ -1585,8 +1585,8 @@ class BinancePriceHighScanner:
             # 保存当前价格（无论是否突破）
             self.save_current_price(symbol, current_price)
 
-            # if not breakout_result['has_breakout']:
-            #     return False
+            if not breakout_result['has_breakout']:
+                return False
 
             breakout_periods = breakout_result['breakout_periods']
             periods_str = ', '.join([f"{days}天" for days in sorted(breakout_periods)])
