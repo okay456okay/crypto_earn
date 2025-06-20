@@ -22,6 +22,7 @@ Binance价格高点扫描器
 
 import os
 import sys
+
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
 from tools.logger import logger
@@ -45,10 +46,12 @@ import ccxt.pro as ccxtpro
 # 设置日志级别
 logger.setLevel(logging.INFO)
 
+
 class BinancePriceHighScanner:
     """Binance价格高点扫描器"""
-    
-    def __init__(self, api_key: str = None, api_secret: str = None, days_to_analyze: int = 30, enable_trading: bool = False):
+
+    def __init__(self, api_key: str = None, api_secret: str = None, days_to_analyze: int = 30,
+                 enable_trading: bool = False):
         """
         初始化Binance客户端
         
@@ -59,29 +62,29 @@ class BinancePriceHighScanner:
             enable_trading: 是否启用自动交易功能
         """
         self.client = Client(
-            api_key or binance_api_key, 
+            api_key or binance_api_key,
             api_secret or binance_api_secret,
             requests_params={'proxies': proxies}
         )
-        
+
         # 企业微信群机器人webhook
         self.webhook_url = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=43c4c655-b144-4e1f-b054-4b3a9e2caf26"
-        
+
         # 分析天数
         self.days_to_analyze = days_to_analyze
-        
+
         # 交易功能
         self.enable_trading = enable_trading
-        
+
         # 交易参数
         self.leverage = 20  # 杠杆倍数
         self.margin_amount = 10  # 保证金金额(USDT)
-        
+
         # 过滤条件
         self.min_launch_days = 7  # 最小上市天数
         self.max_market_rank = 50  # 最大市值排名
         self.min_funding_rate = -0.01  # 最小资金费率 (-0.005%)
-        
+
         # 交易所客户端(用于交易)
         self.binance_trading = None
         if self.enable_trading:
@@ -94,43 +97,44 @@ class BinancePriceHighScanner:
                     'defaultType': 'future',  # 设置为合约模式
                 }
             })
-        
+
         # 缓存目录
         self.cache_dir = os.path.join(project_root, 'trade/cache')
         os.makedirs(self.cache_dir, exist_ok=True)
-        
+
         # 通知记录目录
         self.notifications_dir = os.path.join(project_root, 'trade/notifications')
         os.makedirs(self.notifications_dir, exist_ok=True)
-        
+
         # 交易记录数据库
         self.db_path = os.path.join(project_root, 'trade/trading_records.db')
         self.init_trading_db()  # 总是初始化数据库，用于存储价格数据
-        
+
         # 当前价格缓存 {symbol: price}
         self.current_prices = {}
-        
+
         # 缓存文件路径
         self.token_info_cache = os.path.join(self.cache_dir, 'token_info_cache.pkl')
         self.symbol_description_cache = os.path.join(self.cache_dir, 'symbol_description_cache.pkl')
         self.products_cache = os.path.join(self.cache_dir, 'products_cache.pkl')
-        
+
         # 缓存过期时间（1天）
         self.cache_expire_hours = 24
-        
+
         # 加载缓存数据
         self.token_info_data = self.load_cache_with_expiry(self.token_info_cache)
         self.symbol_description_data = self.load_cache_with_expiry(self.symbol_description_cache)
         self.products_data = self.load_cache_with_expiry(self.products_cache)
-        
-        logger.info(f"Binance价格高点扫描器初始化完成，分析天数: {self.days_to_analyze}天，自动交易: {'启用' if self.enable_trading else '禁用'}")
+
+        logger.info(
+            f"Binance价格高点扫描器初始化完成，分析天数: {self.days_to_analyze}天，自动交易: {'启用' if self.enable_trading else '禁用'}")
 
     def init_trading_db(self):
         """初始化交易记录数据库"""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            
+
             # 创建交易记录表
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS trading_records (
@@ -152,32 +156,32 @@ class BinancePriceHighScanner:
                     UNIQUE(exchange, symbol, order_time)
                 )
             ''')
-            
+
             # 检查是否需要添加新列（为了兼容现有数据库）
             cursor.execute("PRAGMA table_info(trading_records)")
             columns = [column[1] for column in cursor.fetchall()]
-            
+
             # 添加缺失的列
             if 'current_price' not in columns:
                 cursor.execute('ALTER TABLE trading_records ADD COLUMN current_price REAL DEFAULT 0.0')
                 logger.info("添加current_price列到trading_records表")
-                
+
             if 'price_change_percent' not in columns:
                 cursor.execute('ALTER TABLE trading_records ADD COLUMN price_change_percent REAL DEFAULT 0.0')
                 logger.info("添加price_change_percent列到trading_records表")
-                
+
             if 'pnl_amount' not in columns:
                 cursor.execute('ALTER TABLE trading_records ADD COLUMN pnl_amount REAL DEFAULT 0.0')
                 logger.info("添加pnl_amount列到trading_records表")
-                
+
             if 'price_update_time' not in columns:
                 cursor.execute('ALTER TABLE trading_records ADD COLUMN price_update_time TIMESTAMP')
                 logger.info("添加price_update_time列到trading_records表")
-            
+
             conn.commit()
             conn.close()
             logger.info(f"交易记录数据库初始化完成: {self.db_path}")
-            
+
         except Exception as e:
             logger.error(f"交易记录数据库初始化失败: {str(e)}")
 
@@ -186,25 +190,25 @@ class BinancePriceHighScanner:
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            
+
             cursor.execute('''
                 SELECT * FROM trading_records 
                 WHERE symbol = ? 
                 ORDER BY order_time DESC 
                 LIMIT 1
             ''', (symbol,))
-            
+
             result = cursor.fetchone()
             conn.close()
-            
+
             if result:
-                columns = ['id', 'exchange', 'symbol', 'order_time', 'open_price', 
-                          'quantity', 'leverage', 'direction', 'order_id', 'margin_amount',
-                          'current_price', 'price_change_percent', 'pnl_amount', 'price_update_time', 'created_at']
+                columns = ['id', 'exchange', 'symbol', 'order_time', 'open_price',
+                           'quantity', 'leverage', 'direction', 'order_id', 'margin_amount',
+                           'current_price', 'price_change_percent', 'pnl_amount', 'price_update_time', 'created_at']
                 return dict(zip(columns, result))
-            
+
             return None
-            
+
         except Exception as e:
             logger.error(f"获取{symbol}最新交易记录失败: {str(e)}")
             return None
@@ -214,18 +218,19 @@ class BinancePriceHighScanner:
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            
+
             cursor.execute('''
                 INSERT INTO trading_records 
                 (exchange, symbol, order_time, open_price, quantity, leverage, direction, order_id, margin_amount)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', ('Binance', symbol, datetime.now(), open_price, quantity, self.leverage, 'SHORT', order_id, self.margin_amount))
-            
+            ''', ('Binance', symbol, datetime.now(), open_price, quantity, self.leverage, 'SHORT', order_id,
+                  self.margin_amount))
+
             conn.commit()
             conn.close()
             logger.info(f"交易记录已保存: {symbol} 价格={open_price} 数量={quantity}")
             return True
-            
+
         except Exception as e:
             logger.error(f"保存{symbol}交易记录失败: {str(e)}")
             return False
@@ -235,18 +240,18 @@ class BinancePriceHighScanner:
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            
+
             cursor.execute('DELETE FROM trading_records WHERE symbol = ?', (symbol,))
             deleted_count = cursor.rowcount
-            
+
             conn.commit()
             conn.close()
-            
+
             if deleted_count > 0:
                 logger.info(f"已删除{symbol}的{deleted_count}条交易记录")
-            
+
             return True
-            
+
         except Exception as e:
             logger.error(f"删除{symbol}交易记录失败: {str(e)}")
             return False
@@ -256,13 +261,13 @@ class BinancePriceHighScanner:
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            
+
             cursor.execute('SELECT DISTINCT symbol FROM trading_records')
             results = cursor.fetchall()
             conn.close()
-            
+
             return [row[0] for row in results]
-            
+
         except Exception as e:
             logger.error(f"获取交易对列表失败: {str(e)}")
             return []
@@ -281,10 +286,10 @@ class BinancePriceHighScanner:
             if not self.binance_trading:
                 logger.warning("交易客户端未初始化，使用默认杠杆倍数: 20倍")
                 return 20
-                
+
             # 获取交易对信息
             response = await self.binance_trading.fapiPublicGetExchangeInfo()
-            
+
             if response and 'symbols' in response:
                 for symbol_info in response['symbols']:
                     if symbol_info['symbol'] == symbol:
@@ -292,14 +297,14 @@ class BinancePriceHighScanner:
                         leverage_info = await self.binance_trading.fapiPrivateGetLeverageBracket({
                             'symbol': symbol
                         })
-                        
+
                         if leverage_info and 'brackets' in leverage_info[0]:
                             max_leverage = int(leverage_info[0]['brackets'][0]['initialLeverage'])
                             logger.info(f"获取到{symbol}最大杠杆倍数: {max_leverage}倍")
                             return max_leverage
-            
+
             raise Exception(f"未能获取到{symbol}的最大杠杆倍数")
-            
+
         except Exception as e:
             logger.warning(f"获取Binance最大杠杆倍数失败: {e}")
             logger.info("使用默认杠杆倍数: 20倍")
@@ -315,7 +320,7 @@ class BinancePriceHighScanner:
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            
+
             # 获取该交易对的最新交易记录
             cursor.execute('''
                 SELECT id, open_price, quantity, direction
@@ -324,17 +329,17 @@ class BinancePriceHighScanner:
                 ORDER BY order_time DESC 
                 LIMIT 1
             ''', (symbol,))
-            
+
             result = cursor.fetchone()
             if not result:
                 conn.close()
                 return False
-                
+
             record_id, open_price, quantity, direction = result
-            
+
             # 计算价格涨跌百分比
             price_change_percent = ((current_price - open_price) / open_price) * 100
-            
+
             # 计算盈亏额（考虑交易方向）
             if direction == 'SHORT':
                 # 卖空：价格下跌为盈利
@@ -342,7 +347,7 @@ class BinancePriceHighScanner:
             else:
                 # 做多：价格上涨为盈利
                 pnl_amount = (current_price - open_price) * quantity
-            
+
             # 更新记录
             cursor.execute('''
                 UPDATE trading_records 
@@ -352,13 +357,13 @@ class BinancePriceHighScanner:
                     price_update_time = ?
                 WHERE id = ?
             ''', (current_price, price_change_percent, pnl_amount, datetime.now(), record_id))
-            
+
             conn.commit()
             conn.close()
-            
+
             logger.debug(f"更新{symbol}盈亏信息: 价格变化{price_change_percent:.2f}%, 盈亏${pnl_amount:.2f}")
             return True
-            
+
         except Exception as e:
             logger.error(f"更新{symbol}盈亏信息失败: {str(e)}")
             return False
@@ -368,7 +373,7 @@ class BinancePriceHighScanner:
         try:
             traded_symbols = self.get_all_traded_symbols()
             updated_count = 0
-            
+
             for symbol in traded_symbols:
                 if symbol in self.current_prices:
                     current_price = self.current_prices[symbol]
@@ -376,9 +381,9 @@ class BinancePriceHighScanner:
                         updated_count += 1
                 else:
                     logger.warning(f"未找到{symbol}的当前价格数据")
-            
+
             logger.info(f"完成盈亏更新: 更新了{updated_count}个交易对的盈亏信息")
-            
+
         except Exception as e:
             logger.error(f"批量更新盈亏信息失败: {str(e)}")
 
@@ -387,7 +392,7 @@ class BinancePriceHighScanner:
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            
+
             cursor.execute('''
                 SELECT symbol, open_price, current_price, quantity, direction, 
                        price_change_percent, pnl_amount, price_update_time
@@ -395,20 +400,20 @@ class BinancePriceHighScanner:
                 WHERE current_price > 0
                 ORDER BY pnl_amount DESC
             ''')
-            
+
             results = cursor.fetchall()
             conn.close()
-            
+
             summary = {
                 'positions': [],
                 'total_pnl': 0.0,
                 'profitable_count': 0,
                 'losing_count': 0
             }
-            
+
             for row in results:
                 symbol, open_price, current_price, quantity, direction, price_change_percent, pnl_amount, price_update_time = row
-                
+
                 position = {
                     'symbol': symbol,
                     'open_price': open_price,
@@ -419,17 +424,17 @@ class BinancePriceHighScanner:
                     'pnl_amount': pnl_amount,
                     'price_update_time': price_update_time
                 }
-                
+
                 summary['positions'].append(position)
                 summary['total_pnl'] += pnl_amount
-                
+
                 if pnl_amount > 0:
                     summary['profitable_count'] += 1
                 else:
                     summary['losing_count'] += 1
-            
+
             return summary
-            
+
         except Exception as e:
             logger.error(f"获取盈亏汇总失败: {str(e)}")
             return {'positions': [], 'total_pnl': 0.0, 'profitable_count': 0, 'losing_count': 0}
@@ -439,7 +444,7 @@ class BinancePriceHighScanner:
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            
+
             cursor.execute('''
                 SELECT symbol, 
                        AVG(current_price) as avg_current_price,
@@ -454,23 +459,23 @@ class BinancePriceHighScanner:
                 GROUP BY symbol, direction
                 ORDER BY total_pnl DESC
             ''')
-            
+
             results = cursor.fetchall()
             conn.close()
-            
+
             summary = {
                 'symbol_positions': [],
                 'total_pnl': 0.0,
                 'profitable_symbols': 0,
                 'losing_symbols': 0
             }
-            
+
             for row in results:
                 symbol, avg_current_price, avg_open_price, total_quantity, direction, total_pnl, latest_update_time, trade_count = row
-                
+
                 # 计算平均价格变化百分比
                 price_change_percent = ((avg_current_price - avg_open_price) / avg_open_price) * 100
-                
+
                 position = {
                     'symbol': symbol,
                     'avg_open_price': avg_open_price,
@@ -482,17 +487,17 @@ class BinancePriceHighScanner:
                     'latest_update_time': latest_update_time,
                     'trade_count': trade_count
                 }
-                
+
                 summary['symbol_positions'].append(position)
                 summary['total_pnl'] += total_pnl
-                
+
                 if total_pnl > 0:
                     summary['profitable_symbols'] += 1
                 else:
                     summary['losing_symbols'] += 1
-            
+
             return summary
-            
+
         except Exception as e:
             logger.error(f"获取按交易对合并的盈亏汇总失败: {str(e)}")
             return {'symbol_positions': [], 'total_pnl': 0.0, 'profitable_symbols': 0, 'losing_symbols': 0}
@@ -503,12 +508,12 @@ class BinancePriceHighScanner:
             if os.path.exists(cache_file):
                 with open(cache_file, 'rb') as f:
                     cache_data = pickle.load(f)
-                
+
                 # 检查缓存格式和过期时间
                 if isinstance(cache_data, dict) and 'timestamp' in cache_data and 'data' in cache_data:
                     cache_time = datetime.fromtimestamp(cache_data['timestamp'])
                     current_time = datetime.now()
-                    
+
                     # 检查是否过期
                     if (current_time - cache_time).total_seconds() < self.cache_expire_hours * 3600:
                         logger.info(f"加载有效缓存: {cache_file}，缓存时间: {cache_time.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -555,17 +560,17 @@ class BinancePriceHighScanner:
         try:
             logger.info("获取Binance所有合约交易对...")
             exchange_info = self.client.futures_exchange_info()
-            
+
             symbols = []
             for symbol_info in exchange_info['symbols']:
-                if (symbol_info['status'] == 'TRADING' and 
-                    symbol_info['contractType'] == 'PERPETUAL' and
-                    symbol_info['quoteAsset'] == 'USDT'):
+                if (symbol_info['status'] == 'TRADING' and
+                        symbol_info['contractType'] == 'PERPETUAL' and
+                        symbol_info['quoteAsset'] == 'USDT'):
                     symbols.append(symbol_info['symbol'])
-            
+
             logger.info(f"找到 {len(symbols)} 个活跃的USDT永续合约交易对")
             return symbols
-            
+
         except Exception as e:
             logger.error(f"获取合约交易对信息失败: {str(e)}")
             return []
@@ -599,12 +604,12 @@ class BinancePriceHighScanner:
     """
         if days is None:
             days = self.days_to_analyze
-            
+
         try:
             # 计算时间范围
             end_time = datetime.now()
             start_time = end_time - timedelta(days=days)
-            
+
             # 获取30分钟K线数据
             klines = self.client.futures_klines(
                 symbol=symbol,
@@ -613,14 +618,14 @@ class BinancePriceHighScanner:
                 endTime=int(end_time.timestamp() * 1000),
                 limit=1440  # 30天*24小时*2(30分钟) = 1440, Default 500; max 1500.
             )
-            
+
             if not klines:
                 logger.warning(f"{symbol}: 未获取到K线数据")
                 return None
-                
+
             logger.debug(f"{symbol}: 获取到{len(klines)}根30分钟K线")
             return klines
-            
+
         except Exception as e:
             logger.error(f"获取{symbol}的30分钟K线数据失败: {str(e)}")
             return None
@@ -652,25 +657,25 @@ class BinancePriceHighScanner:
                 'breakout_periods': [],
                 'breakouts': {}
             }
-        
+
         # 获取最后一根K线的收盘价
         current_price = float(klines[-1][4])  # 索引4是收盘价
-        
+
         # 每30分钟一根K线，计算各时间区间对应的K线数量
         periods = {
-            7: 7 * 24 * 2,    # 7天 = 7 * 24小时 * 2(每小时2根30分钟K线) = 336根
+            7: 7 * 24 * 2,  # 7天 = 7 * 24小时 * 2(每小时2根30分钟K线) = 336根
             15: 15 * 24 * 2,  # 15天 = 720根
-            30: 30 * 24 * 2   # 30天 = 1440根
+            30: 30 * 24 * 2  # 30天 = 1440根
         }
-        
+
         breakouts = {}
         breakout_periods = []
         has_breakout = False
-        
+
         for days, kline_count in periods.items():
             # 确保不超过实际K线数量
             actual_count = min(kline_count, len(klines) - 1)  # 排除最后一根K线
-            
+
             if actual_count <= 0:
                 breakouts[days] = {
                     'is_high': False,
@@ -678,27 +683,27 @@ class BinancePriceHighScanner:
                     'min_low': 0.0
                 }
                 continue
-            
+
             # 获取指定时间区间的K线数据（从倒数第二根开始往前数）
-            period_klines = klines[-(actual_count+1):-1]  # 排除最后一根K线
-            
+            period_klines = klines[-(actual_count + 1):-1]  # 排除最后一根K线
+
             # 提取该时间区间的高点和低点价格
             high_prices = [float(kline[2]) for kline in period_klines]  # 索引2是高点价格
-            low_prices = [float(kline[3]) for kline in period_klines]   # 索引3是低点价格
-            
+            low_prices = [float(kline[3]) for kline in period_klines]  # 索引3是低点价格
+
             if high_prices and low_prices:
                 max_high = max(high_prices)
                 min_low = min(low_prices)
-                
+
                 # 检查当前价格是否等于或超过该时间区间的最高点
                 is_high = current_price >= max_high
-                
+
                 breakouts[days] = {
                     'is_high': is_high,
                     'max_high': max_high,
                     'min_low': min_low
                 }
-                
+
                 if is_high:
                     breakout_periods.append(days)
                     has_breakout = True
@@ -708,7 +713,7 @@ class BinancePriceHighScanner:
                     'max_high': 0.0,
                     'min_low': 0.0
                 }
-        
+
         return {
             'current_price': current_price,
             'has_breakout': has_breakout,
@@ -729,24 +734,24 @@ class BinancePriceHighScanner:
         try:
             # 获取当前资金费率
             funding_rate = self.client.futures_funding_rate(symbol=symbol, limit=1)
-            
+
             if funding_rate:
                 current_rate = float(funding_rate[0]['fundingRate'])
                 # 资金费率通常每8小时结算一次
                 settlement_hours = 8
                 # 年化资金费率 = 当前费率 * (365 * 24 / 8) * 100
                 annualized_rate = current_rate * (365 * 24 / settlement_hours) * 100
-                
+
                 return {
                     'current_rate': current_rate,
                     'current_rate_percent': current_rate * 100,
                     'annualized_rate': annualized_rate,
                     'settlement_hours': settlement_hours
                 }
-            
+
         except Exception as e:
             logger.error(f"获取{symbol}资金费率失败: {str(e)}")
-        
+
         return {
             'current_rate': 0.0,
             'current_rate_percent': 0.0,
@@ -767,18 +772,18 @@ class BinancePriceHighScanner:
         # 检查缓存
         if base_asset in self.token_info_data:
             return self.token_info_data[base_asset]
-        
+
         try:
             url = f"https://www.binance.com/bapi/apex/v1/friendly/apex/marketing/web/token-info?symbol={base_asset}"
-            
+
             response = requests.get(url, proxies=proxies, timeout=10)
             response.raise_for_status()
-            
+
             data = response.json()
-            
+
             if data.get('success') and data.get('data'):
                 token_data = data['data']
-                
+
                 info = {
                     'market_cap': token_data.get('fdmc', 0),  # 完全稀释市值
                     'ath_price': token_data.get('athpu', 0),  # 历史最高价
@@ -794,7 +799,7 @@ class BinancePriceHighScanner:
                     'twitter_last_update': token_data.get('xlut', 0),  # Twitter最后更新时间
                     'repo_update_time': token_data.get('rut', 0),  # 仓库更新时间
                 }
-                
+
                 # 格式化发行日期
                 if info['launch_date']:
                     try:
@@ -804,7 +809,7 @@ class BinancePriceHighScanner:
                         info['launch_date_str'] = 'Unknown'
                 else:
                     info['launch_date_str'] = 'Unknown'
-                
+
                 # 格式化Twitter最后更新时间
                 if info['twitter_last_update']:
                     try:
@@ -814,7 +819,7 @@ class BinancePriceHighScanner:
                         info['twitter_last_update_str'] = 'Unknown'
                 else:
                     info['twitter_last_update_str'] = 'Unknown'
-                
+
                 # 格式化仓库更新时间
                 if info['repo_update_time']:
                     try:
@@ -824,16 +829,16 @@ class BinancePriceHighScanner:
                         info['repo_update_time_str'] = 'Unknown'
                 else:
                     info['repo_update_time_str'] = 'Unknown'
-                
+
                 # 缓存数据
                 self.token_info_data[base_asset] = info
                 self.save_cache_with_expiry(self.token_info_cache, self.token_info_data)
-                
+
                 return info
-            
+
         except Exception as e:
             logger.error(f"获取{base_asset}代币信息失败: {str(e)}")
-        
+
         # 返回默认值
         default_info = {
             'market_cap': 0,
@@ -853,11 +858,11 @@ class BinancePriceHighScanner:
             'repo_update_time': 0,
             'repo_update_time_str': 'Unknown'
         }
-        
+
         # 缓存默认值以避免重复请求
         self.token_info_data[base_asset] = default_info
         self.save_cache_with_expiry(self.token_info_cache, self.token_info_data)
-        
+
         return default_info
 
     def get_symbol_description(self, symbol: str) -> str:
@@ -873,17 +878,17 @@ class BinancePriceHighScanner:
         # 检查缓存
         if symbol in self.symbol_description_data:
             return self.symbol_description_data[symbol]
-        
+
         try:
             # 如果缓存为空，一次性获取所有描述
             if not self.symbol_description_data:
                 url = "https://bin.bnbstatic.com/api/i18n/-/web/cms/en/symbol-description"
-                
+
                 response = requests.get(url, proxies=proxies, timeout=10)
                 response.raise_for_status()
-                
+
                 data = response.json()
-                
+
                 # 解析所有符号描述
                 if isinstance(data, dict):
                     for key, value in data.items():
@@ -892,15 +897,15 @@ class BinancePriceHighScanner:
                             if key.startswith('symbol_desc_'):
                                 symbol_name = key.replace('symbol_desc_', '')
                                 self.symbol_description_data[symbol_name] = value
-                
+
                 # 保存缓存
                 self.save_cache_with_expiry(self.symbol_description_cache, self.symbol_description_data)
-                
+
                 logger.info(f"获取到{len(self.symbol_description_data)}个符号描述")
-            
+
             # 从缓存中获取描述
             return self.symbol_description_data.get(symbol.replace('USDT', ''), f"No description for {symbol}")
-            
+
         except Exception as e:
             logger.error(f"获取{symbol}描述失败: {str(e)}")
             return f"Failed to get description for {symbol}"
@@ -918,35 +923,35 @@ class BinancePriceHighScanner:
         # 检查缓存
         if symbol in self.products_data:
             return self.products_data[symbol]
-        
+
         try:
             # 如果缓存为空，一次性获取所有产品数据
             if not self.products_data:
                 url = "https://www.binance.com/bapi/asset/v2/public/asset-service/product/get-products"
-                
+
                 response = requests.get(url, proxies=proxies, timeout=15)
                 response.raise_for_status()
-                
+
                 data = response.json()
-                
+
                 if data.get('success') and data.get('data'):
                     products = data['data']
-                    
+
                     for product in products:
                         product_symbol = product.get('s', '')
                         tags = product.get('tags', [])
-                        
+
                         if product_symbol:
                             self.products_data[product_symbol] = tags
-                
+
                 # 保存缓存
                 self.save_cache_with_expiry(self.products_cache, self.products_data)
-                
+
                 logger.info(f"获取到{len(self.products_data)}个产品标签数据")
-            
+
             # 从缓存中获取标签
             return self.products_data.get(symbol, [])
-            
+
         except Exception as e:
             logger.error(f"获取{symbol}标签失败: {str(e)}")
             return []
@@ -961,11 +966,11 @@ class BinancePriceHighScanner:
         """
         try:
             base_asset = symbol.replace('USDT', '')
-            
+
             # 构建突破时间区间信息
             breakout_periods = sorted(analysis_data['breakout_periods'])
             periods_str = ', '.join([f"{days}天" for days in breakout_periods])
-            
+
             # 构建消息内容
             message_lines = [
                 f"🚀 **价格突破高点提醒**",
@@ -976,7 +981,7 @@ class BinancePriceHighScanner:
                 f"",
                 f"**各时间区间对比**:",
             ]
-            
+
             # 添加各时间区间的详细信息
             for days in [7, 15, 30]:
                 if days in analysis_data['breakouts']:
@@ -987,7 +992,7 @@ class BinancePriceHighScanner:
                         f"  └ 最高价: ${breakout_info['max_high']:.6f}",
                         f"  └ 最低价: ${breakout_info['min_low']:.6f}",
                     ])
-            
+
             message_lines.extend([
                 f"",
                 f"**资金费率信息**:",
@@ -1000,48 +1005,49 @@ class BinancePriceHighScanner:
                 f"• 历史最低价: ${analysis_data['token_info']['atl_price']:.6f}",
                 f"• 市值: ${analysis_data['token_info']['market_cap']:,.0f}",
             ])
-            
+
             # 有条件的信息项
             if analysis_data['token_info']['market_rank'] > 0:
                 message_lines.append(f"• 市值排名: #{analysis_data['token_info']['market_rank']}")
-            
+
             if analysis_data['token_info']['market_dominance'] > 0:
                 message_lines.append(f"• 市场占用率: {analysis_data['token_info']['market_dominance']:.4f}%")
-            
+
             message_lines.append(f"• 发行日期: {analysis_data['token_info']['launch_date_str']}")
-            
+
             if analysis_data['token_info']['website_url']:
                 message_lines.append(f"• 官网: {analysis_data['token_info']['website_url']}")
-            
+
             if analysis_data['token_info']['twitter_username']:
                 message_lines.append(f"• X用户名: @{analysis_data['token_info']['twitter_username']}")
-            
+
             if analysis_data['token_info']['twitter_id']:
                 message_lines.append(f"• X ID: {analysis_data['token_info']['twitter_id']}")
-            
+
             if analysis_data['token_info']['twitter_last_update_str'] != 'Unknown':
                 message_lines.append(f"• X更新: {analysis_data['token_info']['twitter_last_update_str']}")
-            
+
             if analysis_data['token_info']['github_url']:
                 message_lines.append(f"• Github: {analysis_data['token_info']['github_url']}")
-            
+
             if analysis_data['token_info']['repo_update_time_str'] != 'Unknown':
                 message_lines.append(f"• 仓库更新: {analysis_data['token_info']['repo_update_time_str']}")
-            
+
             # 添加剩余的固定信息
             message_lines.extend([
                 f"",
-                f"**合约描述**: {analysis_data['description'][:100]}..." if len(analysis_data['description']) > 100 else f"**合约描述**: {analysis_data['description']}",
+                f"**合约描述**: {analysis_data['description'][:100]}..." if len(
+                    analysis_data['description']) > 100 else f"**合约描述**: {analysis_data['description']}",
                 f"",
                 f"**标签**: {', '.join(analysis_data['tags'])}" if analysis_data['tags'] else "**标签**: 无",
                 f"",
                 f"**时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             ])
-            
+
             # 过滤空行
             message_lines = [line for line in message_lines if line is not None and line != ""]
             message_content = "\n".join(message_lines)
-            
+
             # 准备请求数据
             payload = {
                 "msgtype": "markdown",
@@ -1049,7 +1055,7 @@ class BinancePriceHighScanner:
                     "content": message_content
                 }
             }
-            
+
             # 发送请求
             response = requests.post(
                 self.webhook_url,
@@ -1057,7 +1063,7 @@ class BinancePriceHighScanner:
                 proxies=proxies,
                 timeout=10
             )
-            
+
             if response.status_code == 200:
                 result = response.json()
                 if result.get('errcode') == 0:
@@ -1068,7 +1074,7 @@ class BinancePriceHighScanner:
                     logger.error(f"❌ 发送{symbol}通知失败: {result}")
             else:
                 logger.error(f"❌ 发送{symbol}通知失败，状态码: {response.status_code}")
-                
+
         except Exception as e:
             logger.error(f"❌ 发送{symbol}企业微信通知失败: {str(e)}")
 
@@ -1083,7 +1089,7 @@ class BinancePriceHighScanner:
         """
         try:
             base_asset = symbol.replace('USDT', '')
-            
+
             # 构建交易通知消息
             message_lines = [
                 f"🚨 **自动交易执行通知**",
@@ -1101,12 +1107,12 @@ class BinancePriceHighScanner:
                 f"",
                 f"**突破信息**:",
             ]
-            
+
             # 添加突破区间信息
             breakout_periods = sorted(analysis_data['breakout_periods'])
             periods_str = ', '.join([f"{days}天" for days in breakout_periods])
             message_lines.append(f"• 突破区间: {periods_str}")
-            
+
             # 添加各时间区间对比
             for days in [7, 15, 30]:
                 if days in analysis_data['breakouts']:
@@ -1116,15 +1122,16 @@ class BinancePriceHighScanner:
                         f"• {days}天: {status}",
                         f"  └ 最高价: ${breakout_info['max_high']:.6f}",
                     ])
-            
+
             message_lines.extend([
                 f"",
                 f"**资金费率**: {analysis_data['funding_rate']['current_rate_percent']:.4f}%",
                 f"**代币信息**:",
-                f"• 市值排名: #{analysis_data['token_info']['market_rank']}" if analysis_data['token_info']['market_rank'] > 0 else "• 市值排名: 未知",
+                f"• 市值排名: #{analysis_data['token_info']['market_rank']}" if analysis_data['token_info'][
+                                                                                    'market_rank'] > 0 else "• 市值排名: 未知",
                 f"• 发行日期: {analysis_data['token_info']['launch_date_str']}",
             ])
-            
+
             # 添加交易原因
             latest_record = self.get_latest_trade_record(symbol)
             if not latest_record:
@@ -1134,17 +1141,17 @@ class BinancePriceHighScanner:
                 current_price = analysis_data['current_price']
                 price_increase = (current_price - last_price) / last_price * 100
                 message_lines.append(f"**交易原因**: 价格较上次开仓上涨{price_increase:.2f}%，执行追加卖空")
-            
+
             message_lines.extend([
                 f"",
                 f"**风险提示**: 请密切关注仓位风险，及时止盈止损",
                 f"**执行时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             ])
-            
+
             # 过滤空行
             message_lines = [line for line in message_lines if line is not None and line != ""]
             message_content = "\n".join(message_lines)
-            
+
             # 准备请求数据
             payload = {
                 "msgtype": "markdown",
@@ -1152,7 +1159,7 @@ class BinancePriceHighScanner:
                     "content": message_content
                 }
             }
-            
+
             # 发送请求
             response = requests.post(
                 self.webhook_url,
@@ -1160,7 +1167,7 @@ class BinancePriceHighScanner:
                 proxies=proxies,
                 timeout=10
             )
-            
+
             if response.status_code == 200:
                 result = response.json()
                 if result.get('errcode') == 0:
@@ -1171,11 +1178,12 @@ class BinancePriceHighScanner:
                     logger.error(f"❌ 发送{symbol}交易通知失败: {result}")
             else:
                 logger.error(f"❌ 发送{symbol}交易通知失败，状态码: {response.status_code}")
-                
+
         except Exception as e:
             logger.error(f"❌ 发送{symbol}交易企业微信通知失败: {str(e)}")
 
-    def save_trading_notification_to_file(self, symbol: str, message_content: str, order_details: Dict[str, Any], analysis_data: Dict[str, Any]):
+    def save_trading_notification_to_file(self, symbol: str, message_content: str, order_details: Dict[str, Any],
+                                          analysis_data: Dict[str, Any]):
         """
         保存交易通知内容到文件
         
@@ -1187,19 +1195,19 @@ class BinancePriceHighScanner:
         """
         try:
             current_time = datetime.now()
-            
+
             # 按日期创建文件名
             date_str = current_time.strftime('%Y-%m-%d')
             timestamp_str = current_time.strftime('%H-%M-%S')
-            
+
             # 创建日期目录
             date_dir = os.path.join(self.notifications_dir, date_str)
             os.makedirs(date_dir, exist_ok=True)
-            
+
             # 文件名包含时间戳和交易对
             filename = f"{timestamp_str}_{symbol}_TRADING.txt"
             file_path = os.path.join(date_dir, filename)
-            
+
             # 准备保存的内容
             file_content = [
                 f"=" * 80,
@@ -1220,20 +1228,20 @@ class BinancePriceHighScanner:
                 f"=" * 80,
                 f""
             ]
-            
+
             # 写入文件
             with open(file_path, 'w', encoding='utf-8') as f:
                 f.write('\n'.join(file_content))
-            
+
             logger.info(f"💾 交易通知内容已保存到文件: {file_path}")
-            
+
             # 同时保存到按日期汇总的交易文件
             trading_summary_file = os.path.join(date_dir, f"{date_str}_trading_summary.txt")
             trading_summary_content = f"[{timestamp_str}] {symbol} - 卖空 {order_details.get('filled_quantity', 0):.6f} @ ${order_details.get('filled_price', 0):.6f} (订单ID: {order_details.get('order_id', 'N/A')})\n"
-            
+
             with open(trading_summary_file, 'a', encoding='utf-8') as f:
                 f.write(trading_summary_content)
-                
+
         except Exception as e:
             logger.error(f"❌ 保存{symbol}交易通知到文件失败: {str(e)}")
 
@@ -1248,19 +1256,19 @@ class BinancePriceHighScanner:
         """
         try:
             current_time = datetime.now()
-            
+
             # 按日期创建文件名
             date_str = current_time.strftime('%Y-%m-%d')
             timestamp_str = current_time.strftime('%H-%M-%S')
-            
+
             # 创建日期目录
             date_dir = os.path.join(self.notifications_dir, date_str)
             os.makedirs(date_dir, exist_ok=True)
-            
+
             # 文件名包含时间戳和交易对
             filename = f"{timestamp_str}_{symbol}_breakthrough.txt"
             file_path = os.path.join(date_dir, filename)
-            
+
             # 准备保存的内容
             file_content = [
                 f"=" * 80,
@@ -1278,20 +1286,20 @@ class BinancePriceHighScanner:
                 f"=" * 80,
                 f""
             ]
-            
+
             # 写入文件
             with open(file_path, 'w', encoding='utf-8') as f:
                 f.write('\n'.join(file_content))
-            
+
             logger.info(f"💾 通知内容已保存到文件: {file_path}")
-            
+
             # 同时保存到按日期汇总的文件
             summary_file = os.path.join(date_dir, f"{date_str}_summary.txt")
             summary_content = f"[{timestamp_str}] {symbol} - 突破 {', '.join([f'{days}天' for days in sorted(analysis_data['breakout_periods'])])} 高点 - ${analysis_data['current_price']:.6f}\n"
-            
+
             with open(summary_file, 'a', encoding='utf-8') as f:
                 f.write(summary_content)
-                
+
         except Exception as e:
             logger.error(f"❌ 保存{symbol}通知到文件失败: {str(e)}")
 
@@ -1308,34 +1316,34 @@ class BinancePriceHighScanner:
         """
         token_info = analysis_data['token_info']
         funding_rate = analysis_data['funding_rate']
-        
+
         # 检查上市日期
         launch_date = token_info.get('launch_date', 0)
         if not launch_date or launch_date == 0:
             return True, "上市日期数据为空"
-        
+
         launch_datetime = datetime.fromtimestamp(launch_date / 1000)
         days_since_launch = (datetime.now() - launch_datetime).days
-        
+
         if days_since_launch < self.min_launch_days:
             return True, f"上市仅{days_since_launch}天，小于{self.min_launch_days}天"
-        
+
         # 检查市值排名
         market_rank = token_info.get('market_rank', 0)
         if not market_rank or market_rank == 0:
             return True, "市值排名数据为空"
-        
+
         if market_rank <= self.max_market_rank:
             return True, f"市值排名{market_rank}，在{self.max_market_rank}名以内"
-        
+
         # 检查资金费率
         current_rate = funding_rate.get('current_rate', 0)
         if current_rate == 0:
             return True, "资金费率数据为空"
-        
+
         if current_rate < self.min_funding_rate:
-            return True, f"资金费率{current_rate*100:.4f}%，小于{self.min_funding_rate*100:.4f}%"
-        
+            return True, f"资金费率{current_rate * 100:.4f}%，小于{self.min_funding_rate * 100:.4f}%"
+
         return False, "通过过滤条件"
 
     async def get_current_positions(self) -> Dict[str, float]:
@@ -1343,18 +1351,18 @@ class BinancePriceHighScanner:
         try:
             if not self.binance_trading:
                 return {}
-                
+
             positions = await self.binance_trading.fetch_positions()
             position_dict = {}
-            
+
             for position in positions:
                 symbol = position['symbol'].replace(':USDT', '').replace('/', '')
                 size = float(position['contracts'])
                 if size != 0:  # 只记录有持仓的
                     position_dict[symbol] = size
-                    
+
             return position_dict
-            
+
         except Exception as e:
             logger.error(f"获取当前持仓失败: {str(e)}")
             return {}
@@ -1363,25 +1371,26 @@ class BinancePriceHighScanner:
         """清理交易记录 - 删除没有持仓的交易对记录"""
         if not self.enable_trading:
             return
-            
+
         try:
             # 获取当前持仓
             current_positions = await self.get_current_positions()
             logger.info(f"获取到账户当前合约持仓为: {current_positions}")
-            
+
             # 获取所有有交易记录的交易对
             traded_symbols = self.get_all_traded_symbols()
-            
+
             # 检查哪些交易对没有持仓了
             for symbol in traded_symbols:
                 if symbol not in current_positions:
                     logger.info(f"检测到{symbol}已无持仓，删除交易记录")
                     self.remove_trade_record(symbol)
-                    
+
         except Exception as e:
             logger.error(f"清理交易记录失败: {str(e)}")
 
-    async def execute_short_order(self, symbol: str, current_price: float, analysis_data: Dict[str, Any] = None) -> bool:
+    async def execute_short_order(self, symbol: str, current_price: float,
+                                  analysis_data: Dict[str, Any] = None) -> bool:
         """
         执行卖空订单
         
@@ -1396,15 +1405,16 @@ class BinancePriceHighScanner:
             if not self.binance_trading:
                 logger.error("交易客户端未初始化")
                 return False
-            
+
             # 获取最大杠杆倍数并计算实际使用的杠杆
             max_leverage = await self.get_max_leverage(symbol)
             actual_leverage = min(self.leverage, max_leverage)
-            logger.info(f"{symbol} 配置杠杆: {self.leverage}倍, 最大支持: {max_leverage}倍, 实际使用: {actual_leverage}倍")
-            
+            logger.info(
+                f"{symbol} 配置杠杆: {self.leverage}倍, 最大支持: {max_leverage}倍, 实际使用: {actual_leverage}倍")
+
             # 计算交易数量 (保证金 * 实际杠杆 / 价格)
             quantity = (self.margin_amount * actual_leverage) / current_price
-            
+
             # 设置实际杠杆
             await self.binance_trading.fapiPrivatePostLeverage({
                 'symbol': symbol,
@@ -1418,26 +1428,26 @@ class BinancePriceHighScanner:
                 amount=quantity,
                 params={'positionSide': 'SHORT'}
             )
-            
+
             if order and order.get('id'):
                 order_id = order.get('id')
                 filled_price = float(order.get('average', 0) or current_price)
                 filled_quantity = float(order.get('filled', 0) or quantity)
-                
+
                 logger.info(f"✅ 卖空订单执行成功: {symbol}")
                 logger.info(f"订单ID: {order_id}")
                 logger.info(f"成交价格: {filled_price}")
                 logger.info(f"成交数量: {filled_quantity}")
-                
+
                 # 检查订单状态
                 try:
                     order_status = await self.binance_trading.fetch_order(order_id, symbol)
                     if order_status and order_status.get('status') == 'closed':
                         logger.info(f"✅ {symbol} 空单已完成，准备提交止盈限价单")
-                        
+
                         # 计算止盈价格 (95% of 空单价格)
                         take_profit_price = filled_price * 0.95
-                        
+
                         # 提交限价平仓单 (买入平仓)
                         try:
                             close_order = await self.binance_trading.create_limit_buy_order(
@@ -1446,7 +1456,7 @@ class BinancePriceHighScanner:
                                 price=take_profit_price,
                                 params={'positionSide': 'SHORT'}
                             )
-                            
+
                             if close_order and close_order.get('id'):
                                 close_order_id = close_order.get('id')
                                 logger.info(f"🎯 止盈限价单提交成功: {symbol}")
@@ -1455,18 +1465,18 @@ class BinancePriceHighScanner:
                                 logger.info(f"预期盈利: ${(filled_price - take_profit_price) * filled_quantity:.2f}")
                             else:
                                 logger.error(f"❌ {symbol} 止盈限价单提交失败")
-                                
+
                         except Exception as close_e:
                             logger.error(f"❌ 提交{symbol}止盈限价单失败: {str(close_e)}")
                     else:
                         logger.warning(f"⚠️ {symbol} 空单状态: {order_status.get('status', 'unknown')}")
-                        
+
                 except Exception as status_e:
                     logger.warning(f"⚠️ 检查{symbol}订单状态失败: {str(status_e)}")
-                
+
                 # 保存交易记录
                 self.save_trade_record(symbol, filled_price, filled_quantity, order_id)
-                
+
                 # 发送交易通知
                 if analysis_data:
                     order_details = {
@@ -1475,12 +1485,12 @@ class BinancePriceHighScanner:
                         'filled_quantity': filled_quantity
                     }
                     self.send_trading_notification(symbol, order_details, analysis_data)
-                
+
                 return True
             else:
                 logger.error(f"❌ 卖空订单执行失败: {symbol}")
                 return False
-                
+
         except Exception as e:
             logger.error(f"❌ 执行{symbol}卖空订单失败: {str(e)}")
             return False
@@ -1498,21 +1508,21 @@ class BinancePriceHighScanner:
         """
         if not self.enable_trading:
             return False
-            
+
         try:
             current_price = analysis_data['current_price']
-            
+
             # 检查过滤条件
             should_filter, filter_reason = self.should_filter_symbol(symbol, analysis_data)
             if should_filter:
                 logger.info(f"🚫 {symbol} 被过滤: {filter_reason}")
                 return False
-            
+
             logger.info(f"✅ {symbol} 通过过滤条件，检查交易条件")
-            
+
             # 检查交易记录
             latest_record = self.get_latest_trade_record(symbol)
-            
+
             if not latest_record:
                 # 没有交易记录，执行交易
                 logger.info(f"💰 {symbol} 无交易记录，执行首次卖空交易")
@@ -1521,14 +1531,14 @@ class BinancePriceHighScanner:
                 # 有交易记录，检查价格条件
                 last_price = latest_record['open_price']
                 price_increase = (current_price - last_price) / last_price
-                
+
                 if price_increase >= 0.1:  # 价格上涨10%以上
-                    logger.info(f"💰 {symbol} 价格较上次开仓上涨{price_increase*100:.2f}%，执行追加卖空交易")
+                    logger.info(f"💰 {symbol} 价格较上次开仓上涨{price_increase * 100:.2f}%，执行追加卖空交易")
                     return await self.execute_short_order(symbol, current_price, analysis_data)
                 else:
-                    logger.info(f"⏸️ {symbol} 价格较上次开仓仅上涨{price_increase*100:.2f}%，不满足10%条件")
+                    logger.info(f"⏸️ {symbol} 价格较上次开仓仅上涨{price_increase * 100:.2f}%，不满足10%条件")
                     return False
-                    
+
         except Exception as e:
             logger.error(f"❌ 检查{symbol}交易条件失败: {str(e)}")
             return False
@@ -1545,37 +1555,37 @@ class BinancePriceHighScanner:
         """
         try:
             logger.debug(f"分析交易对: {symbol}")
-            
+
             # 获取30分钟K线数据
             klines = self.get_30min_klines(symbol, days=self.days_to_analyze)
             if not klines:
                 return False
-            
+
             # 检查多个时间区间的价格突破
             breakout_result = self.check_price_breakouts(klines)
-            
+
             current_price = breakout_result['current_price']
-            
+
             # 保存当前价格（无论是否突破）
             self.save_current_price(symbol, current_price)
-            
+
             if not breakout_result['has_breakout']:
                 return False
-            
+
             breakout_periods = breakout_result['breakout_periods']
             periods_str = ', '.join([f"{days}天" for days in sorted(breakout_periods)])
-            
+
             logger.info(f"🎯 发现价格突破: {symbol} 当前价格 ${current_price:.6f} 突破 {periods_str} 高点")
-            
+
             # 获取基础资产
             base_asset = symbol.replace('USDT', '')
-            
+
             # 获取补充信息
             funding_rate_info = self.get_funding_rate_info(symbol)
             token_info = self.get_token_info(base_asset)
             description = self.get_symbol_description(base_asset)
             tags = self.get_symbol_tags(symbol)
-            
+
             # 组合分析数据
             analysis_data = {
                 'current_price': current_price,
@@ -1586,10 +1596,10 @@ class BinancePriceHighScanner:
                 'description': description,
                 'tags': tags
             }
-            
+
             # 发送通知
             self.send_wework_notification(symbol, analysis_data)
-            
+
             # 如果启用了交易功能，检查并执行交易
             if self.enable_trading:
                 try:
@@ -1600,9 +1610,9 @@ class BinancePriceHighScanner:
                         logger.info(f"⏸️ {symbol} 未执行交易")
                 except Exception as e:
                     logger.error(f"❌ {symbol} 交易执行失败: {str(e)}")
-            
+
             return True
-            
+
         except Exception as e:
             logger.error(f"分析{symbol}失败: {str(e)}")
             return False
@@ -1612,47 +1622,47 @@ class BinancePriceHighScanner:
         运行扫描
         """
         logger.info(f"🚀 开始扫描Binance合约价格突破（{self.days_to_analyze}天历史数据）...")
-        
+
         # 清理交易记录
         if self.enable_trading:
             logger.info("🧹 清理交易记录...")
             await self.clean_trade_records()
-        
+
         # 获取所有合约符号
         symbols = self.get_all_futures_symbols()
         if not symbols:
             logger.error("❌ 未获取到合约交易对，扫描终止")
             return
-        
+
         logger.info(f"📊 开始扫描 {len(symbols)} 个合约交易对...")
-        
+
         found_count = 0
         processed_count = 0
         trade_count = 0
-        
+
         for i, symbol in enumerate(symbols, 1):
             try:
                 logger.info(f"📈 [{i}/{len(symbols)}] 正在分析 {symbol}...")
-                
+
                 # 分析交易对
                 is_breakthrough = await self.analyze_symbol(symbol)
-                
+
                 if is_breakthrough:
                     found_count += 1
-                
+
                 processed_count += 1
-                
+
                 # 避免API限制，添加短暂延迟
                 await asyncio.sleep(0.3)
-                
+
             except Exception as e:
                 logger.error(f"❌ 处理{symbol}时发生错误: {str(e)}")
                 continue
-                
+
         logger.info(f"✅ 扫描完成! 处理了 {processed_count} 个交易对，发现 {found_count} 个价格突破")
         if self.enable_trading:
             logger.info(f"💰 执行了 {trade_count} 笔交易")
-            
+
         # 更新并显示盈亏信息（不需要重新获取价格，使用扫描过程中的价格数据）
         await self.update_pnl_only(fetch_prices=False)
 
@@ -1663,16 +1673,16 @@ class BinancePriceHighScanner:
             fetch_prices: 是否需要获取当前价格，默认True
         """
         logger.info("📊 更新交易记录盈亏信息...")
-        
+
         # 获取所有有交易记录的交易对
         traded_symbols = self.get_all_traded_symbols()
         if not traded_symbols:
             logger.info("💼 未找到任何交易记录")
             return
-            
+
         if fetch_prices:
             logger.info(f"🔄 开始获取 {len(traded_symbols)} 个交易对的当前价格...")
-            
+
             # 获取当前价格
             updated_count = 0
             for symbol in traded_symbols:
@@ -1686,20 +1696,20 @@ class BinancePriceHighScanner:
                         updated_count += 1
                     else:
                         logger.warning(f"无法获取{symbol}的价格数据")
-                        
+
                     # 避免API限制
                     await asyncio.sleep(0.1)
-                    
+
                 except Exception as e:
                     logger.error(f"获取{symbol}价格失败: {str(e)}")
-                    
+
             logger.info(f"📈 成功获取 {updated_count} 个交易对的当前价格")
         else:
             logger.info(f"📊 使用扫描过程中获取的 {len(traded_symbols)} 个交易对价格数据")
-        
+
         # 更新盈亏信息
         self.update_all_trade_pnl()
-        
+
         # 显示盈亏汇总
         self._display_pnl_summary()
 
@@ -1707,27 +1717,24 @@ class BinancePriceHighScanner:
         """统一显示盈亏汇总信息"""
         pnl_summary = self.get_all_trade_pnl_summary()
         symbol_pnl_summary = self.get_symbol_aggregated_pnl_summary()
-        
         if pnl_summary['positions']:
-            logger.info(f"💼 按交易记录的盈亏汇总:")
+            logger.info(f"💼 持仓盈亏汇总:")
             logger.info(f"   总盈亏: ${pnl_summary['total_pnl']:.2f}")
             logger.info(f"   盈利仓位: {pnl_summary['profitable_count']}个")
             logger.info(f"   亏损仓位: {pnl_summary['losing_count']}个")
-            
-            # 显示前3个最盈利和最亏损的仓位（简要）
+
+            # 显示所有仓位的详细信息
             sorted_positions = sorted(pnl_summary['positions'], key=lambda x: x['pnl_amount'], reverse=True)
-            
-            logger.info("   📈 最盈利的仓位:")
-            for i, pos in enumerate(sorted_positions[:3]):
-                logger.info(f"      {i+1}. {pos['symbol']}: ${pos['pnl_amount']:.2f} ({pos['price_change_percent']:.2f}%)")
-            
-            if len(sorted_positions) > 3:
-                logger.info("   📉 最亏损的仓位:")
-                for i, pos in enumerate(sorted_positions[-3:]):
-                    logger.info(f"      {i+1}. {pos['symbol']}: ${pos['pnl_amount']:.2f} ({pos['price_change_percent']:.2f}%)")
+
+            logger.info(f"   📋 详细持仓信息:")
+            for i, pos in enumerate(sorted_positions):
+                status = "💰" if pos['pnl_amount'] > 0 else "💸"
+                logger.info(f"      {i + 1}. {status} {pos['symbol']}: ${pos['pnl_amount']:.2f} "
+                            f"({pos['price_change_percent']:.2f}%) "
+                            f"开仓: ${pos['open_price']:.6f} -> 当前: ${pos['current_price']:.6f}")
         else:
             logger.info("💼 当前无持仓记录")
-            
+
         # 显示按交易对合并的盈亏汇总
         if symbol_pnl_summary['symbol_positions']:
             logger.info(f"")
@@ -1735,17 +1742,18 @@ class BinancePriceHighScanner:
             logger.info(f"   总盈亏: ${symbol_pnl_summary['total_pnl']:.2f}")
             logger.info(f"   盈利交易对: {symbol_pnl_summary['profitable_symbols']}个")
             logger.info(f"   亏损交易对: {symbol_pnl_summary['losing_symbols']}个")
-            
+
             # 显示所有交易对的盈亏情况
-            sorted_symbol_positions = sorted(symbol_pnl_summary['symbol_positions'], key=lambda x: x['total_pnl'], reverse=True)
-            
+            sorted_symbol_positions = sorted(symbol_pnl_summary['symbol_positions'], key=lambda x: x['total_pnl'],
+                                             reverse=True)
+
             logger.info("   📋 各交易对盈亏详情:")
             for i, pos in enumerate(sorted_symbol_positions):
                 status = "💰" if pos['total_pnl'] > 0 else "💸"
-                logger.info(f"      {i+1}. {status} {pos['symbol']}: ${pos['total_pnl']:.2f} "
-                           f"({pos['price_change_percent']:.2f}%) "
-                           f"平均开仓: ${pos['avg_open_price']:.6f} -> 当前: ${pos['avg_current_price']:.6f} "
-                           f"({pos['trade_count']}笔交易)")
+                logger.info(f"      {i + 1}. {status} {pos['symbol']}: ${pos['total_pnl']:.2f} "
+                            f"({pos['price_change_percent']:.2f}%) "
+                            f"平均开仓: ${pos['avg_open_price']:.6f} -> 当前: ${pos['avg_current_price']:.6f} "
+                            f"({pos['trade_count']}笔交易)")
         else:
             logger.info("📊 当前无按交易对合并的持仓记录")
 
@@ -1763,9 +1771,9 @@ def parse_arguments():
     """解析命令行参数"""
     parser = argparse.ArgumentParser(description='Binance价格高点扫描器')
     parser.add_argument(
-        '--days', 
-        type=int, 
-        default=30, 
+        '--days',
+        type=int,
+        default=30,
         help='历史K线分析天数 (默认: 30天)'
     )
     parser.add_argument(
@@ -1787,20 +1795,20 @@ async def main():
     try:
         # 解析命令行参数
         args = parse_arguments()
-        
+
         if args.pnl_only:
             logger.info("🔄 启动模式: 仅更新盈亏信息")
             scanner = BinancePriceHighScanner(days_to_analyze=args.days, enable_trading=False)
             await scanner.update_pnl_only(fetch_prices=True)
         else:
             logger.info(f"启动参数: 历史分析天数 = {args.days}天, 自动交易 = {'启用' if args.trade else '禁用'}")
-            
+
             if args.trade:
                 logger.warning("⚠️  自动交易功能已启用! 请确保您了解交易风险!")
-            
+
             scanner = BinancePriceHighScanner(days_to_analyze=args.days, enable_trading=args.trade)
             await scanner.run_scan()
-        
+
     except KeyboardInterrupt:
         logger.info("❌ 用户中断执行")
     except Exception as e:
@@ -1812,4 +1820,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    asyncio.run(main())
