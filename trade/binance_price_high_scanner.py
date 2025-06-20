@@ -434,6 +434,69 @@ class BinancePriceHighScanner:
             logger.error(f"获取盈亏汇总失败: {str(e)}")
             return {'positions': [], 'total_pnl': 0.0, 'profitable_count': 0, 'losing_count': 0}
 
+    def get_symbol_aggregated_pnl_summary(self) -> Dict[str, Any]:
+        """获取按交易对合并的盈亏汇总"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT symbol, 
+                       AVG(current_price) as avg_current_price,
+                       SUM(quantity * open_price) / SUM(quantity) as avg_open_price,
+                       SUM(quantity) as total_quantity,
+                       direction,
+                       SUM(pnl_amount) as total_pnl,
+                       MAX(price_update_time) as latest_update_time,
+                       COUNT(*) as trade_count
+                FROM trading_records 
+                WHERE current_price > 0
+                GROUP BY symbol, direction
+                ORDER BY total_pnl DESC
+            ''')
+            
+            results = cursor.fetchall()
+            conn.close()
+            
+            summary = {
+                'symbol_positions': [],
+                'total_pnl': 0.0,
+                'profitable_symbols': 0,
+                'losing_symbols': 0
+            }
+            
+            for row in results:
+                symbol, avg_current_price, avg_open_price, total_quantity, direction, total_pnl, latest_update_time, trade_count = row
+                
+                # 计算平均价格变化百分比
+                price_change_percent = ((avg_current_price - avg_open_price) / avg_open_price) * 100
+                
+                position = {
+                    'symbol': symbol,
+                    'avg_open_price': avg_open_price,
+                    'avg_current_price': avg_current_price,
+                    'total_quantity': total_quantity,
+                    'direction': direction,
+                    'price_change_percent': price_change_percent,
+                    'total_pnl': total_pnl,
+                    'latest_update_time': latest_update_time,
+                    'trade_count': trade_count
+                }
+                
+                summary['symbol_positions'].append(position)
+                summary['total_pnl'] += total_pnl
+                
+                if total_pnl > 0:
+                    summary['profitable_symbols'] += 1
+                else:
+                    summary['losing_symbols'] += 1
+            
+            return summary
+            
+        except Exception as e:
+            logger.error(f"获取按交易对合并的盈亏汇总失败: {str(e)}")
+            return {'symbol_positions': [], 'total_pnl': 0.0, 'profitable_symbols': 0, 'losing_symbols': 0}
+
     def load_cache_with_expiry(self, cache_file: str) -> Dict:
         """加载带过期时间的缓存数据"""
         try:
@@ -1590,19 +1653,68 @@ class BinancePriceHighScanner:
         if self.enable_trading:
             logger.info(f"💰 执行了 {trade_count} 笔交易")
             
-        # 更新所有交易记录的盈亏信息
+        # 更新并显示盈亏信息（不需要重新获取价格，使用扫描过程中的价格数据）
+        await self.update_pnl_only(fetch_prices=False)
+
+    async def update_pnl_only(self, fetch_prices: bool = True):
+        """更新盈亏信息并显示汇总
+        
+        Args:
+            fetch_prices: 是否需要获取当前价格，默认True
+        """
         logger.info("📊 更新交易记录盈亏信息...")
+        
+        # 获取所有有交易记录的交易对
+        traded_symbols = self.get_all_traded_symbols()
+        if not traded_symbols:
+            logger.info("💼 未找到任何交易记录")
+            return
+            
+        if fetch_prices:
+            logger.info(f"🔄 开始获取 {len(traded_symbols)} 个交易对的当前价格...")
+            
+            # 获取当前价格
+            updated_count = 0
+            for symbol in traded_symbols:
+                try:
+                    # 获取当前K线数据来获取最新价格
+                    klines = self.get_30min_klines(symbol, days=1)  # 只获取1天的数据就够了
+                    if klines and len(klines) > 0:
+                        current_price = float(klines[-1][4])  # 最后一根K线的收盘价
+                        self.save_current_price(symbol, current_price)
+                        logger.debug(f"获取到{symbol}当前价格: ${current_price:.6f}")
+                        updated_count += 1
+                    else:
+                        logger.warning(f"无法获取{symbol}的价格数据")
+                        
+                    # 避免API限制
+                    await asyncio.sleep(0.1)
+                    
+                except Exception as e:
+                    logger.error(f"获取{symbol}价格失败: {str(e)}")
+                    
+            logger.info(f"📈 成功获取 {updated_count} 个交易对的当前价格")
+        else:
+            logger.info(f"📊 使用扫描过程中获取的 {len(traded_symbols)} 个交易对价格数据")
+        
+        # 更新盈亏信息
         self.update_all_trade_pnl()
         
-        # 打印盈亏汇总
+        # 显示盈亏汇总
+        self._display_pnl_summary()
+
+    def _display_pnl_summary(self):
+        """统一显示盈亏汇总信息"""
         pnl_summary = self.get_all_trade_pnl_summary()
+        symbol_pnl_summary = self.get_symbol_aggregated_pnl_summary()
+        
         if pnl_summary['positions']:
-            logger.info(f"💼 持仓盈亏汇总:")
+            logger.info(f"💼 按交易记录的盈亏汇总:")
             logger.info(f"   总盈亏: ${pnl_summary['total_pnl']:.2f}")
             logger.info(f"   盈利仓位: {pnl_summary['profitable_count']}个")
             logger.info(f"   亏损仓位: {pnl_summary['losing_count']}个")
             
-            # 显示前5个最盈利和最亏损的仓位
+            # 显示前3个最盈利和最亏损的仓位（简要）
             sorted_positions = sorted(pnl_summary['positions'], key=lambda x: x['pnl_amount'], reverse=True)
             
             logger.info("   📈 最盈利的仓位:")
@@ -1615,63 +1727,27 @@ class BinancePriceHighScanner:
                     logger.info(f"      {i+1}. {pos['symbol']}: ${pos['pnl_amount']:.2f} ({pos['price_change_percent']:.2f}%)")
         else:
             logger.info("💼 当前无持仓记录")
-
-    async def update_pnl_only(self):
-        """仅更新盈亏信息的独立方法"""
-        logger.info("🔄 开始更新持仓盈亏信息...")
-        
-        # 获取所有有交易记录的交易对
-        traded_symbols = self.get_all_traded_symbols()
-        if not traded_symbols:
-            logger.info("💼 未找到任何交易记录")
-            return
             
-        logger.info(f"📊 找到 {len(traded_symbols)} 个有交易记录的交易对")
-        
-        # 获取当前价格
-        updated_count = 0
-        for symbol in traded_symbols:
-            try:
-                # 获取当前K线数据来获取最新价格
-                klines = self.get_30min_klines(symbol, days=1)  # 只获取1天的数据就够了
-                if klines and len(klines) > 0:
-                    current_price = float(klines[-1][4])  # 最后一根K线的收盘价
-                    self.save_current_price(symbol, current_price)
-                    logger.debug(f"获取到{symbol}当前价格: ${current_price:.6f}")
-                    updated_count += 1
-                else:
-                    logger.warning(f"无法获取{symbol}的价格数据")
-                    
-                # 避免API限制
-                await asyncio.sleep(0.1)
-                
-            except Exception as e:
-                logger.error(f"获取{symbol}价格失败: {str(e)}")
-                
-        logger.info(f"📈 成功获取 {updated_count} 个交易对的当前价格")
-        
-        # 更新盈亏信息
-        self.update_all_trade_pnl()
-        
-        # 显示盈亏汇总
-        pnl_summary = self.get_all_trade_pnl_summary()
-        if pnl_summary['positions']:
-            logger.info(f"💼 持仓盈亏汇总:")
-            logger.info(f"   总盈亏: ${pnl_summary['total_pnl']:.2f}")
-            logger.info(f"   盈利仓位: {pnl_summary['profitable_count']}个")
-            logger.info(f"   亏损仓位: {pnl_summary['losing_count']}个")
+        # 显示按交易对合并的盈亏汇总
+        if symbol_pnl_summary['symbol_positions']:
+            logger.info(f"")
+            logger.info(f"📊 按交易对合并的盈亏汇总:")
+            logger.info(f"   总盈亏: ${symbol_pnl_summary['total_pnl']:.2f}")
+            logger.info(f"   盈利交易对: {symbol_pnl_summary['profitable_symbols']}个")
+            logger.info(f"   亏损交易对: {symbol_pnl_summary['losing_symbols']}个")
             
-            # 显示所有仓位的详细信息
-            sorted_positions = sorted(pnl_summary['positions'], key=lambda x: x['pnl_amount'], reverse=True)
+            # 显示所有交易对的盈亏情况
+            sorted_symbol_positions = sorted(symbol_pnl_summary['symbol_positions'], key=lambda x: x['total_pnl'], reverse=True)
             
-            logger.info(f"   📋 详细持仓信息:")
-            for i, pos in enumerate(sorted_positions):
-                status = "💰" if pos['pnl_amount'] > 0 else "💸"
-                logger.info(f"      {i+1}. {status} {pos['symbol']}: ${pos['pnl_amount']:.2f} "
+            logger.info("   📋 各交易对盈亏详情:")
+            for i, pos in enumerate(sorted_symbol_positions):
+                status = "💰" if pos['total_pnl'] > 0 else "💸"
+                logger.info(f"      {i+1}. {status} {pos['symbol']}: ${pos['total_pnl']:.2f} "
                            f"({pos['price_change_percent']:.2f}%) "
-                           f"开仓: ${pos['open_price']:.6f} -> 当前: ${pos['current_price']:.6f}")
+                           f"平均开仓: ${pos['avg_open_price']:.6f} -> 当前: ${pos['avg_current_price']:.6f} "
+                           f"({pos['trade_count']}笔交易)")
         else:
-            logger.info("💼 当前无持仓记录")
+            logger.info("📊 当前无按交易对合并的持仓记录")
 
     async def close(self):
         """关闭交易所连接，释放资源"""
@@ -1715,7 +1791,7 @@ async def main():
         if args.pnl_only:
             logger.info("🔄 启动模式: 仅更新盈亏信息")
             scanner = BinancePriceHighScanner(days_to_analyze=args.days, enable_trading=False)
-            await scanner.update_pnl_only()
+            await scanner.update_pnl_only(fetch_prices=True)
         else:
             logger.info(f"启动参数: 历史分析天数 = {args.days}天, 自动交易 = {'启用' if args.trade else '禁用'}")
             
