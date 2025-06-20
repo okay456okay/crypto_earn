@@ -13,3 +13,4 @@ ccxtpro==1.0.1
 pandas==2.2.1
 matplotlib==3.8.3
 rich==13.7.0
+websockets==15.0
