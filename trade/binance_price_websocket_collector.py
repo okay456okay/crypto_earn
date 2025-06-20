@@ -56,7 +56,7 @@ class BinancePriceWebSocketCollector:
             db_path: 数据库文件路径
         """
         self.db_path = db_path
-        self.websocket_url = "wss://fstream.binance.com/ws-api/v3"
+        self.websocket_url = "wss://ws-fapi.binance.com/ws-fapi/v1"
         self.websocket = None
         self.is_running = False
         self.reconnect_delay = 5  # 重连延迟（秒）
@@ -309,7 +309,8 @@ class BinancePriceWebSocketCollector:
                     self.websocket_url,
                     ping_interval=20,
                     ping_timeout=10,
-                    close_timeout=10
+                    close_timeout=10,
+                    proxy=proxies['https']
                 ) as websocket:
                     self.websocket = websocket
                     logger.info("WebSocket连接成功")
