@@ -737,7 +737,7 @@ class BinancePriceHighScanner:
             'breakouts': breakouts
         }
 
-    def get_funding_rate_info(self, symbol: str) -> Dict[str, Any]:
+    async def get_funding_rate_info(self, symbol: str) -> Dict[str, Any]:
         """
         获取资金费率信息
         
@@ -748,15 +748,17 @@ class BinancePriceHighScanner:
             Dict: 资金费率信息
         """
         try:
-            # 获取当前资金费率
-            funding_rate = self.client.futures_funding_rate(symbol=symbol, limit=1)
+            # 使用ccxt的fetch_funding_rate方法（更准确）
+            funding_rate_info = await self.binance_trading.fetch_funding_rate(symbol)
 
-            if funding_rate:
-                current_rate = float(funding_rate[0]['fundingRate'])
+            if funding_rate_info and 'fundingRate' in funding_rate_info:
+                current_rate = float(funding_rate_info['fundingRate'])
                 # 资金费率通常每8小时结算一次
                 settlement_hours = 8
                 # 年化资金费率 = 当前费率 * (365 * 24 / 8) * 100
                 annualized_rate = current_rate * (365 * 24 / settlement_hours) * 100
+
+                logger.debug(f"{symbol} 资金费率: {current_rate:.6f} ({current_rate * 100:.4f}%)")
 
                 return {
                     'current_rate': current_rate,
@@ -1597,7 +1599,7 @@ class BinancePriceHighScanner:
             base_asset = symbol.replace('USDT', '')
 
             # 获取补充信息
-            funding_rate_info = self.get_funding_rate_info(symbol)
+            funding_rate_info = await self.get_funding_rate_info(symbol)
             token_info = self.get_token_info(base_asset)
             description = self.get_symbol_description(base_asset)
             tags = self.get_symbol_tags(symbol)
@@ -1829,7 +1831,8 @@ async def main():
                 logger.warning("⚠️  自动交易功能已启用! 请确保您了解交易风险!")
 
             scanner = BinancePriceHighScanner(days_to_analyze=args.days, enable_trading=args.trade)
-            await scanner.run_scan()
+            await scanner.get_funding_rate_info('AERGOUSDT')
+            # await scanner.run_scan()
 
     except KeyboardInterrupt:
         logger.info("❌ 用户中断执行")
