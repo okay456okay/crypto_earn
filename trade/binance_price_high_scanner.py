@@ -1861,9 +1861,9 @@ async def main():
                 logger.warning("⚠️  自动交易功能已启用! 请确保您了解交易风险!")
 
             scanner = BinancePriceHighScanner(days_to_analyze=args.days, enable_trading=args.trade)
-            funding_info = await scanner.get_funding_rate_info('AERGOUSDT')
-            print(funding_info)
-            # await scanner.run_scan()
+            # funding_info = await scanner.get_funding_rate_info('AERGOUSDT')
+            # print(funding_info)
+            await scanner.run_scan()
 
     except KeyboardInterrupt:
         logger.info("❌ 用户中断执行")
