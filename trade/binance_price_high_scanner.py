@@ -2,22 +2,36 @@
 # -*- coding: utf-8 -*-
 
 """
-Binance价格高点扫描器
+Binance价格高点扫描器 (1分钟K线版本)
 
 该脚本用于扫描Binance所有合约交易对，监控价格突破情况：
-1. 获取所有合约对近30天的30分钟K线数据
-2. 检查最后一根K线价格是否为30天最高点
-3. 如果是最高点，发送企业微信群机器人通知
+
+新架构特点：
+1. 使用1分钟级别K线数据，更精确的价格监控
+2. 初始化时获取30天的1分钟K线数据存储到SQLite数据库
+3. 每次扫描只获取最近10分钟的数据进行增量更新
+4. 建议每5分钟运行一次扫描
+
+主要功能：
+1. 数据初始化：分批获取30天的1分钟K线数据并存储到数据库
+2. 实时监控：检查最后一根K线价格是否为7天/15天/30天最高点
+3. 智能通知：发送企业微信群机器人通知
+4. 自动交易：可选的自动卖空功能
+
+使用方法：
+- 初始化: python binance_price_high_scanner.py --init
+- 扫描: python binance_price_high_scanner.py
+- 交易: python binance_price_high_scanner.py --trade
 
 通知内容包含：
-- 当前价格
+- 当前价格和突破区间信息
 - 资金费率、资金费结算周期
 - 历史最高价、历史最低价、市值、Twitter ID、Github地址、发行日期
-- 合约描述
-- 合约tags
+- 合约描述和标签
 
 作者: Claude
 创建时间: 2024-12-30
+更新时间: 2024-12-30 (1分钟K线优化版本)
 """
 
 import sys
@@ -126,7 +140,7 @@ class BinancePriceHighScanner:
         self._load_funding_info()
 
         logger.info(
-            f"Binance价格高点扫描器初始化完成，分析天数: {self.days_to_analyze}天，自动交易: {'启用' if self.enable_trading else '禁用'}")
+            f"Binance价格高点扫描器初始化完成 (1分钟K线版本)，分析天数: {self.days_to_analyze}天，自动交易: {'启用' if self.enable_trading else '禁用'}")
 
     def _load_funding_info(self):
         """一次性加载所有合约的资金费率信息（包含结算周期）"""
@@ -183,6 +197,33 @@ class BinancePriceHighScanner:
                 )
             ''')
 
+            # 创建K线数据表
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS kline_data (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    open_time INTEGER NOT NULL,
+                    close_time INTEGER NOT NULL,
+                    open_price REAL NOT NULL,
+                    high_price REAL NOT NULL,
+                    low_price REAL NOT NULL,
+                    close_price REAL NOT NULL,
+                    volume REAL NOT NULL,
+                    quote_volume REAL NOT NULL,
+                    trades_count INTEGER NOT NULL,
+                    taker_buy_base_volume REAL NOT NULL,
+                    taker_buy_quote_volume REAL NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(symbol, open_time)
+                )
+            ''')
+
+            # 为K线数据表创建索引
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_kline_symbol_time 
+                ON kline_data(symbol, open_time)
+            ''')
+
             # 检查是否需要添加新列（为了兼容现有数据库）
             cursor.execute("PRAGMA table_info(trading_records)")
             columns = [column[1] for column in cursor.fetchall()]
@@ -210,6 +251,155 @@ class BinancePriceHighScanner:
 
         except Exception as e:
             logger.error(f"交易记录数据库初始化失败: {str(e)}")
+
+    def save_kline_data(self, symbol: str, klines: List[List]) -> bool:
+        """
+        保存K线数据到数据库
+        
+        Args:
+            symbol: 交易对符号
+            klines: K线数据列表
+            
+        Returns:
+            bool: 是否保存成功
+        """
+        try:
+            if not klines:
+                return False
+
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            saved_count = 0
+            for kline in klines:
+                try:
+                    cursor.execute('''
+                        INSERT OR IGNORE INTO kline_data 
+                        (symbol, open_time, close_time, open_price, high_price, low_price, 
+                         close_price, volume, quote_volume, trades_count, 
+                         taker_buy_base_volume, taker_buy_quote_volume)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        symbol,
+                        int(kline[0]),          # open_time
+                        int(kline[6]),          # close_time
+                        float(kline[1]),        # open_price
+                        float(kline[2]),        # high_price
+                        float(kline[3]),        # low_price
+                        float(kline[4]),        # close_price
+                        float(kline[5]),        # volume
+                        float(kline[7]),        # quote_volume
+                        int(kline[8]),          # trades_count
+                        float(kline[9]),        # taker_buy_base_volume
+                        float(kline[10])        # taker_buy_quote_volume
+                    ))
+                    if cursor.rowcount > 0:
+                        saved_count += 1
+                except Exception as e:
+                    logger.debug(f"插入K线数据失败 (可能重复): {str(e)}")
+
+            conn.commit()
+            conn.close()
+
+            if saved_count > 0:
+                logger.debug(f"保存{symbol}的{saved_count}条新K线数据")
+            
+            return True
+
+        except Exception as e:
+            logger.error(f"保存{symbol}K线数据失败: {str(e)}")
+            return False
+
+    def get_kline_data_from_db(self, symbol: str, days: int = 30) -> List[List]:
+        """
+        从数据库获取K线数据
+        
+        Args:
+            symbol: 交易对符号
+            days: 获取天数
+            
+        Returns:
+            List[List]: K线数据列表，格式与Binance API返回的格式一致
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            # 计算开始时间
+            start_time = int((datetime.now() - timedelta(days=days)).timestamp() * 1000)
+
+            cursor.execute('''
+                SELECT open_time, open_price, high_price, low_price, close_price, volume,
+                       close_time, quote_volume, trades_count, taker_buy_base_volume, 
+                       taker_buy_quote_volume, '0'
+                FROM kline_data 
+                WHERE symbol = ? AND open_time >= ?
+                ORDER BY open_time ASC
+            ''', (symbol, start_time))
+
+            results = cursor.fetchall()
+            conn.close()
+
+            # 转换为Binance API格式的列表
+            klines = []
+            for row in results:
+                kline = [
+                    row[0],     # open_time
+                    str(row[1]), # open_price
+                    str(row[2]), # high_price
+                    str(row[3]), # low_price
+                    str(row[4]), # close_price
+                    str(row[5]), # volume
+                    row[6],     # close_time
+                    str(row[7]), # quote_volume
+                    row[8],     # trades_count
+                    str(row[9]), # taker_buy_base_volume
+                    str(row[10]), # taker_buy_quote_volume
+                    row[11]     # ignore
+                ]
+                klines.append(kline)
+
+            logger.debug(f"从数据库获取{symbol}的{len(klines)}条K线数据（{days}天）")
+            return klines
+
+        except Exception as e:
+            logger.error(f"从数据库获取{symbol}K线数据失败: {str(e)}")
+            return []
+
+    def get_kline_data_count(self, symbol: str) -> int:
+        """获取数据库中某个交易对的K线数据数量"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('SELECT COUNT(*) FROM kline_data WHERE symbol = ?', (symbol,))
+            result = cursor.fetchone()
+            conn.close()
+            
+            return result[0] if result else 0
+            
+        except Exception as e:
+            logger.error(f"获取{symbol}K线数据数量失败: {str(e)}")
+            return 0
+
+    def get_latest_kline_time(self, symbol: str) -> Optional[int]:
+        """获取数据库中某个交易对最新的K线时间"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT MAX(open_time) FROM kline_data WHERE symbol = ?
+            ''', (symbol,))
+            
+            result = cursor.fetchone()
+            conn.close()
+            
+            return result[0] if result and result[0] else None
+            
+        except Exception as e:
+            logger.error(f"获取{symbol}最新K线时间失败: {str(e)}")
+            return None
 
     def get_latest_trade_record(self, symbol: str) -> Optional[Dict[str, Any]]:
         """获取某个交易对的最新交易记录"""
@@ -613,33 +803,18 @@ class BinancePriceHighScanner:
             logger.error(f"获取合约交易对信息失败: {str(e)}")
             return []
 
-    def get_30min_klines(self, symbol: str, days: int = None) -> Optional[List[List]]:
+    def get_1min_klines(self, symbol: str, days: int = None, limit: int = 1500) -> Optional[List[List]]:
         """
-        获取30分钟K线数据
+        获取1分钟K线数据
         https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Kline-Candlestick-Data
         Args:
             symbol: 交易对符号
             days: 获取天数，如果为None则使用实例的默认值
+            limit: 限制数量，最大1500
             
         Returns:
             List[List]: K线数据列表
-        [
-            [
-                1499040000000,      // Open time
-                "0.01634790",       // Open
-                "0.80000000",       // High
-                "0.01575800",       // Low
-                "0.01577100",       // Close
-                "148976.11427815",  // Volume
-                1499644799999,      // Close time
-                "2434.19055334",    // Quote asset volume
-                308,                // Number of trades
-                "1756.87402397",    // Taker buy base asset volume
-                "28.46694368",      // Taker buy quote asset volume
-                "17928899.62484339" // Ignore.
-            ]
-        ]
-    """
+        """
         if days is None:
             days = self.days_to_analyze
 
@@ -648,32 +823,191 @@ class BinancePriceHighScanner:
             end_time = datetime.now()
             start_time = end_time - timedelta(days=days)
 
-            # 获取30分钟K线数据
+            # 获取1分钟K线数据
             klines = self.client.futures_klines(
                 symbol=symbol,
-                interval=Client.KLINE_INTERVAL_30MINUTE,
+                interval=Client.KLINE_INTERVAL_1MINUTE,
                 startTime=int(start_time.timestamp() * 1000),
                 endTime=int(end_time.timestamp() * 1000),
-                limit=1440  # 30天*24小时*2(30分钟) = 1440, Default 500; max 1500.
+                limit=limit
             )
 
             if not klines:
                 logger.warning(f"{symbol}: 未获取到K线数据")
                 return None
 
-            logger.debug(f"{symbol}: 获取到{len(klines)}根30分钟K线")
+            logger.debug(f"{symbol}: 获取到{len(klines)}根1分钟K线")
             return klines
 
         except Exception as e:
-            logger.error(f"获取{symbol}的30分钟K线数据失败: {str(e)}")
+            logger.error(f"获取{symbol}的1分钟K线数据失败: {str(e)}")
             return None
+
+    def get_recent_klines(self, symbol: str, minutes: int = 10) -> Optional[List[List]]:
+        """
+        获取最近几分钟的1分钟K线数据
+        
+        Args:
+            symbol: 交易对符号
+            minutes: 获取最近几分钟的数据
+            
+        Returns:
+            List[List]: K线数据列表
+        """
+        try:
+            # 计算时间范围
+            end_time = datetime.now()
+            start_time = end_time - timedelta(minutes=minutes)
+
+            # 获取1分钟K线数据
+            klines = self.client.futures_klines(
+                symbol=symbol,
+                interval=Client.KLINE_INTERVAL_1MINUTE,
+                startTime=int(start_time.timestamp() * 1000),
+                endTime=int(end_time.timestamp() * 1000),
+                limit=minutes + 5  # 多获取几根以防时间误差
+            )
+
+            if not klines:
+                logger.warning(f"{symbol}: 未获取到最近{minutes}分钟的K线数据")
+                return None
+
+            logger.debug(f"{symbol}: 获取到{len(klines)}根最近{minutes}分钟的1分钟K线")
+            return klines
+
+        except Exception as e:
+            logger.error(f"获取{symbol}最近{minutes}分钟K线数据失败: {str(e)}")
+            return None
+
+    async def initialize_kline_data(self, symbol: str) -> bool:
+        """
+        初始化某个交易对的30天1分钟K线数据
+        
+        Args:
+            symbol: 交易对符号
+            
+        Returns:
+            bool: 是否初始化成功
+        """
+        try:
+            logger.info(f"开始初始化{symbol}的30天1分钟K线数据...")
+            
+            # 30天 * 24小时 * 60分钟 = 43200条数据
+            # 由于limit最大1500，需要分批获取
+            total_minutes = 30 * 24 * 60
+            batch_size = 1500
+            batches = (total_minutes + batch_size - 1) // batch_size  # 向上取整
+            
+            total_saved = 0
+            
+            for batch in range(batches):
+                try:
+                    # 计算当前批次的时间范围
+                    end_minutes = batch * batch_size
+                    start_minutes = min(end_minutes + batch_size, total_minutes)
+                    
+                    end_time = datetime.now() - timedelta(minutes=end_minutes)
+                    start_time = datetime.now() - timedelta(minutes=start_minutes)
+                    
+                    # 获取K线数据
+                    klines = self.client.futures_klines(
+                        symbol=symbol,
+                        interval=Client.KLINE_INTERVAL_1MINUTE,
+                        startTime=int(start_time.timestamp() * 1000),
+                        endTime=int(end_time.timestamp() * 1000),
+                        limit=batch_size
+                    )
+                    
+                    if klines:
+                        # 保存到数据库
+                        self.save_kline_data(symbol, klines)
+                        total_saved += len(klines)
+                        logger.info(f"第{batch + 1}/{batches}批次: 获取并保存{symbol}的{len(klines)}条K线数据")
+                    
+                    # 避免API限制
+                    await asyncio.sleep(0.2)
+                    
+                except Exception as e:
+                    logger.error(f"初始化{symbol}第{batch + 1}批次失败: {str(e)}")
+                    continue
+            
+            logger.info(f"✅ {symbol}初始化完成，共保存{total_saved}条K线数据")
+            return True
+            
+        except Exception as e:
+            logger.error(f"初始化{symbol}K线数据失败: {str(e)}")
+            return False
+
+    async def initialize_all_kline_data(self):
+        """初始化所有交易对的K线数据"""
+        logger.info("🚀 开始初始化所有交易对的K线数据...")
+        
+        # 获取所有合约符号
+        symbols = self.get_all_futures_symbols()
+        if not symbols:
+            logger.error("❌ 未获取到合约交易对，初始化终止")
+            return
+        
+        logger.info(f"📊 需要初始化 {len(symbols)} 个合约交易对的K线数据...")
+        
+        initialized_count = 0
+        
+        for i, symbol in enumerate(symbols, 1):
+            try:
+                logger.info(f"[{i}/{len(symbols)}] 初始化 {symbol}...")
+                
+                # 检查是否已有数据
+                existing_count = self.get_kline_data_count(symbol)
+                if existing_count > 0:
+                    logger.info(f"⏭️ {symbol}已有{existing_count}条K线数据，跳过初始化")
+                    continue
+                
+                # 初始化K线数据
+                success = await self.initialize_kline_data(symbol)
+                if success:
+                    initialized_count += 1
+                
+            except Exception as e:
+                logger.error(f"❌ 初始化{symbol}时发生错误: {str(e)}")
+                continue
+        
+        logger.info(f"✅ K线数据初始化完成! 成功初始化了 {initialized_count} 个交易对")
+
+    async def update_kline_data(self, symbol: str) -> bool:
+        """
+        更新某个交易对的最新K线数据
+        
+        Args:
+            symbol: 交易对符号
+            
+        Returns:
+            bool: 是否更新成功
+        """
+        try:
+            # 获取最近10分钟的K线数据
+            klines = self.get_recent_klines(symbol, minutes=10)
+            
+            if not klines:
+                return False
+            
+            # 保存到数据库（自动去重）
+            success = self.save_kline_data(symbol, klines)
+            
+            if success:
+                logger.debug(f"更新{symbol}的最新K线数据")
+            
+            return success
+            
+        except Exception as e:
+            logger.error(f"更新{symbol}K线数据失败: {str(e)}")
+            return False
 
     def check_price_breakouts(self, klines: List[List]) -> Dict[str, Any]:
         """
         检查最后一根K线价格是否为多个时间区间的最高点
         
         Args:
-            klines: K线数据列表（30天的30分钟K线）
+            klines: K线数据列表（30天的1分钟K线）
             
         Returns:
             Dict: 包含当前价格和各时间区间突破信息的字典
@@ -699,11 +1033,11 @@ class BinancePriceHighScanner:
         # 获取最后一根K线的收盘价
         current_price = float(klines[-1][4])  # 索引4是收盘价
 
-        # 每30分钟一根K线，计算各时间区间对应的K线数量
+        # 每1分钟一根K线，计算各时间区间对应的K线数量
         periods = {
-            7: 7 * 24 * 2,  # 7天 = 7 * 24小时 * 2(每小时2根30分钟K线) = 336根
-            15: 15 * 24 * 2,  # 15天 = 720根
-            30: 30 * 24 * 2  # 30天 = 1440根
+            7: 7 * 24 * 60,   # 7天 = 7 * 24小时 * 60分钟 = 10080根
+            15: 15 * 24 * 60, # 15天 = 21600根
+            30: 30 * 24 * 60  # 30天 = 43200根
         }
 
         breakouts = {}
@@ -1602,9 +1936,13 @@ class BinancePriceHighScanner:
         try:
             logger.debug(f"分析交易对: {symbol}")
 
-            # 获取30分钟K线数据
-            klines = self.get_30min_klines(symbol, days=self.days_to_analyze)
+            # 先更新最新的K线数据
+            await self.update_kline_data(symbol)
+
+            # 从数据库获取30天的1分钟K线数据
+            klines = self.get_kline_data_from_db(symbol, days=self.days_to_analyze)
             if not klines:
+                logger.warning(f"{symbol}: 数据库中没有K线数据")
                 return False
 
             # 检查多个时间区间的价格突破
@@ -1665,9 +2003,9 @@ class BinancePriceHighScanner:
 
     async def run_scan(self):
         """
-        运行扫描
+        运行扫描（建议5分钟间隔运行）
         """
-        logger.info(f"🚀 开始扫描Binance合约价格突破（{self.days_to_analyze}天历史数据）...")
+        logger.info(f"🚀 开始扫描Binance合约价格突破（{self.days_to_analyze}天历史数据，1分钟K线）...")
 
         # 记录扫描开始时的交易记录数量（用于计算新增交易数）
         initial_trade_count = 0
@@ -1687,10 +2025,18 @@ class BinancePriceHighScanner:
 
         found_count = 0
         processed_count = 0
+        no_data_count = 0
 
         for i, symbol in enumerate(symbols, 1):
             try:
                 logger.info(f"📈 [{i}/{len(symbols)}] 正在分析 {symbol}...")
+
+                # 检查数据库中是否有K线数据
+                kline_count = self.get_kline_data_count(symbol)
+                if kline_count == 0:
+                    logger.warning(f"⚠️ {symbol} 数据库中无K线数据，请先运行初始化")
+                    no_data_count += 1
+                    continue
 
                 # 分析交易对
                 is_breakthrough = await self.analyze_symbol(symbol)
@@ -1701,7 +2047,7 @@ class BinancePriceHighScanner:
                 processed_count += 1
 
                 # 避免API限制，添加短暂延迟
-                await asyncio.sleep(0.3)
+                await asyncio.sleep(0.1)  # 缩短延迟，因为每次只获取10分钟数据
 
             except Exception as e:
                 logger.error(f"❌ 处理{symbol}时发生错误: {str(e)}")
@@ -1712,6 +2058,8 @@ class BinancePriceHighScanner:
         new_trades_count = final_trade_count - initial_trade_count
 
         logger.info(f"✅ 扫描完成! 处理了 {processed_count} 个交易对，发现 {found_count} 个价格突破")
+        if no_data_count > 0:
+            logger.warning(f"⚠️ {no_data_count} 个交易对缺少K线数据，请使用 --init 参数进行初始化")
         if self.enable_trading:
             logger.info(f"💰 执行了 {new_trades_count} 笔交易")
 
@@ -1739,8 +2087,11 @@ class BinancePriceHighScanner:
             updated_count = 0
             for symbol in traded_symbols:
                 try:
-                    # 获取当前K线数据来获取最新价格
-                    klines = self.get_30min_klines(symbol, days=1)  # 只获取1天的数据就够了
+                    # 先更新最新K线数据
+                    await self.update_kline_data(symbol)
+                    
+                    # 从数据库获取最新的K线数据来获取当前价格
+                    klines = self.get_kline_data_from_db(symbol, days=1)  # 只获取1天的数据就够了
                     if klines and len(klines) > 0:
                         current_price = float(klines[-1][4])  # 最后一根K线的收盘价
                         self.save_current_price(symbol, current_price)
@@ -1821,7 +2172,7 @@ class BinancePriceHighScanner:
 
 def parse_arguments():
     """解析命令行参数"""
-    parser = argparse.ArgumentParser(description='Binance价格高点扫描器')
+    parser = argparse.ArgumentParser(description='Binance价格高点扫描器 (1分钟K线版本)')
     parser.add_argument(
         '--days',
         type=int,
@@ -1838,6 +2189,11 @@ def parse_arguments():
         action='store_true',
         help='仅更新盈亏信息，不进行价格扫描'
     )
+    parser.add_argument(
+        '--init',
+        action='store_true',
+        help='初始化所有交易对的K线数据 (首次运行必须)'
+    )
     return parser.parse_args()
 
 
@@ -1848,19 +2204,24 @@ async def main():
         # 解析命令行参数
         args = parse_arguments()
 
-        if args.pnl_only:
+        if args.init:
+            logger.info("🚀 启动模式: 初始化K线数据")
+            logger.warning("⚠️  此操作将花费较长时间，请耐心等待...")
+            scanner = BinancePriceHighScanner(days_to_analyze=args.days, enable_trading=False)
+            await scanner.initialize_all_kline_data()
+        elif args.pnl_only:
             logger.info("🔄 启动模式: 仅更新盈亏信息")
             scanner = BinancePriceHighScanner(days_to_analyze=args.days, enable_trading=False)
             await scanner.update_pnl_only(fetch_prices=True)
         else:
+            logger.info(f"🔄 启动模式: 价格突破扫描")
             logger.info(f"启动参数: 历史分析天数 = {args.days}天, 自动交易 = {'启用' if args.trade else '禁用'}")
+            logger.info(f"📊 使用1分钟K线数据，建议每5分钟运行一次")
 
             if args.trade:
                 logger.warning("⚠️  自动交易功能已启用! 请确保您了解交易风险!")
 
             scanner = BinancePriceHighScanner(days_to_analyze=args.days, enable_trading=args.trade)
-            # funding_info = await scanner.get_funding_rate_info('AERGOUSDT')
-            # print(funding_info)
             await scanner.run_scan()
 
     except KeyboardInterrupt:
