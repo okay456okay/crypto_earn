@@ -8,12 +8,12 @@ Binance价格高点扫描器 (1分钟K线版本)
 
 新架构特点：
 1. 使用1分钟级别K线数据，更精确的价格监控
-2. 初始化时获取30天的1分钟K线数据存储到SQLite数据库
+2. 初始化时获取30天的1分钟K线数据存储到MySQL数据库
 3. 每次扫描只获取最近10分钟的数据进行增量更新
 4. 建议每5分钟运行一次扫描
 
 主要功能：
-1. 数据初始化：分批获取30天的1分钟K线数据并存储到数据库
+1. 数据初始化：分批获取30天的1分钟K线数据并存储到MySQL数据库
 2. 实时监控：检查最后一根K线价格是否为7天/15天/30天最高点
 3. 智能通知：发送企业微信群机器人通知
 4. 自动交易：可选的自动卖空功能
@@ -38,7 +38,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tools.logger import logger
-from config import binance_api_key, binance_api_secret, proxies, project_root
+from config import binance_api_key, binance_api_secret, proxies, project_root, mysql_config
 from binance.client import Client
 import time
 import json
@@ -50,9 +50,9 @@ import requests
 import pickle
 import hashlib
 import argparse
-import sqlite3
 import asyncio
 import ccxt.pro as ccxtpro
+import pymysql
 
 # 设置日志级别
 logger.setLevel(logging.INFO)
@@ -115,8 +115,8 @@ class BinancePriceHighScanner:
         self.notifications_dir = os.path.join(project_root, 'trade/notifications')
         os.makedirs(self.notifications_dir, exist_ok=True)
 
-        # 交易记录数据库
-        self.db_path = os.path.join(project_root, 'trade/trading_records.db')
+        # MySQL数据库配置
+        self.mysql_config = mysql_config
         self.init_trading_db()  # 总是初始化数据库，用于存储价格数据
 
         # 当前价格缓存 {symbol: price}
@@ -172,85 +172,59 @@ class BinancePriceHighScanner:
     def init_trading_db(self):
         """初始化交易记录数据库"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = pymysql.connect(**self.mysql_config)
             cursor = conn.cursor()
 
             # 创建交易记录表
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS trading_records (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    exchange TEXT NOT NULL,
-                    symbol TEXT NOT NULL,
+                    id INT PRIMARY KEY AUTO_INCREMENT,
+                    exchange VARCHAR(50) NOT NULL,
+                    symbol VARCHAR(50) NOT NULL,
                     order_time TIMESTAMP NOT NULL,
-                    open_price REAL NOT NULL,
-                    quantity REAL NOT NULL,
-                    leverage INTEGER NOT NULL,
-                    direction TEXT NOT NULL,
-                    order_id TEXT,
-                    margin_amount REAL NOT NULL,
-                    current_price REAL DEFAULT 0.0,
-                    price_change_percent REAL DEFAULT 0.0,
-                    pnl_amount REAL DEFAULT 0.0,
-                    price_update_time TIMESTAMP,
+                    open_price DECIMAL(20,8) NOT NULL,
+                    quantity DECIMAL(20,8) NOT NULL,
+                    leverage INT NOT NULL,
+                    direction VARCHAR(10) NOT NULL,
+                    order_id VARCHAR(100),
+                    margin_amount DECIMAL(20,8) NOT NULL,
+                    current_price DECIMAL(20,8) DEFAULT 0.0,
+                    price_change_percent DECIMAL(10,4) DEFAULT 0.0,
+                    pnl_amount DECIMAL(20,8) DEFAULT 0.0,
+                    price_update_time TIMESTAMP NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(exchange, symbol, order_time)
-                )
+                    UNIQUE KEY unique_trade (exchange, symbol, order_time)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             ''')
 
             # 创建K线数据表
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS kline_data (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    symbol TEXT NOT NULL,
-                    open_time INTEGER NOT NULL,
-                    close_time INTEGER NOT NULL,
-                    open_price REAL NOT NULL,
-                    high_price REAL NOT NULL,
-                    low_price REAL NOT NULL,
-                    close_price REAL NOT NULL,
-                    volume REAL NOT NULL,
-                    quote_volume REAL NOT NULL,
-                    trades_count INTEGER NOT NULL,
-                    taker_buy_base_volume REAL NOT NULL,
-                    taker_buy_quote_volume REAL NOT NULL,
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    symbol VARCHAR(50) NOT NULL,
+                    open_time BIGINT NOT NULL,
+                    close_time BIGINT NOT NULL,
+                    open_price DECIMAL(20,8) NOT NULL,
+                    high_price DECIMAL(20,8) NOT NULL,
+                    low_price DECIMAL(20,8) NOT NULL,
+                    close_price DECIMAL(20,8) NOT NULL,
+                    volume DECIMAL(20,8) NOT NULL,
+                    quote_volume DECIMAL(20,8) NOT NULL,
+                    trades_count INT NOT NULL,
+                    taker_buy_base_volume DECIMAL(20,8) NOT NULL,
+                    taker_buy_quote_volume DECIMAL(20,8) NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(symbol, open_time)
-                )
+                    UNIQUE KEY unique_kline (symbol, open_time),
+                    INDEX idx_symbol_time (symbol, open_time)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             ''')
-
-            # 为K线数据表创建索引
-            cursor.execute('''
-                CREATE INDEX IF NOT EXISTS idx_kline_symbol_time 
-                ON kline_data(symbol, open_time)
-            ''')
-
-            # 检查是否需要添加新列（为了兼容现有数据库）
-            cursor.execute("PRAGMA table_info(trading_records)")
-            columns = [column[1] for column in cursor.fetchall()]
-
-            # 添加缺失的列
-            if 'current_price' not in columns:
-                cursor.execute('ALTER TABLE trading_records ADD COLUMN current_price REAL DEFAULT 0.0')
-                logger.info("添加current_price列到trading_records表")
-
-            if 'price_change_percent' not in columns:
-                cursor.execute('ALTER TABLE trading_records ADD COLUMN price_change_percent REAL DEFAULT 0.0')
-                logger.info("添加price_change_percent列到trading_records表")
-
-            if 'pnl_amount' not in columns:
-                cursor.execute('ALTER TABLE trading_records ADD COLUMN pnl_amount REAL DEFAULT 0.0')
-                logger.info("添加pnl_amount列到trading_records表")
-
-            if 'price_update_time' not in columns:
-                cursor.execute('ALTER TABLE trading_records ADD COLUMN price_update_time TIMESTAMP')
-                logger.info("添加price_update_time列到trading_records表")
 
             conn.commit()
             conn.close()
-            logger.info(f"交易记录数据库初始化完成: {self.db_path}")
+            logger.info(f"MySQL数据库初始化完成: {self.mysql_config['host']}:{self.mysql_config['port']}/{self.mysql_config['database']}")
 
         except Exception as e:
-            logger.error(f"交易记录数据库初始化失败: {str(e)}")
+            logger.error(f"MySQL数据库初始化失败: {str(e)}")
 
     def save_kline_data(self, symbol: str, klines: List[List]) -> bool:
         """
@@ -267,18 +241,18 @@ class BinancePriceHighScanner:
             if not klines:
                 return False
 
-            conn = sqlite3.connect(self.db_path)
+            conn = pymysql.connect(**self.mysql_config)
             cursor = conn.cursor()
 
             saved_count = 0
             for kline in klines:
                 try:
                     cursor.execute('''
-                        INSERT OR IGNORE INTO kline_data 
+                        INSERT IGNORE INTO kline_data 
                         (symbol, open_time, close_time, open_price, high_price, low_price, 
                          close_price, volume, quote_volume, trades_count, 
                          taker_buy_base_volume, taker_buy_quote_volume)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ''', (
                         symbol,
                         int(kline[0]),          # open_time
@@ -322,7 +296,7 @@ class BinancePriceHighScanner:
             List[List]: K线数据列表，格式与Binance API返回的格式一致
         """
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = pymysql.connect(**self.mysql_config)
             cursor = conn.cursor()
 
             # 计算开始时间
@@ -333,7 +307,7 @@ class BinancePriceHighScanner:
                        close_time, quote_volume, trades_count, taker_buy_base_volume, 
                        taker_buy_quote_volume, '0'
                 FROM kline_data 
-                WHERE symbol = ? AND open_time >= ?
+                WHERE symbol = %s AND open_time >= %s
                 ORDER BY open_time ASC
             ''', (symbol, start_time))
 
@@ -369,10 +343,10 @@ class BinancePriceHighScanner:
     def get_kline_data_count(self, symbol: str) -> int:
         """获取数据库中某个交易对的K线数据数量"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = pymysql.connect(**self.mysql_config)
             cursor = conn.cursor()
             
-            cursor.execute('SELECT COUNT(*) FROM kline_data WHERE symbol = ?', (symbol,))
+            cursor.execute('SELECT COUNT(*) FROM kline_data WHERE symbol = %s', (symbol,))
             result = cursor.fetchone()
             conn.close()
             
@@ -385,11 +359,11 @@ class BinancePriceHighScanner:
     def get_latest_kline_time(self, symbol: str) -> Optional[int]:
         """获取数据库中某个交易对最新的K线时间"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = pymysql.connect(**self.mysql_config)
             cursor = conn.cursor()
             
             cursor.execute('''
-                SELECT MAX(open_time) FROM kline_data WHERE symbol = ?
+                SELECT MAX(open_time) FROM kline_data WHERE symbol = %s
             ''', (symbol,))
             
             result = cursor.fetchone()
@@ -404,12 +378,12 @@ class BinancePriceHighScanner:
     def get_latest_trade_record(self, symbol: str) -> Optional[Dict[str, Any]]:
         """获取某个交易对的最新交易记录"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = pymysql.connect(**self.mysql_config)
             cursor = conn.cursor()
 
             cursor.execute('''
                 SELECT * FROM trading_records 
-                WHERE symbol = ? 
+                WHERE symbol = %s 
                 ORDER BY order_time DESC 
                 LIMIT 1
             ''', (symbol,))
@@ -432,13 +406,13 @@ class BinancePriceHighScanner:
     def save_trade_record(self, symbol: str, open_price: float, quantity: float, order_id: str = None) -> bool:
         """保存交易记录"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = pymysql.connect(**self.mysql_config)
             cursor = conn.cursor()
 
             cursor.execute('''
                 INSERT INTO trading_records 
                 (exchange, symbol, order_time, open_price, quantity, leverage, direction, order_id, margin_amount)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             ''', ('Binance', symbol, datetime.now(), open_price, quantity, self.leverage, 'SHORT', order_id,
                   self.margin_amount))
 
@@ -454,10 +428,10 @@ class BinancePriceHighScanner:
     def remove_trade_record(self, symbol: str) -> bool:
         """删除交易对的所有交易记录"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = pymysql.connect(**self.mysql_config)
             cursor = conn.cursor()
 
-            cursor.execute('DELETE FROM trading_records WHERE symbol = ?', (symbol,))
+            cursor.execute('DELETE FROM trading_records WHERE symbol = %s', (symbol,))
             deleted_count = cursor.rowcount
 
             conn.commit()
@@ -475,7 +449,7 @@ class BinancePriceHighScanner:
     def get_all_traded_symbols(self) -> List[str]:
         """获取所有有交易记录的交易对"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = pymysql.connect(**self.mysql_config)
             cursor = conn.cursor()
             
             cursor.execute('SELECT DISTINCT symbol FROM trading_records')
@@ -491,7 +465,7 @@ class BinancePriceHighScanner:
     def _get_total_trade_records_count(self) -> int:
         """获取数据库中的交易记录总数"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = pymysql.connect(**self.mysql_config)
             cursor = conn.cursor()
             
             cursor.execute('SELECT COUNT(*) FROM trading_records')
@@ -546,14 +520,14 @@ class BinancePriceHighScanner:
     def update_trade_pnl(self, symbol: str, current_price: float) -> bool:
         """更新交易记录的盈亏信息"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = pymysql.connect(**self.mysql_config)
             cursor = conn.cursor()
 
             # 获取该交易对的最新交易记录
             cursor.execute('''
                 SELECT id, open_price, quantity, direction
                 FROM trading_records 
-                WHERE symbol = ? 
+                WHERE symbol = %s 
                 ORDER BY order_time DESC 
                 LIMIT 1
             ''', (symbol,))
@@ -566,24 +540,24 @@ class BinancePriceHighScanner:
             record_id, open_price, quantity, direction = result
 
             # 计算价格涨跌百分比
-            price_change_percent = ((current_price - open_price) / open_price) * 100
+            price_change_percent = ((current_price - float(open_price)) / float(open_price)) * 100
 
             # 计算盈亏额（考虑交易方向）
             if direction == 'SHORT':
                 # 卖空：价格下跌为盈利
-                pnl_amount = (open_price - current_price) * quantity
+                pnl_amount = (float(open_price) - current_price) * float(quantity)
             else:
                 # 做多：价格上涨为盈利
-                pnl_amount = (current_price - open_price) * quantity
+                pnl_amount = (current_price - float(open_price)) * float(quantity)
 
             # 更新记录
             cursor.execute('''
                 UPDATE trading_records 
-                SET current_price = ?, 
-                    price_change_percent = ?, 
-                    pnl_amount = ?, 
-                    price_update_time = ?
-                WHERE id = ?
+                SET current_price = %s, 
+                    price_change_percent = %s, 
+                    pnl_amount = %s, 
+                    price_update_time = %s
+                WHERE id = %s
             ''', (current_price, price_change_percent, pnl_amount, datetime.now(), record_id))
 
             conn.commit()
@@ -618,7 +592,7 @@ class BinancePriceHighScanner:
     def get_all_trade_pnl_summary(self) -> Dict[str, Any]:
         """获取所有交易对的盈亏汇总"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = pymysql.connect(**self.mysql_config)
             cursor = conn.cursor()
 
             cursor.execute('''
@@ -644,19 +618,19 @@ class BinancePriceHighScanner:
 
                 position = {
                     'symbol': symbol,
-                    'open_price': open_price,
-                    'current_price': current_price,
-                    'quantity': quantity,
+                    'open_price': float(open_price),
+                    'current_price': float(current_price),
+                    'quantity': float(quantity),
                     'direction': direction,
-                    'price_change_percent': price_change_percent,
-                    'pnl_amount': pnl_amount,
+                    'price_change_percent': float(price_change_percent),
+                    'pnl_amount': float(pnl_amount),
                     'price_update_time': price_update_time
                 }
 
                 summary['positions'].append(position)
-                summary['total_pnl'] += pnl_amount
+                summary['total_pnl'] += float(pnl_amount)
 
-                if pnl_amount > 0:
+                if float(pnl_amount) > 0:
                     summary['profitable_count'] += 1
                 else:
                     summary['losing_count'] += 1
@@ -670,7 +644,7 @@ class BinancePriceHighScanner:
     def get_symbol_aggregated_pnl_summary(self) -> Dict[str, Any]:
         """获取按交易对合并的盈亏汇总"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = pymysql.connect(**self.mysql_config)
             cursor = conn.cursor()
 
             cursor.execute('''
@@ -702,24 +676,24 @@ class BinancePriceHighScanner:
                 symbol, avg_current_price, avg_open_price, total_quantity, direction, total_pnl, latest_update_time, trade_count = row
 
                 # 计算平均价格变化百分比
-                price_change_percent = ((avg_current_price - avg_open_price) / avg_open_price) * 100
+                price_change_percent = ((float(avg_current_price) - float(avg_open_price)) / float(avg_open_price)) * 100
 
                 position = {
                     'symbol': symbol,
-                    'avg_open_price': avg_open_price,
-                    'avg_current_price': avg_current_price,
-                    'total_quantity': total_quantity,
+                    'avg_open_price': float(avg_open_price),
+                    'avg_current_price': float(avg_current_price),
+                    'total_quantity': float(total_quantity),
                     'direction': direction,
                     'price_change_percent': price_change_percent,
-                    'total_pnl': total_pnl,
+                    'total_pnl': float(total_pnl),
                     'latest_update_time': latest_update_time,
                     'trade_count': trade_count
                 }
 
                 summary['symbol_positions'].append(position)
-                summary['total_pnl'] += total_pnl
+                summary['total_pnl'] += float(total_pnl)
 
-                if total_pnl > 0:
+                if float(total_pnl) > 0:
                     summary['profitable_symbols'] += 1
                 else:
                     summary['losing_symbols'] += 1
