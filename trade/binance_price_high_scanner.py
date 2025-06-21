@@ -94,7 +94,7 @@ class BinancePriceHighScanner:
         # 过滤条件
         self.min_launch_days = 7  # 最小上市天数
         self.max_market_rank = 50  # 最大市值排名
-        self.min_funding_rate = -0.0001  # 最小资金费率 (-0.01%)，小数点形式
+        self.min_funding_rate = 0  # 最小资金费率，小数点形式
 
         # 交易所客户端(用于交易)
         self.binance_trading = ccxtpro.binance({
@@ -959,7 +959,7 @@ class BinancePriceHighScanner:
         """
         try:
             # 获取最近10分钟的K线数据
-            klines = self.get_recent_klines(symbol, minutes=10)
+            klines = self.get_recent_klines(symbol, minutes=15)
             
             if not klines:
                 return False
