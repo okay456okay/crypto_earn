@@ -1723,9 +1723,6 @@ class BinancePriceHighScanner:
 
     async def clean_trade_records(self):
         """清理交易记录 - 删除没有持仓的交易对记录"""
-        if not self.enable_trading:
-            return
-
         try:
             # 获取当前持仓
             current_positions = await self.get_current_positions()
@@ -2186,6 +2183,8 @@ async def main():
         elif args.pnl_only:
             logger.info("🔄 启动模式: 仅更新盈亏信息")
             scanner = BinancePriceHighScanner(days_to_analyze=args.days, enable_trading=False)
+            logger.info("🧹 清理交易记录...")
+            await scanner.clean_trade_records()
             await scanner.update_pnl_only(fetch_prices=True)
         else:
             logger.info(f"🔄 启动模式: 价格突破扫描")
