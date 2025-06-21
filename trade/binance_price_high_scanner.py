@@ -20,6 +20,9 @@ Binance价格高点扫描器
 创建时间: 2024-12-30
 """
 
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tools.logger import logger
 from config import binance_api_key, binance_api_secret, proxies, project_root
 from binance.client import Client
