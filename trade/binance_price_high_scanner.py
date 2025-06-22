@@ -254,14 +254,6 @@ class BinancePriceHighScanner:
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             ''')
 
-            # 兼容性处理：检查并迁移旧的kline_data表
-            cursor.execute("SHOW TABLES LIKE 'kline_data'")
-            if cursor.fetchone():
-                logger.info("检测到旧的kline_data表，准备迁移数据...")
-                # 将旧表重命名为1分钟表
-                cursor.execute("RENAME TABLE kline_data TO kline_data_1min_backup")
-                logger.info("旧kline_data表已重命名为kline_data_1min_backup，请手动处理数据迁移")
-
             conn.commit()
             conn.close()
             logger.info(f"MySQL数据库初始化完成: {self.mysql_config['host']}:{self.mysql_config['port']}/{self.mysql_config['database']}")
@@ -1304,7 +1296,7 @@ class BinancePriceHighScanner:
         
         logger.info(f"✅ K线数据初始化完成! 成功初始化了 {initialized_count} 个交易对")
 
-    async def update_kline_data(self, symbol: str) -> bool:
+    async def update_kline_data(self, symbol: str, minutes: int) -> bool:
         """
         更新某个交易对的最新1分钟K线数据（仅当天数据）
         
@@ -1316,7 +1308,7 @@ class BinancePriceHighScanner:
         """
         try:
             # 获取最近15分钟的1分钟K线数据
-            klines = self.get_recent_klines(symbol, minutes=15)
+            klines = self.get_recent_klines(symbol, minutes=minutes)
             
             if not klines:
                 return False
