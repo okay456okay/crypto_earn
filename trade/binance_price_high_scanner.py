@@ -2,21 +2,27 @@
 # -*- coding: utf-8 -*-
 
 """
-Binance价格高点扫描器 (1分钟K线版本)
+Binance价格高点扫描器 (混合K线版本)
 
 该脚本用于扫描Binance所有合约交易对，监控价格突破情况：
 
 新架构特点：
-1. 使用1分钟级别K线数据，更精确的价格监控
-2. 初始化时获取30天的1分钟K线数据存储到MySQL数据库
-3. 每次扫描只获取最近10分钟的数据进行增量更新
+1. 混合K线数据存储：历史数据使用30分钟K线，当天数据使用1分钟K线
+2. 智能跨天处理：自动将前一天的1分钟数据转换为30分钟数据
+3. 数据量优化：大幅减少存储空间，同时保持当天的精确监控
 4. 建议每5分钟运行一次扫描
 
+数据策略：
+- 历史数据（昨天及之前）：使用30分钟K线存储，节省空间
+- 当天数据（今天00:00至今）：使用1分钟K线存储，精确监控
+- 自动转换：每天00:00后自动将前一天1分钟数据聚合为30分钟数据
+
 主要功能：
-1. 数据初始化：分批获取30天的1分钟K线数据并存储到MySQL数据库
+1. 数据初始化：获取30天历史30分钟K线 + 当天1分钟K线数据
 2. 实时监控：检查最后一根K线价格是否为7天/15天/30天最高点
-3. 智能通知：发送企业微信群机器人通知
-4. 自动交易：可选的自动卖空功能
+3. 跨天处理：自动转换和清理历史1分钟数据
+4. 智能通知：发送企业微信群机器人通知
+5. 自动交易：可选的自动卖空功能
 
 使用方法：
 - 初始化: python binance_price_high_scanner.py --init
@@ -31,7 +37,7 @@ Binance价格高点扫描器 (1分钟K线版本)
 
 作者: Claude
 创建时间: 2024-12-30
-更新时间: 2024-12-30 (1分钟K线优化版本)
+更新时间: 2024-12-30 (混合K线优化版本)
 """
 
 import sys
@@ -194,9 +200,9 @@ class BinancePriceHighScanner:
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             ''')
 
-            # 创建K线数据表
+            # 创建1分钟K线数据表（当天数据）
             cursor.execute('''
-                CREATE TABLE IF NOT EXISTS kline_data (
+                CREATE TABLE IF NOT EXISTS kline_data_1min (
                     id BIGINT PRIMARY KEY AUTO_INCREMENT,
                     symbol VARCHAR(50) NOT NULL,
                     open_time BIGINT NOT NULL,
@@ -211,10 +217,50 @@ class BinancePriceHighScanner:
                     taker_buy_base_volume DECIMAL(20,8) NOT NULL,
                     taker_buy_quote_volume DECIMAL(20,8) NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE KEY unique_kline (symbol, open_time),
-                    INDEX idx_symbol_time (symbol, open_time)
+                    UNIQUE KEY unique_kline_1min (symbol, open_time),
+                    INDEX idx_open_time_1min (open_time)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             ''')
+
+            # 创建30分钟K线数据表（历史数据）
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS kline_data_30min (
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    symbol VARCHAR(50) NOT NULL,
+                    open_time BIGINT NOT NULL,
+                    close_time BIGINT NOT NULL,
+                    open_price DECIMAL(20,8) NOT NULL,
+                    high_price DECIMAL(20,8) NOT NULL,
+                    low_price DECIMAL(20,8) NOT NULL,
+                    close_price DECIMAL(20,8) NOT NULL,
+                    volume DECIMAL(20,8) NOT NULL,
+                    quote_volume DECIMAL(20,8) NOT NULL,
+                    trades_count INT NOT NULL,
+                    taker_buy_base_volume DECIMAL(20,8) NOT NULL,
+                    taker_buy_quote_volume DECIMAL(20,8) NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY unique_kline_30min (symbol, open_time),
+                    INDEX idx_open_time_1min (open_time)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ''')
+
+            # 创建系统状态表（记录跨天处理状态）
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS system_status (
+                    id INT PRIMARY KEY AUTO_INCREMENT,
+                    status_key VARCHAR(50) NOT NULL UNIQUE,
+                    status_value TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ''')
+
+            # 兼容性处理：检查并迁移旧的kline_data表
+            cursor.execute("SHOW TABLES LIKE 'kline_data'")
+            if cursor.fetchone():
+                logger.info("检测到旧的kline_data表，准备迁移数据...")
+                # 将旧表重命名为1分钟表
+                cursor.execute("RENAME TABLE kline_data TO kline_data_1min_backup")
+                logger.info("旧kline_data表已重命名为kline_data_1min_backup，请手动处理数据迁移")
 
             conn.commit()
             conn.close()
@@ -223,13 +269,14 @@ class BinancePriceHighScanner:
         except Exception as e:
             logger.error(f"MySQL数据库初始化失败: {str(e)}")
 
-    def save_kline_data(self, symbol: str, klines: List[List]) -> bool:
+    def save_kline_data(self, symbol: str, klines: List[List], interval: str = '1min') -> bool:
         """
         保存K线数据到数据库
         
         Args:
             symbol: 交易对符号
             klines: K线数据列表
+            interval: K线间隔 ('1min' 或 '30min')
             
         Returns:
             bool: 是否保存成功
@@ -238,14 +285,17 @@ class BinancePriceHighScanner:
             if not klines:
                 return False
 
+            # 根据间隔选择表名
+            table_name = 'kline_data_1min' if interval == '1min' else 'kline_data_30min'
+
             conn = pymysql.connect(**self.mysql_config)
             cursor = conn.cursor()
 
             saved_count = 0
             for kline in klines:
                 try:
-                    cursor.execute('''
-                        INSERT IGNORE INTO kline_data 
+                    cursor.execute(f'''
+                        INSERT IGNORE INTO {table_name} 
                         (symbol, open_time, close_time, open_price, high_price, low_price, 
                          close_price, volume, quote_volume, trades_count, 
                          taker_buy_base_volume, taker_buy_quote_volume)
@@ -267,23 +317,23 @@ class BinancePriceHighScanner:
                     if cursor.rowcount > 0:
                         saved_count += 1
                 except Exception as e:
-                    logger.debug(f"插入K线数据失败 (可能重复): {str(e)}")
+                    logger.debug(f"插入{interval}K线数据失败 (可能重复): {str(e)}")
 
             conn.commit()
             conn.close()
 
             if saved_count > 0:
-                logger.debug(f"保存{symbol}的{saved_count}条新K线数据")
+                logger.debug(f"保存{symbol}的{saved_count}条新{interval}K线数据")
             
             return True
 
         except Exception as e:
-            logger.error(f"保存{symbol}K线数据失败: {str(e)}")
+            logger.error(f"保存{symbol}{interval}K线数据失败: {str(e)}")
             return False
 
     def get_kline_data_from_db(self, symbol: str, days: int = 30) -> List[List]:
         """
-        从数据库获取K线数据
+        从数据库获取K线数据（混合查询：历史30分钟+当天1分钟）
         
         Args:
             symbol: 交易对符号
@@ -296,24 +346,46 @@ class BinancePriceHighScanner:
             conn = pymysql.connect(**self.mysql_config)
             cursor = conn.cursor()
 
-            # 计算开始时间
+            # 获取当天开始时间（00:00:00）
+            today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            today_start_ms = int(today_start.timestamp() * 1000)
+            
+            # 计算历史数据开始时间
             start_time = int((datetime.now() - timedelta(days=days)).timestamp() * 1000)
 
+            all_klines = []
+
+            # 1. 获取历史30分钟K线数据（今天00:00之前）
             cursor.execute('''
                 SELECT open_time, open_price, high_price, low_price, close_price, volume,
                        close_time, quote_volume, trades_count, taker_buy_base_volume, 
                        taker_buy_quote_volume, '0'
-                FROM kline_data 
+                FROM kline_data_30min 
+                WHERE symbol = %s AND open_time >= %s AND open_time < %s
+                ORDER BY open_time ASC
+            ''', (symbol, start_time, today_start_ms))
+
+            historical_results = cursor.fetchall()
+            
+            # 2. 获取当天1分钟K线数据（今天00:00之后）
+            cursor.execute('''
+                SELECT open_time, open_price, high_price, low_price, close_price, volume,
+                       close_time, quote_volume, trades_count, taker_buy_base_volume, 
+                       taker_buy_quote_volume, '0'
+                FROM kline_data_1min 
                 WHERE symbol = %s AND open_time >= %s
                 ORDER BY open_time ASC
-            ''', (symbol, start_time))
+            ''', (symbol, today_start_ms))
 
-            results = cursor.fetchall()
+            today_results = cursor.fetchall()
             conn.close()
+
+            # 合并历史数据和当天数据
+            all_results = list(historical_results) + list(today_results)
 
             # 转换为Binance API格式的列表
             klines = []
-            for row in results:
+            for row in all_results:
                 kline = [
                     row[0],     # open_time
                     str(row[1]), # open_price
@@ -330,7 +402,7 @@ class BinancePriceHighScanner:
                 ]
                 klines.append(kline)
 
-            logger.debug(f"从数据库获取{symbol}的{len(klines)}条K线数据（{days}天）")
+            logger.debug(f"从数据库获取{symbol}的{len(klines)}条混合K线数据（{days}天）: 历史30分钟{len(historical_results)}条，当天1分钟{len(today_results)}条")
             return klines
 
         except Exception as e:
@@ -338,22 +410,306 @@ class BinancePriceHighScanner:
             return []
 
     def get_kline_data_count(self, symbol: str) -> int:
-        """获取数据库中某个交易对的K线数据数量"""
+        """获取数据库中某个交易对的K线数据数量（30分钟+1分钟）"""
         try:
             conn = pymysql.connect(**self.mysql_config)
             cursor = conn.cursor()
             
-            cursor.execute('SELECT COUNT(*) FROM kline_data WHERE symbol = %s', (symbol,))
-            result = cursor.fetchone()
+            # 获取30分钟K线数量
+            cursor.execute('SELECT COUNT(*) FROM kline_data_30min WHERE symbol = %s', (symbol,))
+            result_30min = cursor.fetchone()
+            count_30min = result_30min[0] if result_30min else 0
+            
+            # 获取1分钟K线数量
+            cursor.execute('SELECT COUNT(*) FROM kline_data_1min WHERE symbol = %s', (symbol,))
+            result_1min = cursor.fetchone()
+            count_1min = result_1min[0] if result_1min else 0
+            
             conn.close()
             
-            return result[0] if result else 0
+            total_count = count_30min + count_1min
+            logger.debug(f"{symbol}数据库K线统计: 30分钟{count_30min}条, 1分钟{count_1min}条, 总计{total_count}条")
+            
+            return total_count
             
         except Exception as e:
             logger.error(f"获取{symbol}K线数据数量失败: {str(e)}")
             return 0
 
+    def get_system_status(self, status_key: str) -> Optional[str]:
+        """获取系统状态"""
+        try:
+            conn = pymysql.connect(**self.mysql_config)
+            cursor = conn.cursor()
+            
+            cursor.execute('SELECT status_value FROM system_status WHERE status_key = %s', (status_key,))
+            result = cursor.fetchone()
+            conn.close()
+            
+            return result[0] if result else None
+            
+        except Exception as e:
+            logger.error(f"获取系统状态{status_key}失败: {str(e)}")
+            return None
 
+    def set_system_status(self, status_key: str, status_value: str) -> bool:
+        """设置系统状态"""
+        try:
+            conn = pymysql.connect(**self.mysql_config)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                INSERT INTO system_status (status_key, status_value) 
+                VALUES (%s, %s)
+                ON DUPLICATE KEY UPDATE status_value = %s, updated_at = CURRENT_TIMESTAMP
+            ''', (status_key, status_value, status_value))
+            
+            conn.commit()
+            conn.close()
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"设置系统状态{status_key}失败: {str(e)}")
+            return False
+
+    async def convert_daily_klines_to_30min(self, target_date: datetime) -> bool:
+        """
+        将指定日期的1分钟K线数据转换为30分钟K线数据
+        
+        Args:
+            target_date: 目标日期
+            
+        Returns:
+            bool: 是否转换成功
+        """
+        try:
+            # 计算目标日期的时间范围
+            date_start = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
+            date_end = date_start + timedelta(days=1)
+            
+            start_ms = int(date_start.timestamp() * 1000)
+            end_ms = int(date_end.timestamp() * 1000)
+            
+            logger.info(f"开始转换{target_date.strftime('%Y-%m-%d')}的1分钟K线数据为30分钟K线...")
+            
+            # 获取所有有1分钟数据的交易对
+            conn = pymysql.connect(**self.mysql_config)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT DISTINCT symbol FROM kline_data_1min 
+                WHERE open_time >= %s AND open_time < %s
+            ''', (start_ms, end_ms))
+            
+            symbols = [row[0] for row in cursor.fetchall()]
+            logger.info(f"需要转换{len(symbols)}个交易对的数据")
+            
+            converted_count = 0
+            
+            for symbol in symbols:
+                try:
+                    # 获取该交易对当天的1分钟数据
+                    cursor.execute('''
+                        SELECT open_time, open_price, high_price, low_price, close_price, volume,
+                               close_time, quote_volume, trades_count, taker_buy_base_volume, 
+                               taker_buy_quote_volume
+                        FROM kline_data_1min 
+                        WHERE symbol = %s AND open_time >= %s AND open_time < %s
+                        ORDER BY open_time ASC
+                    ''', (symbol, start_ms, end_ms))
+                    
+                    minute_data = cursor.fetchall()
+                    
+                    if not minute_data:
+                        continue
+                    
+                    # 按30分钟分组聚合数据
+                    aggregated_klines = self._aggregate_klines_to_30min(minute_data, date_start)
+                    
+                    if aggregated_klines:
+                        # 保存30分钟K线数据
+                        success = self.save_kline_data(symbol, aggregated_klines, '30min')
+                        if success:
+                            converted_count += 1
+                            logger.debug(f"成功转换{symbol}的{len(aggregated_klines)}条30分钟K线数据")
+                        
+                except Exception as e:
+                    logger.error(f"转换{symbol}数据失败: {str(e)}")
+                    continue
+            
+            conn.close()
+            
+            logger.info(f"✅ {target_date.strftime('%Y-%m-%d')}数据转换完成，成功转换{converted_count}个交易对")
+            return True
+            
+        except Exception as e:
+            logger.error(f"转换{target_date.strftime('%Y-%m-%d')}数据失败: {str(e)}")
+            return False
+
+    def _aggregate_klines_to_30min(self, minute_data: List, date_start: datetime) -> List[List]:
+        """
+        将1分钟K线数据聚合为30分钟K线数据
+        
+        Args:
+            minute_data: 1分钟K线数据
+            date_start: 日期开始时间
+            
+        Returns:
+            List[List]: 30分钟K线数据列表
+        """
+        try:
+            aggregated = []
+            
+            # 按30分钟分组
+            for hour in range(24):
+                for minute_group in [0, 30]:  # 每小时的0分和30分开始
+                    group_start = date_start.replace(hour=hour, minute=minute_group)
+                    group_end = group_start + timedelta(minutes=30)
+                    
+                    group_start_ms = int(group_start.timestamp() * 1000)
+                    group_end_ms = int(group_end.timestamp() * 1000)
+                    
+                    # 筛选该30分钟内的数据
+                    group_data = [
+                        row for row in minute_data 
+                        if group_start_ms <= row[0] < group_end_ms
+                    ]
+                    
+                    if not group_data:
+                        continue
+                    
+                    # 聚合数据
+                    open_price = float(group_data[0][1])  # 第一根的开盘价
+                    high_price = max(float(row[2]) for row in group_data)  # 最高价
+                    low_price = min(float(row[3]) for row in group_data)   # 最低价
+                    close_price = float(group_data[-1][4])  # 最后一根的收盘价
+                    volume = sum(float(row[5]) for row in group_data)  # 成交量累加
+                    quote_volume = sum(float(row[7]) for row in group_data)  # 成交额累加
+                    trades_count = sum(int(row[8]) for row in group_data)  # 交易笔数累加
+                    taker_buy_base_volume = sum(float(row[9]) for row in group_data)  # 主动买入成交量累加
+                    taker_buy_quote_volume = sum(float(row[10]) for row in group_data)  # 主动买入成交额累加
+                    
+                    # 构造30分钟K线数据
+                    kline_30min = [
+                        group_start_ms,                    # open_time
+                        str(open_price),                   # open_price
+                        str(high_price),                   # high_price
+                        str(low_price),                    # low_price
+                        str(close_price),                  # close_price
+                        str(volume),                       # volume
+                        group_end_ms - 1,                  # close_time
+                        str(quote_volume),                 # quote_volume
+                        trades_count,                      # trades_count
+                        str(taker_buy_base_volume),        # taker_buy_base_volume
+                        str(taker_buy_quote_volume),       # taker_buy_quote_volume
+                        '0'                                # ignore
+                    ]
+                    
+                    aggregated.append(kline_30min)
+            
+            return aggregated
+            
+        except Exception as e:
+            logger.error(f"聚合K线数据失败: {str(e)}")
+            return []
+
+    async def clean_daily_1min_data(self, target_date: datetime) -> bool:
+        """
+        清理指定日期的1分钟K线数据
+        
+        Args:
+            target_date: 目标日期
+            
+        Returns:
+            bool: 是否清理成功
+        """
+        try:
+            # 计算目标日期的时间范围
+            date_start = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
+            date_end = date_start + timedelta(days=1)
+            
+            start_ms = int(date_start.timestamp() * 1000)
+            end_ms = int(date_end.timestamp() * 1000)
+            
+            conn = pymysql.connect(**self.mysql_config)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                DELETE FROM kline_data_1min 
+                WHERE open_time >= %s AND open_time < %s
+            ''', (start_ms, end_ms))
+            
+            deleted_count = cursor.rowcount
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"✅ 清理{target_date.strftime('%Y-%m-%d')}的1分钟K线数据，删除{deleted_count}条记录")
+            return True
+            
+        except Exception as e:
+            logger.error(f"清理{target_date.strftime('%Y-%m-%d')}的1分钟数据失败: {str(e)}")
+            return False
+
+    async def check_and_handle_day_change(self) -> bool:
+        """
+        检查并处理跨天情况
+        
+        Returns:
+            bool: 是否处理成功
+        """
+        try:
+            current_date = datetime.now().strftime('%Y-%m-%d')
+            last_processed_date = self.get_system_status('last_processed_date')
+            
+            if last_processed_date is None:
+                # 第一次运行，记录当前日期
+                self.set_system_status('last_processed_date', current_date)
+                logger.info(f"首次运行，记录当前日期: {current_date}")
+                return True
+            
+            if last_processed_date == current_date:
+                # 同一天，无需处理
+                return True
+            
+            # 检测到跨天，需要处理前一天的数据
+            logger.info(f"🔄 检测到跨天: {last_processed_date} -> {current_date}")
+            
+            # 解析上次处理的日期
+            last_date = datetime.strptime(last_processed_date, '%Y-%m-%d')
+            
+            # 处理从上次日期到昨天的所有日期
+            current = last_date
+            yesterday = datetime.now() - timedelta(days=1)
+            
+            while current.date() <= yesterday.date():
+                logger.info(f"📊 处理{current.strftime('%Y-%m-%d')}的数据转换...")
+                
+                # 转换1分钟数据为30分钟数据
+                convert_success = await self.convert_daily_klines_to_30min(current)
+                
+                if convert_success:
+                    # 转换成功后清理1分钟数据
+                    clean_success = await self.clean_daily_1min_data(current)
+                    
+                    if clean_success:
+                        logger.info(f"✅ {current.strftime('%Y-%m-%d')}数据处理完成")
+                    else:
+                        logger.warning(f"⚠️ {current.strftime('%Y-%m-%d')}数据转换成功但清理失败")
+                else:
+                    logger.error(f"❌ {current.strftime('%Y-%m-%d')}数据转换失败")
+                
+                current += timedelta(days=1)
+            
+            # 更新最后处理日期
+            self.set_system_status('last_processed_date', current_date)
+            logger.info(f"✅ 跨天处理完成，更新处理日期为: {current_date}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"跨天处理失败: {str(e)}")
+            return False
 
     def get_latest_trade_record(self, symbol: str) -> Optional[Dict[str, Any]]:
         """获取某个交易对的最新交易记录"""
@@ -791,7 +1147,7 @@ class BinancePriceHighScanner:
 
     async def initialize_kline_data(self, symbol: str) -> bool:
         """
-        初始化某个交易对的30天1分钟K线数据
+        初始化某个交易对的混合K线数据（历史30分钟+当天1分钟）
         
         Args:
             symbol: 交易对符号
@@ -800,52 +1156,117 @@ class BinancePriceHighScanner:
             bool: 是否初始化成功
         """
         try:
-            logger.info(f"开始初始化{symbol}的30天1分钟K线数据...")
+            logger.info(f"开始初始化{symbol}的混合K线数据...")
             
-            # 30天 * 24小时 * 60分钟 = 43200条数据
-            # 由于limit最大1500，需要分批获取
-            total_minutes = 30 * 24 * 60
+            # 获取当天开始时间
+            today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            
+            # 1. 初始化历史30分钟K线数据（30天前到今天00:00）
+            success_30min = await self._initialize_30min_klines(symbol, today_start)
+            
+            # 2. 初始化当天1分钟K线数据（今天00:00到现在）
+            success_1min = await self._initialize_today_1min_klines(symbol, today_start)
+            
+            if success_30min and success_1min:
+                logger.info(f"✅ {symbol}混合K线数据初始化完成")
+                return True
+            else:
+                logger.warning(f"⚠️ {symbol}部分数据初始化失败: 30分钟={success_30min}, 1分钟={success_1min}")
+                return False
+            
+        except Exception as e:
+            logger.error(f"初始化{symbol}混合K线数据失败: {str(e)}")
+            return False
+
+    async def _initialize_30min_klines(self, symbol: str, today_start: datetime) -> bool:
+        """初始化历史30分钟K线数据"""
+        try:
+            logger.info(f"初始化{symbol}的历史30分钟K线数据...")
+            
+            # 30天的30分钟K线 = 30 * 24 * 2 = 1440条数据
+            end_time = today_start
+            start_time = end_time - timedelta(days=30)
+            
+            # 获取30分钟K线数据
+            klines = self.client.futures_klines(
+                symbol=symbol,
+                interval=Client.KLINE_INTERVAL_30MINUTE,
+                startTime=int(start_time.timestamp() * 1000),
+                endTime=int(end_time.timestamp() * 1000),
+                limit=1500  # 30分钟K线数据量较小，一次可以获取完
+            )
+            
+            if klines:
+                # 保存到30分钟K线表
+                success = self.save_kline_data(symbol, klines, '30min')
+                if success:
+                    logger.info(f"✅ {symbol}历史30分钟K线初始化完成，保存{len(klines)}条数据")
+                    return True
+            
+            logger.warning(f"⚠️ {symbol}历史30分钟K线数据为空")
+            return False
+            
+        except Exception as e:
+            logger.error(f"初始化{symbol}历史30分钟K线失败: {str(e)}")
+            return False
+
+    async def _initialize_today_1min_klines(self, symbol: str, today_start: datetime) -> bool:
+        """初始化当天1分钟K线数据"""
+        try:
+            logger.info(f"初始化{symbol}的当天1分钟K线数据...")
+            
+            # 当天的1分钟K线数据
+            end_time = datetime.now()
+            
+            # 计算当天已过去的分钟数
+            minutes_today = int((end_time - today_start).total_seconds() / 60)
+            
+            if minutes_today <= 0:
+                logger.info(f"当天刚开始，{symbol}无1分钟数据需要初始化")
+                return True
+            
+            # 分批获取当天的1分钟数据
             batch_size = 1500
-            batches = (total_minutes + batch_size - 1) // batch_size  # 向上取整
-            
+            batches = (minutes_today + batch_size - 1) // batch_size
             total_saved = 0
             
             for batch in range(batches):
                 try:
                     # 计算当前批次的时间范围
-                    end_minutes = batch * batch_size
-                    start_minutes = min(end_minutes + batch_size, total_minutes)
+                    start_minutes = batch * batch_size
+                    end_minutes = min(start_minutes + batch_size, minutes_today)
                     
-                    end_time = datetime.now() - timedelta(minutes=end_minutes)
-                    start_time = datetime.now() - timedelta(minutes=start_minutes)
+                    batch_start = today_start + timedelta(minutes=start_minutes)
+                    batch_end = today_start + timedelta(minutes=end_minutes)
                     
-                    # 获取K线数据
+                    # 获取1分钟K线数据
                     klines = self.client.futures_klines(
                         symbol=symbol,
                         interval=Client.KLINE_INTERVAL_1MINUTE,
-                        startTime=int(start_time.timestamp() * 1000),
-                        endTime=int(end_time.timestamp() * 1000),
+                        startTime=int(batch_start.timestamp() * 1000),
+                        endTime=int(batch_end.timestamp() * 1000),
                         limit=batch_size
                     )
                     
                     if klines:
-                        # 保存到数据库
-                        self.save_kline_data(symbol, klines)
-                        total_saved += len(klines)
-                        logger.info(f"第{batch + 1}/{batches}批次: 获取并保存{symbol}的{len(klines)}条K线数据")
+                        # 保存到1分钟K线表
+                        success = self.save_kline_data(symbol, klines, '1min')
+                        if success:
+                            total_saved += len(klines)
+                            logger.debug(f"{symbol}当天1分钟K线第{batch + 1}/{batches}批次: 保存{len(klines)}条数据")
                     
                     # 避免API限制
                     await asyncio.sleep(0.2)
                     
                 except Exception as e:
-                    logger.error(f"初始化{symbol}第{batch + 1}批次失败: {str(e)}")
+                    logger.error(f"初始化{symbol}当天1分钟K线第{batch + 1}批次失败: {str(e)}")
                     continue
             
-            logger.info(f"✅ {symbol}初始化完成，共保存{total_saved}条K线数据")
+            logger.info(f"✅ {symbol}当天1分钟K线初始化完成，保存{total_saved}条数据")
             return True
             
         except Exception as e:
-            logger.error(f"初始化{symbol}K线数据失败: {str(e)}")
+            logger.error(f"初始化{symbol}当天1分钟K线失败: {str(e)}")
             return False
 
     async def initialize_all_kline_data(self):
@@ -885,7 +1306,7 @@ class BinancePriceHighScanner:
 
     async def update_kline_data(self, symbol: str) -> bool:
         """
-        更新某个交易对的最新K线数据
+        更新某个交易对的最新1分钟K线数据（仅当天数据）
         
         Args:
             symbol: 交易对符号
@@ -894,22 +1315,22 @@ class BinancePriceHighScanner:
             bool: 是否更新成功
         """
         try:
-            # 获取最近10分钟的K线数据
+            # 获取最近15分钟的1分钟K线数据
             klines = self.get_recent_klines(symbol, minutes=15)
             
             if not klines:
                 return False
             
-            # 保存到数据库（自动去重）
-            success = self.save_kline_data(symbol, klines)
+            # 保存到1分钟K线表（自动去重）
+            success = self.save_kline_data(symbol, klines, '1min')
             
             if success:
-                logger.debug(f"更新{symbol}的最新K线数据")
+                logger.debug(f"更新{symbol}的最新1分钟K线数据")
             
             return success
             
         except Exception as e:
-            logger.error(f"更新{symbol}K线数据失败: {str(e)}")
+            logger.error(f"更新{symbol}1分钟K线数据失败: {str(e)}")
             return False
 
     def check_price_breakouts(self, klines: List[List]) -> Dict[str, Any]:
@@ -1912,7 +2333,13 @@ class BinancePriceHighScanner:
         """
         运行扫描（建议5分钟间隔运行）
         """
-        logger.info(f"🚀 开始扫描Binance合约价格突破（{self.days_to_analyze}天历史数据，1分钟K线）...")
+        logger.info(f"🚀 开始扫描Binance合约价格突破（{self.days_to_analyze}天历史数据，混合K线）...")
+
+        # 首先检查并处理跨天情况
+        logger.info("🔍 检查跨天处理...")
+        day_change_success = await self.check_and_handle_day_change()
+        if not day_change_success:
+            logger.warning("⚠️ 跨天处理失败，但继续执行扫描")
 
         # 记录扫描开始时的交易记录数量（用于计算新增交易数）
         initial_trade_count = 0
