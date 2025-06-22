@@ -1296,7 +1296,7 @@ class BinancePriceHighScanner:
         
         logger.info(f"✅ K线数据初始化完成! 成功初始化了 {initialized_count} 个交易对")
 
-    async def update_kline_data(self, symbol: str, minutes: int) -> bool:
+    async def update_kline_data(self, symbol: str, minutes: int=30) -> bool:
         """
         更新某个交易对的最新1分钟K线数据（仅当天数据）
         
