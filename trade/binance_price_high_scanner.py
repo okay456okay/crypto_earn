@@ -1302,12 +1302,13 @@ class BinancePriceHighScanner:
         
         Args:
             symbol: 交易对符号
+            minutes: 获取最近几分钟的数据，默认30分钟
             
         Returns:
             bool: 是否更新成功
         """
         try:
-            # 获取最近15分钟的1分钟K线数据
+            # 获取最近指定分钟的1分钟K线数据
             klines = self.get_recent_klines(symbol, minutes=minutes)
             
             if not klines:
@@ -1327,10 +1328,10 @@ class BinancePriceHighScanner:
 
     def check_price_breakouts(self, klines: List[List]) -> Dict[str, Any]:
         """
-        检查最后一根K线价格是否为多个时间区间的最高点
+        检查最后一根K线价格是否为多个时间区间的最高点（混合K线版本）
         
         Args:
-            klines: K线数据列表（30天的1分钟K线）
+            klines: 混合K线数据列表（历史30分钟K线 + 当天1分钟K线）
             
         Returns:
             Dict: 包含当前价格和各时间区间突破信息的字典
@@ -1353,25 +1354,33 @@ class BinancePriceHighScanner:
                 'breakouts': {}
             }
 
-        # 获取最后一根K线的收盘价
+        # 获取最后一根K线的收盘价和时间戳
         current_price = float(klines[-1][4])  # 索引4是收盘价
+        current_time_ms = int(klines[-1][0])  # 索引0是开盘时间戳
+        current_time = datetime.fromtimestamp(current_time_ms / 1000)
 
-        # 每1分钟一根K线，计算各时间区间对应的K线数量
-        periods = {
-            7: 7 * 24 * 60,   # 7天 = 7 * 24小时 * 60分钟 = 10080根
-            15: 15 * 24 * 60, # 15天 = 21600根
-            30: 30 * 24 * 60  # 30天 = 43200根
+        # 计算各时间区间的截止时间戳
+        periods_time = {
+            7: current_time - timedelta(days=7),
+            15: current_time - timedelta(days=15), 
+            30: current_time - timedelta(days=30)
         }
 
         breakouts = {}
         breakout_periods = []
         has_breakout = False
 
-        for days, kline_count in periods.items():
-            # 确保不超过实际K线数量
-            actual_count = min(kline_count, len(klines) - 1)  # 排除最后一根K线
+        for days, cutoff_time in periods_time.items():
+            cutoff_time_ms = int(cutoff_time.timestamp() * 1000)
+            
+            # 筛选指定时间区间内的K线（排除最后一根K线）
+            period_klines = []
+            for kline in klines[:-1]:  # 排除最后一根K线
+                kline_time_ms = int(kline[0])
+                if kline_time_ms >= cutoff_time_ms:
+                    period_klines.append(kline)
 
-            if actual_count <= 0:
+            if not period_klines:
                 breakouts[days] = {
                     'is_high': False,
                     'max_high': 0.0,
@@ -1379,12 +1388,9 @@ class BinancePriceHighScanner:
                 }
                 continue
 
-            # 获取指定时间区间的K线数据（从倒数第二根开始往前数）
-            period_klines = klines[-(actual_count + 1):-1]  # 排除最后一根K线
-
             # 提取该时间区间的高点和低点价格
             high_prices = [float(kline[2]) for kline in period_klines]  # 索引2是高点价格
-            low_prices = [float(kline[3]) for kline in period_klines]  # 索引3是低点价格
+            low_prices = [float(kline[3]) for kline in period_klines]   # 索引3是低点价格
 
             if high_prices and low_prices:
                 max_high = max(high_prices)
