@@ -41,14 +41,11 @@ from tools.logger import logger
 from config import binance_api_key, binance_api_secret, proxies, project_root, mysql_config
 from binance.client import Client
 import time
-import json
-import pandas as pd
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional, Tuple
 import logging
 import requests
 import pickle
-import hashlib
 import argparse
 import asyncio
 import ccxt.pro as ccxtpro
@@ -356,24 +353,7 @@ class BinancePriceHighScanner:
             logger.error(f"获取{symbol}K线数据数量失败: {str(e)}")
             return 0
 
-    def get_latest_kline_time(self, symbol: str) -> Optional[int]:
-        """获取数据库中某个交易对最新的K线时间"""
-        try:
-            conn = pymysql.connect(**self.mysql_config)
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                SELECT MAX(open_time) FROM kline_data WHERE symbol = %s
-            ''', (symbol,))
-            
-            result = cursor.fetchone()
-            conn.close()
-            
-            return result[0] if result and result[0] else None
-            
-        except Exception as e:
-            logger.error(f"获取{symbol}最新K线时间失败: {str(e)}")
-            return None
+
 
     def get_latest_trade_record(self, symbol: str) -> Optional[Dict[str, Any]]:
         """获取某个交易对的最新交易记录"""
@@ -744,13 +724,7 @@ class BinancePriceHighScanner:
         except Exception as e:
             logger.error(f"保存缓存文件 {cache_file} 失败: {str(e)}")
 
-    def load_cache(self, cache_file: str) -> Dict:
-        """加载缓存数据（兼容旧方法）"""
-        return self.load_cache_with_expiry(cache_file)
 
-    def save_cache(self, cache_file: str, data: Dict):
-        """保存缓存数据（兼容旧方法）"""
-        self.save_cache_with_expiry(cache_file, data)
 
     def get_all_futures_symbols(self) -> List[str]:
         """
@@ -777,45 +751,7 @@ class BinancePriceHighScanner:
             logger.error(f"获取合约交易对信息失败: {str(e)}")
             return []
 
-    def get_1min_klines(self, symbol: str, days: int = None, limit: int = 1500) -> Optional[List[List]]:
-        """
-        获取1分钟K线数据
-        https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Kline-Candlestick-Data
-        Args:
-            symbol: 交易对符号
-            days: 获取天数，如果为None则使用实例的默认值
-            limit: 限制数量，最大1500
-            
-        Returns:
-            List[List]: K线数据列表
-        """
-        if days is None:
-            days = self.days_to_analyze
 
-        try:
-            # 计算时间范围
-            end_time = datetime.now()
-            start_time = end_time - timedelta(days=days)
-
-            # 获取1分钟K线数据
-            klines = self.client.futures_klines(
-                symbol=symbol,
-                interval=Client.KLINE_INTERVAL_1MINUTE,
-                startTime=int(start_time.timestamp() * 1000),
-                endTime=int(end_time.timestamp() * 1000),
-                limit=limit
-            )
-
-            if not klines:
-                logger.warning(f"{symbol}: 未获取到K线数据")
-                return None
-
-            logger.debug(f"{symbol}: 获取到{len(klines)}根1分钟K线")
-            return klines
-
-        except Exception as e:
-            logger.error(f"获取{symbol}的1分钟K线数据失败: {str(e)}")
-            return None
 
     def get_recent_klines(self, symbol: str, minutes: int = 10) -> Optional[List[List]]:
         """
