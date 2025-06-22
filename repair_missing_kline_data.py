@@ -39,6 +39,8 @@ class KlineDataRepairer:
         """初始化修复器"""
         self.mysql_config = mysql_config
         self.current_time = datetime.now()
+        # 排除最近15分钟的数据，因为可能还没有更新到数据库
+        self.check_end_time = self.current_time - timedelta(minutes=15)
         self.today_start = self.current_time.replace(hour=0, minute=0, second=0, microsecond=0)
         self.analysis_start = self.today_start - timedelta(days=29)  # 30天前
         
@@ -50,7 +52,8 @@ class KlineDataRepairer:
         )
         
         logger.info(f"K线数据修复器初始化完成")
-        logger.info(f"修复时间范围: {self.analysis_start.strftime('%Y-%m-%d %H:%M:%S')} 到 {self.current_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"修复时间范围: {self.analysis_start.strftime('%Y-%m-%d %H:%M:%S')} 到 {self.check_end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"⚠️  排除最近15分钟数据，修复截止时间: {self.check_end_time.strftime('%Y-%m-%d %H:%M:%S')}")
     
     def find_missing_1min_data(self, symbol: str) -> List[Tuple[datetime, datetime]]:
         """找出1分钟K线数据的缺失时间段"""
@@ -58,24 +61,24 @@ class KlineDataRepairer:
             conn = pymysql.connect(**self.mysql_config)
             cursor = conn.cursor()
             
-            # 获取当天的所有1分钟K线时间戳
+            # 获取当天的所有1分钟K线时间戳（排除最近15分钟）
             today_start_ms = int(self.today_start.timestamp() * 1000)
-            current_time_ms = int(self.current_time.timestamp() * 1000)
+            check_end_time_ms = int(self.check_end_time.timestamp() * 1000)
             
             cursor.execute('''
                 SELECT open_time FROM kline_data_1min 
                 WHERE symbol = %s AND open_time >= %s AND open_time < %s
                 ORDER BY open_time
-            ''', (symbol, today_start_ms, current_time_ms))
+            ''', (symbol, today_start_ms, check_end_time_ms))
             
             results = cursor.fetchall()
             existing_times = set(row[0] for row in results)
             conn.close()
             
-            # 生成应该存在的所有时间点
+            # 生成应该存在的所有时间点（排除最近15分钟）
             expected_times = []
             current = self.today_start
-            while current < self.current_time:
+            while current < self.check_end_time:
                 expected_times.append(int(current.timestamp() * 1000))
                 current += timedelta(minutes=1)
             
