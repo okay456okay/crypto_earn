@@ -56,7 +56,7 @@ class KlineDataRepairer:
         logger.info(f"⚠️  排除最近15分钟数据，修复截止时间: {self.check_end_time.strftime('%Y-%m-%d %H:%M:%S')}")
     
     def find_missing_1min_data(self, symbol: str) -> List[Tuple[datetime, datetime]]:
-        """找出1分钟K线数据的缺失时间段"""
+        """找出1分钟K线数据的缺失时间段（基于实际数据范围）"""
         try:
             conn = pymysql.connect(**self.mysql_config)
             cursor = conn.cursor()
@@ -72,17 +72,29 @@ class KlineDataRepairer:
             ''', (symbol, today_start_ms, check_end_time_ms))
             
             results = cursor.fetchall()
-            existing_times = set(row[0] for row in results)
             conn.close()
             
-            # 生成应该存在的所有时间点（排除最近15分钟）
+            # 如果没有数据，返回空列表（可能是新上市或今天还没有数据）
+            if not results or len(results) == 0:
+                return []
+            
+            existing_times = set(row[0] for row in results)
+            
+            # 获取该交易对实际的数据时间范围
+            first_time_ms = results[0][0]
+            last_time_ms = results[-1][0]
+            
+            first_time = datetime.fromtimestamp(first_time_ms / 1000)
+            last_time = datetime.fromtimestamp(last_time_ms / 1000)
+            
+            # 生成从第一条数据到最后一条数据之间应该存在的所有时间点
             expected_times = []
-            current = self.today_start
-            while current < self.check_end_time:
+            current = first_time
+            while current <= last_time:
                 expected_times.append(int(current.timestamp() * 1000))
                 current += timedelta(minutes=1)
             
-            # 找出缺失的连续时间段
+            # 找出缺失的连续时间段（只检查中间缺失）
             missing_periods = []
             missing_times = [ts for ts in expected_times if ts not in existing_times]
             
@@ -116,7 +128,7 @@ class KlineDataRepairer:
             return []
     
     def find_missing_30min_data(self, symbol: str) -> List[Tuple[datetime, datetime]]:
-        """找出30分钟K线数据的缺失时间段"""
+        """找出30分钟K线数据的缺失时间段（基于实际数据范围）"""
         try:
             conn = pymysql.connect(**self.mysql_config)
             cursor = conn.cursor()
@@ -132,18 +144,30 @@ class KlineDataRepairer:
             ''', (symbol, analysis_start_ms, today_start_ms))
             
             results = cursor.fetchall()
-            existing_times = set(row[0] for row in results)
             conn.close()
             
-            # 生成应该存在的所有30分钟时间点
+            # 如果没有数据，返回空列表（可能是新上市的交易对）
+            if not results or len(results) == 0:
+                return []
+            
+            existing_times = set(row[0] for row in results)
+            
+            # 获取该交易对实际的数据时间范围
+            first_time_ms = results[0][0]
+            last_time_ms = results[-1][0]
+            
+            first_time = datetime.fromtimestamp(first_time_ms / 1000)
+            last_time = datetime.fromtimestamp(last_time_ms / 1000)
+            
+            # 生成从第一条数据到最后一条数据之间应该存在的所有30分钟时间点
             expected_times = []
-            current = self.analysis_start
-            while current < self.today_start:
+            current = first_time
+            while current <= last_time:
                 if current.minute in [0, 30]:  # 只在每小时的0分和30分
                     expected_times.append(int(current.timestamp() * 1000))
                 current += timedelta(minutes=30)
             
-            # 找出缺失的连续时间段
+            # 找出缺失的连续时间段（只检查中间缺失）
             missing_periods = []
             missing_times = [ts for ts in expected_times if ts not in existing_times]
             

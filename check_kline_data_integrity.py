@@ -142,10 +142,6 @@ class KlineDataIntegrityChecker:
             conn = pymysql.connect(**self.mysql_config)
             cursor = conn.cursor()
             
-            # 计算当天应该有的分钟数（排除最近15分钟）
-            minutes_since_start = int((self.check_end_time - self.today_start).total_seconds() / 60)
-            expected_count = max(0, minutes_since_start)
-            
             # 计算时间范围
             today_start_ms = int(self.today_start.timestamp() * 1000)
             check_end_time_ms = int(self.check_end_time.timestamp() * 1000)
@@ -160,21 +156,36 @@ class KlineDataIntegrityChecker:
             results = cursor.fetchall()
             actual_count = len(results)
             
-            # 检查缺失的时间点
+            # 检查缺失的时间点（基于实际数据范围）
             missing_times = []
-            if results and expected_count > 0:
+            expected_count = 0
+            
+            if results and len(results) > 0:
                 existing_times = set(row[0] for row in results)
                 
-                # 生成应该存在的所有时间点（排除最近15分钟）
+                # 获取该交易对实际的数据时间范围
+                first_time_ms = results[0][0]
+                last_time_ms = results[-1][0]
+                
+                first_time = datetime.fromtimestamp(first_time_ms / 1000)
+                last_time = datetime.fromtimestamp(last_time_ms / 1000)
+                
+                # 生成从第一条数据到最后一条数据之间应该存在的所有时间点
                 expected_times = set()
-                current = self.today_start
-                while current < self.check_end_time:
+                current = first_time
+                while current <= last_time:
                     expected_times.add(int(current.timestamp() * 1000))
                     current += timedelta(minutes=1)
                 
-                # 找出缺失的时间点
+                expected_count = len(expected_times)
+                
+                # 找出缺失的时间点（只检查中间缺失，不检查开头和结尾）
                 missing_time_stamps = expected_times - existing_times
                 missing_times = [datetime.fromtimestamp(ts / 1000) for ts in sorted(missing_time_stamps)]
+            else:
+                # 如果当天有时间范围但没有数据，计算预期数量
+                if self.check_end_time > self.today_start:
+                    expected_count = int((self.check_end_time - self.today_start).total_seconds() / 60)
             
             conn.close()
             
@@ -206,15 +217,10 @@ class KlineDataIntegrityChecker:
             }
     
     def check_30min_data_integrity(self, symbol: str) -> Dict[str, Any]:
-        """检查30分钟K线数据完整性（30天历史数据）"""
+        """检查30分钟K线数据完整性（基于实际数据范围）"""
         try:
             conn = pymysql.connect(**self.mysql_config)
             cursor = conn.cursor()
-            
-            # 计算30天期间应该有的30分钟K线数量
-            # 30天 * 24小时 * 2(每小时2个30分钟) = 1440条
-            total_30min_periods = 30 * 24 * 2
-            expected_count = total_30min_periods
             
             # 计算时间范围（30天前到今天00:00）
             analysis_start_ms = int(self.analysis_start.timestamp() * 1000)
@@ -230,26 +236,37 @@ class KlineDataIntegrityChecker:
             results = cursor.fetchall()
             actual_count = len(results)
             
-            # 检查缺失的时间点
+            # 检查缺失的时间点（基于实际数据范围）
             missing_times = []
-            if results:
+            expected_count = 0
+            
+            if results and len(results) > 0:
                 existing_times = set(row[0] for row in results)
                 
-                # 生成应该存在的所有30分钟时间点
+                # 获取该交易对实际的数据时间范围
+                first_time_ms = results[0][0]
+                last_time_ms = results[-1][0]
+                
+                first_time = datetime.fromtimestamp(first_time_ms / 1000)
+                last_time = datetime.fromtimestamp(last_time_ms / 1000)
+                
+                # 生成从第一条数据到最后一条数据之间应该存在的所有30分钟时间点
                 expected_times = set()
-                current = self.analysis_start
-                while current < self.today_start:
+                current = first_time
+                while current <= last_time:
                     # 只在每小时的0分和30分生成时间点
                     if current.minute in [0, 30]:
                         expected_times.add(int(current.timestamp() * 1000))
                     current += timedelta(minutes=30)
                 
-                # 找出缺失的时间点
+                expected_count = len(expected_times)
+                
+                # 找出缺失的时间点（只检查中间缺失，不检查开头和结尾）
                 missing_time_stamps = expected_times - existing_times
                 missing_times = [datetime.fromtimestamp(ts / 1000) for ts in sorted(missing_time_stamps)]
-                
-                # 重新计算基于实际应该存在的时间点数量
-                expected_count = len(expected_times)
+            else:
+                # 如果没有数据，不计算预期数量（可能是新上市的交易对）
+                expected_count = 0
             
             conn.close()
             
