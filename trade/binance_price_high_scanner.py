@@ -428,6 +428,64 @@ class BinancePriceHighScanner:
             logger.error(f"获取{symbol}K线数据数量失败: {str(e)}")
             return 0
 
+    def get_kline_start_time(self, symbol: str) -> Optional[datetime]:
+        """
+        获取交易对在数据库中第一根K线的时间
+        
+        Args:
+            symbol: 交易对符号
+            
+        Returns:
+            datetime: 第一根K线的时间，如果没有数据则返回None
+        """
+        try:
+            conn = pymysql.connect(**self.mysql_config)
+            cursor = conn.cursor()
+            
+            # 查询30分钟K线中的最早时间
+            cursor.execute("""
+                SELECT MIN(open_time) FROM kline_data_30min 
+                WHERE symbol = %s
+            """, (symbol,))
+            min_30min_result = cursor.fetchone()
+            min_30min_time = min_30min_result[0] if min_30min_result and min_30min_result[0] else None
+            
+            # 查询1分钟K线中的最早时间
+            cursor.execute("""
+                SELECT MIN(open_time) FROM kline_data_1min 
+                WHERE symbol = %s
+            """, (symbol,))
+            min_1min_result = cursor.fetchone()
+            min_1min_time = min_1min_result[0] if min_1min_result and min_1min_result[0] else None
+            
+            conn.close()
+            
+            # 选择两者中更早的时间
+            earliest_time = None
+            if min_30min_time and min_1min_time:
+                earliest_time = min(min_30min_time, min_1min_time)
+            elif min_30min_time:
+                earliest_time = min_30min_time
+            elif min_1min_time:
+                earliest_time = min_1min_time
+            
+            if earliest_time:
+                # 转换为datetime对象
+                if isinstance(earliest_time, int):
+                    earliest_datetime = datetime.fromtimestamp(earliest_time / 1000)
+                else:
+                    earliest_datetime = earliest_time
+                
+                logger.debug(f"{symbol} K线开始时间: {earliest_datetime.strftime('%Y-%m-%d %H:%M:%S')}")
+                return earliest_datetime
+            else:
+                logger.warning(f"{symbol} 没有找到K线数据")
+                return None
+                
+        except Exception as e:
+            logger.error(f"获取{symbol}K线开始时间失败: {str(e)}")
+            return None
+
     def get_system_status(self, status_key: str) -> Optional[str]:
         """获取系统状态"""
         try:
@@ -1723,6 +1781,11 @@ class BinancePriceHighScanner:
                 message_lines.append(f"• 市场占用率: {analysis_data['token_info']['market_dominance']:.4f}%")
 
             message_lines.append(f"• 发行日期: {analysis_data['token_info']['launch_date_str']}")
+            
+            # 添加K线开始时间
+            if analysis_data.get('kline_start_time'):
+                kline_start_str = analysis_data['kline_start_time'].strftime('%Y-%m-%d %H:%M:%S')
+                message_lines.append(f"• K线开始时间: {kline_start_str}")
 
             if analysis_data['token_info']['website_url']:
                 message_lines.append(f"• 官网: {analysis_data['token_info']['website_url']}")
@@ -1840,6 +1903,11 @@ class BinancePriceHighScanner:
                                                                                     'market_rank'] > 0 else "• 市值排名: 未知",
                 f"• 发行日期: {analysis_data['token_info']['launch_date_str']}",
             ])
+            
+            # 添加K线开始时间
+            if analysis_data.get('kline_start_time'):
+                kline_start_str = analysis_data['kline_start_time'].strftime('%Y-%m-%d %H:%M:%S')
+                message_lines.append(f"• K线开始时间: {kline_start_str}")
 
             # 添加交易原因
             if order_details.get('is_first_trade', False):
@@ -2044,16 +2112,15 @@ class BinancePriceHighScanner:
         token_info = analysis_data['token_info']
         funding_rate = analysis_data['funding_rate']
 
-        # 检查上市日期
-        launch_date = token_info.get('launch_date', 0)
-        if not launch_date or launch_date == 0:
-            return True, "上市日期数据为空"
+        # 检查K线开始时间（用于判断上市时间）
+        kline_start_time = analysis_data.get('kline_start_time')
+        if not kline_start_time:
+            return True, "K线开始时间数据为空"
 
-        launch_datetime = datetime.fromtimestamp(launch_date / 1000)
-        days_since_launch = (datetime.now() - launch_datetime).days
+        days_since_kline_start = (datetime.now() - kline_start_time).days
 
-        if days_since_launch < self.min_launch_days:
-            return True, f"上市仅{days_since_launch}天，小于{self.min_launch_days}天"
+        if days_since_kline_start < self.min_launch_days:
+            return True, f"K线数据仅{days_since_kline_start}天，小于{self.min_launch_days}天"
 
         # 检查市值排名
         market_rank = token_info.get('market_rank', 0)
@@ -2317,6 +2384,7 @@ class BinancePriceHighScanner:
             token_info = self.get_token_info(base_asset)
             description = self.get_symbol_description(base_asset)
             tags = self.get_symbol_tags(symbol)
+            kline_start_time = self.get_kline_start_time(symbol)
 
             # 组合分析数据
             analysis_data = {
@@ -2326,7 +2394,8 @@ class BinancePriceHighScanner:
                 'funding_rate': funding_rate_info,
                 'token_info': token_info,
                 'description': description,
-                'tags': tags
+                'tags': tags,
+                'kline_start_time': kline_start_time
             }
 
             # 发送通知
