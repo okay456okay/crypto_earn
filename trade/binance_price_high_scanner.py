@@ -1842,14 +1842,32 @@ class BinancePriceHighScanner:
             ])
 
             # 添加交易原因
-            latest_record = self.get_latest_trade_record(symbol)
-            if not latest_record:
+            if order_details.get('is_first_trade', False):
                 message_lines.append(f"**交易原因**: 首次检测到价格突破，执行初始卖空")
             else:
-                last_price = latest_record['open_price']
-                current_price = analysis_data['current_price']
-                price_increase = (current_price - last_price) / last_price * 100
-                message_lines.append(f"**交易原因**: 价格较上次开仓上涨{price_increase:.2f}%，执行追加卖空")
+                # 获取上次交易记录来计算价格涨幅
+                latest_records = []
+                try:
+                    cursor = self.db_conn.cursor()
+                    cursor.execute("""
+                        SELECT open_price FROM trade_records 
+                        WHERE symbol = %s 
+                        ORDER BY created_at DESC 
+                        LIMIT 2
+                    """, (symbol,))
+                    latest_records = cursor.fetchall()
+                    cursor.close()
+                except Exception as e:
+                    logger.error(f"查询{symbol}历史交易记录失败: {str(e)}")
+                
+                if len(latest_records) >= 2:
+                    # 获取倒数第二条记录（因为最新的记录就是刚刚保存的当前交易）
+                    last_price = latest_records[1][0]
+                    current_price = analysis_data['current_price']
+                    price_increase = (current_price - last_price) / last_price * 100
+                    message_lines.append(f"**交易原因**: 价格较上次开仓上涨{price_increase:.2f}%，执行追加卖空")
+                else:
+                    message_lines.append(f"**交易原因**: 检测到价格突破，执行追加卖空")
 
             message_lines.extend([
                 f"",
@@ -2180,6 +2198,9 @@ class BinancePriceHighScanner:
                 except Exception as status_e:
                     logger.warning(f"⚠️ 检查{symbol}订单状态失败: {str(status_e)}")
 
+                # 在保存记录前检查是否为首次交易
+                is_first_trade = self.get_latest_trade_record(symbol) is None
+                
                 # 保存交易记录
                 self.save_trade_record(symbol, filled_price, filled_quantity, order_id)
 
@@ -2188,7 +2209,8 @@ class BinancePriceHighScanner:
                     order_details = {
                         'order_id': order_id,
                         'filled_price': filled_price,
-                        'filled_quantity': filled_quantity
+                        'filled_quantity': filled_quantity,
+                        'is_first_trade': is_first_trade
                     }
                     self.send_trading_notification(symbol, order_details, analysis_data)
 
