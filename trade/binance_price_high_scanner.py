@@ -1858,6 +1858,136 @@ class BinancePriceHighScanner:
         except Exception as e:
             logger.error(f"❌ 发送{symbol}企业微信通知失败: {str(e)}")
 
+    def send_filtered_notification(self, symbol: str, analysis_data: Dict[str, Any], filter_reason: str):
+        """
+        发送因过滤条件未能交易的企业微信通知
+        
+        Args:
+            symbol: 交易对符号
+            analysis_data: 分析数据
+            filter_reason: 过滤原因
+        """
+        try:
+            base_asset = symbol.replace('USDT', '')
+
+            # 构建突破时间区间信息
+            breakout_periods = sorted(analysis_data['breakout_periods'])
+            periods_str = ', '.join([f"{days}天" for days in breakout_periods])
+
+            # 构建消息内容
+            message_lines = [
+                f"⚠️ **价格突破但被过滤提醒**",
+                f"",
+                f"**合约**: {symbol}",
+                f"**当前价格**: ${analysis_data['current_price']:.6f}",
+                f"**突破区间**: {periods_str}",
+                f"**过滤原因**: {filter_reason}",
+                f"",
+                f"**各时间区间对比**:",
+            ]
+
+            # 添加各时间区间的详细信息
+            for days in [7, 15, 30]:
+                if days in analysis_data['breakouts']:
+                    breakout_info = analysis_data['breakouts'][days]
+                    status = "✅ 突破" if breakout_info['is_high'] else "❌ 未突破"
+                    message_lines.extend([
+                        f"• {days}天: {status}",
+                        f"  └ 最高价: ${breakout_info['max_high']:.6f}",
+                        f"  └ 最低价: ${breakout_info['min_low']:.6f}",
+                    ])
+
+            message_lines.extend([
+                f"",
+                f"**资金费率信息**:",
+                f"• 当前费率: {analysis_data['funding_rate']['current_rate_percent']:.4f}%",
+                f"• 年化费率: {analysis_data['funding_rate']['annualized_rate']:.2f}%",
+                f"• 结算周期: {analysis_data['funding_rate']['settlement_hours']}小时",
+                f"",
+                f"**代币信息**:",
+                f"• 历史最高价: ${analysis_data['token_info']['ath_price']:.6f}",
+                f"• 历史最低价: ${analysis_data['token_info']['atl_price']:.6f}",
+                f"• 市值: ${analysis_data['token_info']['market_cap']:,.0f}",
+            ])
+
+            # 有条件的信息项
+            if analysis_data['token_info']['market_rank'] > 0:
+                message_lines.append(f"• 市值排名: #{analysis_data['token_info']['market_rank']}")
+
+            if analysis_data['token_info']['market_dominance'] > 0:
+                message_lines.append(f"• 市场占用率: {analysis_data['token_info']['market_dominance']:.4f}%")
+
+            message_lines.append(f"• 发行日期: {analysis_data['token_info']['launch_date_str']}")
+            
+            # 添加K线开始时间
+            if analysis_data.get('kline_start_time'):
+                kline_start_str = analysis_data['kline_start_time'].strftime('%Y-%m-%d %H:%M:%S')
+                message_lines.append(f"• K线开始时间: {kline_start_str}")
+
+            if analysis_data['token_info']['website_url']:
+                message_lines.append(f"• 官网: {analysis_data['token_info']['website_url']}")
+
+            if analysis_data['token_info']['twitter_username']:
+                message_lines.append(f"• X用户名: @{analysis_data['token_info']['twitter_username']}")
+
+            if analysis_data['token_info']['twitter_id']:
+                message_lines.append(f"• X ID: {analysis_data['token_info']['twitter_id']}")
+
+            if analysis_data['token_info']['twitter_last_update_str'] != 'Unknown':
+                message_lines.append(f"• X更新: {analysis_data['token_info']['twitter_last_update_str']}")
+
+            if analysis_data['token_info']['github_url']:
+                message_lines.append(f"• Github: {analysis_data['token_info']['github_url']}")
+
+            if analysis_data['token_info']['repo_update_time_str'] != 'Unknown':
+                message_lines.append(f"• 仓库更新: {analysis_data['token_info']['repo_update_time_str']}")
+
+            # 添加剩余的固定信息
+            message_lines.extend([
+                f"",
+                f"**合约描述**: {analysis_data['description'][:100]}..." if len(
+                    analysis_data['description']) > 100 else f"**合约描述**: {analysis_data['description']}",
+                f"",
+                f"**标签**: {', '.join(analysis_data['tags'])}" if analysis_data['tags'] else "**标签**: 无",
+                f"",
+                f"**提示**: 该交易对因不满足交易条件而被过滤，请关注后续价格变化",
+                f"**时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            ])
+
+            # 过滤空行
+            message_lines = [line for line in message_lines if line is not None and line != ""]
+            message_content = "\n".join(message_lines)
+
+            # 准备请求数据
+            payload = {
+                "msgtype": "markdown",
+                "markdown": {
+                    "content": message_content
+                }
+            }
+
+            # 发送请求
+            response = requests.post(
+                self.webhook_url,
+                json=payload,
+                proxies=proxies,
+                timeout=10
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                if result.get('errcode') == 0:
+                    logger.info(f"✅ 成功发送{symbol}过滤通知到企业微信群")
+                    # 保存过滤通知到文件
+                    self.save_filtered_notification_to_file(symbol, message_content, analysis_data, filter_reason)
+                else:
+                    logger.error(f"❌ 发送{symbol}过滤通知失败: {result}")
+            else:
+                logger.error(f"❌ 发送{symbol}过滤通知失败，状态码: {response.status_code}")
+
+        except Exception as e:
+            logger.error(f"❌ 发送{symbol}过滤企业微信通知失败: {str(e)}")
+
     def send_trading_notification(self, symbol: str, order_details: Dict[str, Any], analysis_data: Dict[str, Any]):
         """
         发送交易下单企业微信通知
@@ -2107,6 +2237,34 @@ class BinancePriceHighScanner:
         except Exception as e:
             logger.error(f"❌ 保存{symbol}通知到文件失败: {str(e)}")
 
+    def save_filtered_notification_to_file(self, symbol: str, message_content: str, analysis_data: Dict[str, Any], filter_reason: str):
+        """保存过滤通知到文件"""
+        try:
+            # 创建通知目录
+            notifications_dir = "trade/notifications"
+            os.makedirs(notifications_dir, exist_ok=True)
+
+            # 文件名格式：filtered_SYMBOL_YYYYMMDD_HHMMSS.txt
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"filtered_{symbol}_{timestamp}.txt"
+            filepath = os.path.join(notifications_dir, filename)
+
+            # 保存内容
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write("=== 价格突破但被过滤通知 ===\n")
+                f.write(f"合约: {symbol}\n")
+                f.write(f"过滤原因: {filter_reason}\n")
+                f.write(f"当前价格: ${analysis_data['current_price']:.6f}\n")
+                f.write(f"突破区间: {', '.join([f'{days}天' for days in sorted(analysis_data['breakout_periods'])])}\n")
+                f.write(f"发送时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write("\n=== 通知内容 ===\n")
+                f.write(message_content)
+
+            logger.debug(f"📁 已保存{symbol}过滤通知到文件: {filepath}")
+
+        except Exception as e:
+            logger.error(f"❌ 保存{symbol}过滤通知到文件失败: {str(e)}")
+
     def should_filter_symbol(self, symbol: str, analysis_data: Dict[str, Any]) -> Tuple[bool, str]:
         """
         检查交易对是否应该被过滤掉
@@ -2299,7 +2457,7 @@ class BinancePriceHighScanner:
             logger.error(f"❌ 执行{symbol}卖空订单失败: {str(e)}")
             return False
 
-    async def check_and_execute_trade(self, symbol: str, analysis_data: Dict[str, Any]) -> bool:
+    async def check_and_execute_trade(self, symbol: str, analysis_data: Dict[str, Any]) -> Tuple[bool, str]:
         """
         检查并执行交易
         
@@ -2308,10 +2466,10 @@ class BinancePriceHighScanner:
             analysis_data: 分析数据
             
         Returns:
-            bool: 是否执行了交易
+            Tuple[bool, str]: (是否执行了交易, 未交易原因/成功信息)
         """
         if not self.enable_trading:
-            return False
+            return False, "交易功能未启用"
 
         try:
             current_price = analysis_data['current_price']
@@ -2320,7 +2478,7 @@ class BinancePriceHighScanner:
             should_filter, filter_reason = self.should_filter_symbol(symbol, analysis_data)
             if should_filter:
                 logger.info(f"🚫 {symbol} 被过滤: {filter_reason}")
-                return False
+                return False, filter_reason
 
             logger.info(f"✅ {symbol} 通过过滤条件，检查交易条件")
 
@@ -2330,7 +2488,11 @@ class BinancePriceHighScanner:
             if not latest_record:
                 # 没有交易记录，执行交易
                 logger.info(f"💰 {symbol} 无交易记录，执行首次卖空交易")
-                return await self.execute_short_order(symbol, current_price, analysis_data)
+                trade_success = await self.execute_short_order(symbol, current_price, analysis_data)
+                if trade_success:
+                    return True, "成功执行首次卖空交易"
+                else:
+                    return False, "首次卖空交易执行失败"
             else:
                 # 有交易记录，检查价格条件
                 last_price = latest_record['open_price']
@@ -2338,14 +2500,20 @@ class BinancePriceHighScanner:
 
                 if price_increase >= 0.1:  # 价格上涨10%以上
                     logger.info(f"💰 {symbol} 价格较上次开仓上涨{price_increase * 100:.2f}%，执行追加卖空交易")
-                    return await self.execute_short_order(symbol, current_price, analysis_data)
+                    trade_success = await self.execute_short_order(symbol, current_price, analysis_data)
+                    if trade_success:
+                        return True, f"成功执行追加卖空交易（价格上涨{price_increase * 100:.2f}%）"
+                    else:
+                        return False, "追加卖空交易执行失败"
                 else:
-                    logger.info(f"⏸️ {symbol} 价格较上次开仓仅上涨{price_increase * 100:.2f}%，不满足10%条件")
-                    return False
+                    reason = f"价格较上次开仓仅上涨{price_increase * 100:.2f}%，不满足10%条件"
+                    logger.info(f"⏸️ {symbol} {reason}")
+                    return False, reason
 
         except Exception as e:
-            logger.error(f"❌ 检查{symbol}交易条件失败: {str(e)}")
-            return False
+            error_msg = f"检查交易条件失败: {str(e)}"
+            logger.error(f"❌ {symbol} {error_msg}")
+            return False, error_msg
 
     async def analyze_symbol(self, symbol: str) -> bool:
         """
@@ -2413,11 +2581,14 @@ class BinancePriceHighScanner:
             # 如果启用了交易功能，检查并执行交易
             if self.enable_trading:
                 try:
-                    trade_executed = await self.check_and_execute_trade(symbol, analysis_data)
+                    trade_executed, reason = await self.check_and_execute_trade(symbol, analysis_data)
                     if trade_executed:
-                        logger.info(f"💰 {symbol} 交易执行成功")
+                        logger.info(f"💰 {symbol} 交易执行成功: {reason}")
                     else:
-                        logger.info(f"⏸️ {symbol} 未执行交易")
+                        logger.info(f"⏸️ {symbol} 未执行交易: {reason}")
+                        # 如果是因为过滤条件未执行交易，发送过滤通知
+                        if reason != "交易功能未启用":
+                            self.send_filtered_notification(symbol, analysis_data, reason)
                 except Exception as e:
                     logger.error(f"❌ {symbol} 交易执行失败: {str(e)}")
 
