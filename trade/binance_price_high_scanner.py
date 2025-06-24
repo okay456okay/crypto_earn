@@ -904,52 +904,60 @@ class BinancePriceHighScanner:
         logger.debug(f"保存{symbol}当前价格: ${current_price:.6f}")
 
     def update_trade_pnl(self, symbol: str, current_price: float) -> bool:
-        """更新交易记录的盈亏信息"""
+        """更新交易记录的盈亏信息（更新该交易对的所有交易记录）"""
         try:
             conn = pymysql.connect(**self.mysql_config)
             cursor = conn.cursor()
 
-            # 获取该交易对的最新交易记录
+            # 获取该交易对的所有交易记录
             cursor.execute('''
                 SELECT id, open_price, quantity, direction
                 FROM trading_records 
                 WHERE symbol = %s 
-                ORDER BY order_time DESC 
-                LIMIT 1
+                ORDER BY order_time DESC
             ''', (symbol,))
 
-            result = cursor.fetchone()
-            if not result:
+            results = cursor.fetchall()
+            if not results:
                 conn.close()
                 return False
 
-            record_id, open_price, quantity, direction = result
+            updated_count = 0
+            total_pnl = 0.0
 
-            # 计算价格涨跌百分比
-            price_change_percent = ((current_price - float(open_price)) / float(open_price)) * 100
+            # 更新每一条交易记录
+            for record in results:
+                record_id, open_price, quantity, direction = record
 
-            # 计算盈亏额（考虑交易方向）
-            if direction == 'SHORT':
-                # 卖空：价格下跌为盈利
-                pnl_amount = (float(open_price) - current_price) * float(quantity)
-            else:
-                # 做多：价格上涨为盈利
-                pnl_amount = (current_price - float(open_price)) * float(quantity)
+                # 计算价格涨跌百分比
+                price_change_percent = ((current_price - float(open_price)) / float(open_price)) * 100
 
-            # 更新记录
-            cursor.execute('''
-                UPDATE trading_records 
-                SET current_price = %s, 
-                    price_change_percent = %s, 
-                    pnl_amount = %s, 
-                    price_update_time = %s
-                WHERE id = %s
-            ''', (current_price, price_change_percent, pnl_amount, datetime.now(), record_id))
+                # 计算盈亏额（考虑交易方向）
+                if direction == 'SHORT':
+                    # 卖空：价格下跌为盈利
+                    pnl_amount = (float(open_price) - current_price) * float(quantity)
+                else:
+                    # 做多：价格上涨为盈利
+                    pnl_amount = (current_price - float(open_price)) * float(quantity)
+
+                # 更新记录
+                cursor.execute('''
+                    UPDATE trading_records 
+                    SET current_price = %s, 
+                        price_change_percent = %s, 
+                        pnl_amount = %s, 
+                        price_update_time = %s
+                    WHERE id = %s
+                ''', (current_price, price_change_percent, pnl_amount, datetime.now(), record_id))
+
+                if cursor.rowcount > 0:
+                    updated_count += 1
+                    total_pnl += pnl_amount
 
             conn.commit()
             conn.close()
 
-            logger.debug(f"更新{symbol}盈亏信息: 价格变化{price_change_percent:.2f}%, 盈亏${pnl_amount:.2f}")
+            logger.debug(f"更新{symbol}盈亏信息: 更新{updated_count}条记录, 总盈亏${total_pnl:.2f}")
             return True
 
         except Exception as e:
@@ -1916,15 +1924,16 @@ class BinancePriceHighScanner:
                 # 获取上次交易记录来计算价格涨幅
                 latest_records = []
                 try:
-                    cursor = self.db_conn.cursor()
+                    conn = pymysql.connect(**self.mysql_config)
+                    cursor = conn.cursor()
                     cursor.execute("""
-                        SELECT open_price FROM trade_records 
+                        SELECT open_price FROM trading_records 
                         WHERE symbol = %s 
-                        ORDER BY created_at DESC 
+                        ORDER BY order_time DESC 
                         LIMIT 2
                     """, (symbol,))
                     latest_records = cursor.fetchall()
-                    cursor.close()
+                    conn.close()
                 except Exception as e:
                     logger.error(f"查询{symbol}历史交易记录失败: {str(e)}")
                 
