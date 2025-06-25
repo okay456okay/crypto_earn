@@ -30,10 +30,15 @@ CREATE TABLE IF NOT EXISTS trading_records (
     price_change_percent DECIMAL(10,4) DEFAULT 0.0,
     pnl_amount DECIMAL(20,8) DEFAULT 0.0,
     price_update_time TIMESTAMP NULL,
+    close_price DECIMAL(20,8) DEFAULT NULL,
+    close_order_id VARCHAR(100) DEFAULT NULL,
+    close_order_status VARCHAR(20) DEFAULT 'OPEN',
+    close_time TIMESTAMP NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY unique_trade (exchange, symbol, order_time),
     INDEX idx_symbol (symbol),
-    INDEX idx_order_time (order_time)
+    INDEX idx_order_time (order_time),
+    INDEX idx_close_status (close_order_status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 创建1分钟K线数据表（当天数据）

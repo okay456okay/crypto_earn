@@ -98,6 +98,7 @@ class BinancePriceHighScanner:
         self.min_launch_days = 7  # 最小上市天数
         self.max_market_rank = 50  # 最大市值排名
         self.min_funding_rate = 0  # 最小资金费率，小数点形式
+        self.min_price_increase = 0.2
 
         # 交易所客户端(用于交易)
         self.binance_trading = ccxtpro.binance({
@@ -195,8 +196,15 @@ class BinancePriceHighScanner:
                     price_change_percent DECIMAL(10,4) DEFAULT 0.0,
                     pnl_amount DECIMAL(20,8) DEFAULT 0.0,
                     price_update_time TIMESTAMP NULL,
+                    close_price DECIMAL(20,8) DEFAULT NULL,
+                    close_order_id VARCHAR(100) DEFAULT NULL,
+                    close_order_status VARCHAR(20) DEFAULT 'OPEN',
+                    close_time TIMESTAMP NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE KEY unique_trade (exchange, symbol, order_time)
+                    UNIQUE KEY unique_trade (exchange, symbol, order_time),
+                    INDEX idx_symbol (symbol),
+                    INDEX idx_order_time (order_time),
+                    INDEX idx_close_status (close_order_status)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             ''')
 
@@ -762,17 +770,17 @@ class BinancePriceHighScanner:
             return False
 
     def get_latest_trade_record(self, symbol: str) -> Optional[Dict[str, Any]]:
-        """获取某个交易对的最新交易记录"""
+        """获取某个交易对的最新未平仓交易记录"""
         try:
             conn = pymysql.connect(**self.mysql_config)
             cursor = conn.cursor()
 
             cursor.execute('''
                 SELECT * FROM trading_records 
-                WHERE symbol = %s 
+                WHERE symbol = %s AND close_order_status = %s
                 ORDER BY order_time DESC 
                 LIMIT 1
-            ''', (symbol,))
+            ''', (symbol, 'OPEN'))
 
             result = cursor.fetchone()
             conn.close()
@@ -780,7 +788,8 @@ class BinancePriceHighScanner:
             if result:
                 columns = ['id', 'exchange', 'symbol', 'order_time', 'open_price',
                            'quantity', 'leverage', 'direction', 'order_id', 'margin_amount',
-                           'current_price', 'price_change_percent', 'pnl_amount', 'price_update_time', 'created_at']
+                           'current_price', 'price_change_percent', 'pnl_amount', 'price_update_time',
+                           'close_price', 'close_order_id', 'close_order_status', 'close_time', 'created_at']
                 return dict(zip(columns, result))
 
             return None
@@ -809,6 +818,49 @@ class BinancePriceHighScanner:
 
         except Exception as e:
             logger.error(f"保存{symbol}交易记录失败: {str(e)}")
+            return False
+
+    def update_close_order_info(self, symbol: str, open_order_id: str, close_price: float, 
+                               close_order_id: str, close_order_status: str = 'FILLED') -> bool:
+        """
+        更新交易记录的平仓订单信息
+        
+        Args:
+            symbol: 交易对符号
+            open_order_id: 开仓订单ID
+            close_price: 平仓价格
+            close_order_id: 平仓订单ID
+            close_order_status: 平仓订单状态 (OPEN, FILLED, CANCELLED等)
+            
+        Returns:
+            bool: 是否更新成功
+        """
+        try:
+            conn = pymysql.connect(**self.mysql_config)
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                UPDATE trading_records 
+                SET close_price = %s, 
+                    close_order_id = %s, 
+                    close_order_status = %s,
+                    close_time = %s
+                WHERE symbol = %s AND order_id = %s
+            ''', (close_price, close_order_id, close_order_status, datetime.now(), symbol, open_order_id))
+
+            updated_count = cursor.rowcount
+            conn.commit()
+            conn.close()
+
+            if updated_count > 0:
+                logger.info(f"已更新{symbol}的平仓信息: 开仓订单ID={open_order_id}, 平仓价格={close_price}, 平仓订单ID={close_order_id}")
+                return True
+            else:
+                logger.warning(f"未找到要更新的交易记录: {symbol} 开仓订单ID={open_order_id}")
+                return False
+
+        except Exception as e:
+            logger.error(f"更新{symbol}平仓信息失败: {str(e)}")
             return False
 
     def remove_trade_record(self, symbol: str) -> bool:
@@ -847,6 +899,107 @@ class BinancePriceHighScanner:
         except Exception as e:
             logger.error(f"获取交易对列表失败: {str(e)}")
             return []
+
+    def get_open_traded_symbols(self) -> List[str]:
+        """获取所有有未平仓交易记录的交易对"""
+        try:
+            conn = pymysql.connect(**self.mysql_config)
+            cursor = conn.cursor()
+            
+            cursor.execute('SELECT DISTINCT symbol FROM trading_records WHERE close_order_status = %s', ('OPEN',))
+            results = cursor.fetchall()
+            conn.close()
+            
+            return [row[0] for row in results]
+            
+        except Exception as e:
+            logger.error(f"获取未平仓交易对列表失败: {str(e)}")
+            return []
+
+    def update_symbol_to_closed_status(self, symbol: str) -> bool:
+        """将交易对的所有未平仓记录更新为已平仓状态"""
+        try:
+            conn = pymysql.connect(**self.mysql_config)
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                UPDATE trading_records 
+                SET close_order_status = %s, 
+                    close_time = %s
+                WHERE symbol = %s AND close_order_status = %s
+            ''', ('CLOSED', datetime.now(), symbol, 'OPEN'))
+
+            updated_count = cursor.rowcount
+            conn.commit()
+            conn.close()
+
+            if updated_count > 0:
+                logger.info(f"已更新{symbol}的{updated_count}条交易记录为已平仓状态")
+
+            return True
+
+        except Exception as e:
+            logger.error(f"更新{symbol}交易记录状态失败: {str(e)}")
+            return False
+
+    async def check_and_update_close_orders(self):
+        """检查并更新所有OPEN状态的平仓订单状态"""
+        try:
+            conn = pymysql.connect(**self.mysql_config)
+            cursor = conn.cursor()
+
+            # 获取所有有平仓订单但状态为OPEN的记录
+            cursor.execute('''
+                SELECT symbol, order_id, close_order_id 
+                FROM trading_records 
+                WHERE close_order_id IS NOT NULL AND close_order_status = %s
+            ''', ('OPEN',))
+
+            results = cursor.fetchall()
+            conn.close()
+
+            if not results:
+                logger.debug("没有需要检查的平仓订单")
+                return
+
+            updated_count = 0
+            for symbol, open_order_id, close_order_id in results:
+                try:
+                    # 检查平仓订单状态
+                    order_status = await self.binance_trading.fetch_order(close_order_id, symbol)
+                    
+                    if order_status and order_status.get('status') == 'closed':
+                        # 订单已成交，更新为FILLED状态
+                        filled_price = float(order_status.get('average', 0))
+                        self.update_close_order_info(
+                            symbol=symbol,
+                            open_order_id=open_order_id,
+                            close_price=filled_price,
+                            close_order_id=close_order_id,
+                            close_order_status='FILLED'
+                        )
+                        updated_count += 1
+                        logger.info(f"✅ {symbol} 平仓订单已成交: {close_order_id}, 成交价格: {filled_price}")
+                    
+                    elif order_status and order_status.get('status') == 'canceled':
+                        # 订单已取消，更新为CANCELLED状态
+                        self.update_close_order_info(
+                            symbol=symbol,
+                            open_order_id=open_order_id,
+                            close_price=0,  # 取消订单没有成交价格
+                            close_order_id=close_order_id,
+                            close_order_status='CANCELLED'
+                        )
+                        logger.info(f"❌ {symbol} 平仓订单已取消: {close_order_id}")
+                
+                except Exception as e:
+                    logger.warning(f"检查{symbol}平仓订单{close_order_id}状态失败: {str(e)}")
+
+            if updated_count > 0:
+                logger.info(f"检查完成: 更新了{updated_count}个平仓订单状态")
+
+        except Exception as e:
+            logger.error(f"检查平仓订单状态失败: {str(e)}")
 
     def _get_total_trade_records_count(self) -> int:
         """获取数据库中的交易记录总数"""
@@ -904,18 +1057,18 @@ class BinancePriceHighScanner:
         logger.debug(f"保存{symbol}当前价格: ${current_price:.6f}")
 
     def update_trade_pnl(self, symbol: str, current_price: float) -> bool:
-        """更新交易记录的盈亏信息（更新该交易对的所有交易记录）"""
+        """更新交易记录的盈亏信息（仅更新该交易对的未平仓交易记录）"""
         try:
             conn = pymysql.connect(**self.mysql_config)
             cursor = conn.cursor()
 
-            # 获取该交易对的所有交易记录
+            # 获取该交易对的所有未平仓交易记录
             cursor.execute('''
                 SELECT id, open_price, quantity, direction
                 FROM trading_records 
-                WHERE symbol = %s 
+                WHERE symbol = %s AND close_order_status = %s
                 ORDER BY order_time DESC
-            ''', (symbol,))
+            ''', (symbol, 'OPEN'))
 
             results = cursor.fetchall()
             if not results:
@@ -965,12 +1118,12 @@ class BinancePriceHighScanner:
             return False
 
     def update_all_trade_pnl(self):
-        """更新所有交易记录的盈亏信息"""
+        """更新所有未平仓交易记录的盈亏信息"""
         try:
-            traded_symbols = self.get_all_traded_symbols()
+            open_traded_symbols = self.get_open_traded_symbols()
             updated_count = 0
 
-            for symbol in traded_symbols:
+            for symbol in open_traded_symbols:
                 if symbol in self.current_prices:
                     current_price = self.current_prices[symbol]
                     if self.update_trade_pnl(symbol, current_price):
@@ -978,13 +1131,13 @@ class BinancePriceHighScanner:
                 else:
                     logger.warning(f"未找到{symbol}的当前价格数据")
 
-            logger.info(f"完成盈亏更新: 更新了{updated_count}个交易对的盈亏信息")
+            logger.info(f"完成盈亏更新: 更新了{updated_count}个未平仓交易对的盈亏信息")
 
         except Exception as e:
             logger.error(f"批量更新盈亏信息失败: {str(e)}")
 
     def get_all_trade_pnl_summary(self) -> Dict[str, Any]:
-        """获取所有交易对的盈亏汇总"""
+        """获取所有未平仓交易对的盈亏汇总"""
         try:
             conn = pymysql.connect(**self.mysql_config)
             cursor = conn.cursor()
@@ -993,9 +1146,9 @@ class BinancePriceHighScanner:
                 SELECT symbol, open_price, current_price, quantity, direction, 
                        price_change_percent, pnl_amount, price_update_time
                 FROM trading_records 
-                WHERE current_price > 0
+                WHERE current_price > 0 AND close_order_status = %s
                 ORDER BY pnl_amount DESC
-            ''')
+            ''', ('OPEN',))
 
             results = cursor.fetchall()
             conn.close()
@@ -1036,7 +1189,7 @@ class BinancePriceHighScanner:
             return {'positions': [], 'total_pnl': 0.0, 'profitable_count': 0, 'losing_count': 0}
 
     def get_symbol_aggregated_pnl_summary(self) -> Dict[str, Any]:
-        """获取按交易对合并的盈亏汇总"""
+        """获取按交易对合并的未平仓盈亏汇总"""
         try:
             conn = pymysql.connect(**self.mysql_config)
             cursor = conn.cursor()
@@ -1051,10 +1204,10 @@ class BinancePriceHighScanner:
                        MAX(price_update_time) as latest_update_time,
                        COUNT(*) as trade_count
                 FROM trading_records 
-                WHERE current_price > 0
+                WHERE current_price > 0 AND close_order_status = %s
                 GROUP BY symbol, direction
                 ORDER BY total_pnl DESC
-            ''')
+            ''', ('OPEN',))
 
             results = cursor.fetchall()
             conn.close()
@@ -2329,20 +2482,20 @@ class BinancePriceHighScanner:
             return {}
 
     async def clean_trade_records(self):
-        """清理交易记录 - 删除没有持仓的交易对记录"""
+        """清理交易记录 - 更新没有持仓的交易对记录为已平仓状态"""
         try:
             # 获取当前持仓
             current_positions = await self.get_current_positions()
             logger.info(f"获取到账户当前合约持仓为: {current_positions}")
 
-            # 获取所有有交易记录的交易对
-            traded_symbols = self.get_all_traded_symbols()
+            # 获取所有有未平仓交易记录的交易对
+            open_traded_symbols = self.get_open_traded_symbols()
 
-            # 检查哪些交易对没有持仓了
-            for symbol in traded_symbols:
+            # 检查哪些交易对没有持仓了，更新为已平仓状态
+            for symbol in open_traded_symbols:
                 if symbol not in current_positions:
-                    logger.info(f"检测到{symbol}已无持仓，删除交易记录")
-                    self.remove_trade_record(symbol)
+                    logger.info(f"检测到{symbol}已无持仓，更新交易记录为已平仓状态")
+                    self.update_symbol_to_closed_status(symbol)
 
         except Exception as e:
             logger.error(f"清理交易记录失败: {str(e)}")
@@ -2421,6 +2574,15 @@ class BinancePriceHighScanner:
                                 logger.info(f"止盈订单ID: {close_order_id}")
                                 logger.info(f"止盈价格: ${take_profit_price:.6f}")
                                 logger.info(f"预期盈利: ${(filled_price - take_profit_price) * filled_quantity:.2f}")
+                                
+                                # 更新交易记录的平仓订单信息
+                                self.update_close_order_info(
+                                    symbol=symbol,
+                                    open_order_id=order_id,
+                                    close_price=take_profit_price,
+                                    close_order_id=close_order_id,
+                                    close_order_status='OPEN'  # 限价单刚提交，状态为OPEN
+                                )
                             else:
                                 logger.error(f"❌ {symbol} 止盈限价单提交失败")
 
@@ -2498,7 +2660,7 @@ class BinancePriceHighScanner:
                 last_price = latest_record['open_price']
                 price_increase = (current_price - last_price) / last_price
 
-                if price_increase >= 0.1:  # 价格上涨10%以上
+                if price_increase >= self.min_price_increase:  # 价格上涨20%以上
                     logger.info(f"💰 {symbol} 价格较上次开仓上涨{price_increase * 100:.2f}%，执行追加卖空交易")
                     trade_success = await self.execute_short_order(symbol, current_price, analysis_data)
                     if trade_success:
@@ -2506,7 +2668,7 @@ class BinancePriceHighScanner:
                     else:
                         return False, "追加卖空交易执行失败"
                 else:
-                    reason = f"价格较上次开仓仅上涨{price_increase * 100:.2f}%，不满足10%条件"
+                    reason = f"价格较上次开仓仅上涨{price_increase * 100:.2f}%，不满足{self.min_price_increase*100}%条件"
                     logger.info(f"⏸️ {symbol} {reason}")
                     return False, reason
 
@@ -2609,6 +2771,10 @@ class BinancePriceHighScanner:
         day_change_success = await self.check_and_handle_day_change()
         if not day_change_success:
             logger.warning("⚠️ 跨天处理失败，但继续执行扫描")
+
+        # 检查并更新平仓订单状态
+        logger.info("🔍 检查平仓订单状态...")
+        await self.check_and_update_close_orders()
 
         # 记录扫描开始时的交易记录数量（用于计算新增交易数）
         initial_trade_count = 0
@@ -2815,6 +2981,11 @@ async def main():
         elif args.pnl_only:
             logger.info("🔄 启动模式: 仅更新盈亏信息")
             scanner = BinancePriceHighScanner(days_to_analyze=args.days, enable_trading=False)
+            
+            # 检查并更新平仓订单状态
+            logger.info("🔍 检查平仓订单状态...")
+            await scanner.check_and_update_close_orders()
+            
             logger.info("🧹 清理交易记录...")
             await scanner.clean_trade_records()
             await scanner.update_pnl_only(fetch_prices=True)
