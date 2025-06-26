@@ -20,6 +20,7 @@ if not (r.status_code == 200 and r.json().get("code") == 0):
     message = f"okx token过期，请及时更新token, error: {r.text}"
     logger.info(message)
     wecom.send_message(message)
+logger.info("okx token可用")
 
 url = 'https://www.gate.io/apiw/v2/uni-loan/earn/subscribe'
 params = {
@@ -35,3 +36,4 @@ if not (r.status_code == 200 and r.json().get('code') == 0):
     message = f"gateio token过期，请及时更新token, error: {r.text}"
     logger.info(message)
     wecom.send_message(message)
+logger.info("gateio token可用")
