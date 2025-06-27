@@ -93,7 +93,7 @@ class BinanceVolatilityScanner:
                 # 3. 交易对处于活跃状态 (active == True)
                 # 4. 是线性合约 (linear == True)
                 # symbols.append(symbol)
-                if (market.get('type') == 'future' and
+                if (market.get('type') == 'swap' and
                     market.get('quote') == 'USDT' and
                     market.get('active', False) and
                     market.get('linear', False)):
