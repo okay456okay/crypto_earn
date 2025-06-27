@@ -85,17 +85,19 @@ class BinanceVolatilityScanner:
         """
         try:
             symbols = []
-            for symbol, market in self.exchange.markets.items():
+            markets = self.exchange.load_markets()
+            for symbol, market in markets.items():
                 # 筛选条件：
                 # 1. 是合约交易对 (type == 'future')
                 # 2. 以USDT为计价货币 (quote == 'USDT') 
                 # 3. 交易对处于活跃状态 (active == True)
                 # 4. 是线性合约 (linear == True)
-                if (market.get('type') == 'future' and 
-                    market.get('quote') == 'USDT' and 
-                    market.get('active', False) and
-                    market.get('linear', False)):
-                    symbols.append(symbol)
+                symbols.append(symbol)
+                # if (market.get('type') == 'future' and
+                #     market.get('quote') == 'USDT' and
+                #     market.get('active', False) and
+                #     market.get('linear', False)):
+                #     symbols.append(symbol)
             
             print(f"找到 {len(symbols)} 个活跃的USDT合约交易对")
             return symbols
