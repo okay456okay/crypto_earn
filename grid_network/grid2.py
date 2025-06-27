@@ -11,6 +11,11 @@ from datetime import datetime, timedelta
 import time
 import json
 from typing import Dict, List, Tuple, Optional
+
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from config import binance_api_key, binance_api_secret, proxies
 
 
