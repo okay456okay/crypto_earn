@@ -256,11 +256,11 @@ class CryptoYieldMonitor:
                 i['volume_24h'] > volume_24h_threshold  # 合约交易额大于某个值
             ]
             illegible_funding_rate = [i for i in futures_results if i['fundingRate'] < illegal_funding_rate]
-            if len(eligible_funding_rate) == 0:
-                logger.warning(f"check token {product['exchange']}，合约价格或交易额不达标，合约信息如下\n{future_info_str}")
-                continue
-            # if len(eligible_funding_rate) == 0 or len(illegible_funding_rate) > 0:
+            # if len(eligible_funding_rate) == 0:
+            #     logger.warning(f"check token {product['exchange']}，合约价格或交易额不达标，合约信息如下\n{future_info_str}")
             #     continue
+            if len(eligible_funding_rate) == 0 or len(illegible_funding_rate) > 0:
+                continue
 
             # 生成通知内容
             notification = {
