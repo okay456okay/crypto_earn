@@ -161,9 +161,10 @@ if __name__ == "__main__":
     # exit(0)
     # 替换为目标Chat ID
     # CHAT_ID = "5853083031"  # 用户ID,  获取方法: 发送消息给 @userinfobot
-    # CHAT_ID = "-4873585666"  # 群组ID: 将机器人加到群组，在群组发送消息，然后调用 bot.get_updates()方法获取消息
+    # CHAT_ID = "-4873585666"  # 币圈理财群组, 群组ID: 将机器人加到群组，在群组发送消息，然后调用 bot.get_updates()方法获取消息
     # CHAT_ID = "@yourchannel"  # 频道用户名, 公开频道
-    CHAT_ID = "-1002659747033"  # 频道用户名, 私有频道。 超级群组 Chat ID和频道 Chat ID都是-100开头
+    CHAT_ID = "@stability_finance"  #  公开频道
+    # CHAT_ID = "-1002659747033"  #  stability_finance_channel 频道用户名, 私有频道。 超级群组 Chat ID和频道 Chat ID都是-100开头
 
 
     # 发送简单文本消息

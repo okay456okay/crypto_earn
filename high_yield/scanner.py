@@ -24,12 +24,13 @@ sys.path.append(os.path.join(current_dir, '..'))
 from high_yield.common import get_percentile
 from high_yield.exchange import ExchangeAPI
 from tools.wechatwork import WeChatWorkBot
+from tools.telegram import TelegramBot
 from high_yield.token_manager import TokenManager
 from tools.proxy import get_proxy_ip
 from config import leverage_ratio, yield_percentile, stability_buy_apy_threshold, sell_apy_threshold, \
     future_percentile, highyield_buy_apy_threshold, stability_buy_webhook_url, highyield_buy_webhook_url, \
     highyield_checkpoints, volume_24h_threshold, subscribed_webhook_url, project_root, earn_auto_buy, \
-    illegal_funding_rate, fixedterm_webhook_url
+    illegal_funding_rate, fixedterm_webhook_url, telegram_stability_finance_bot, telegram_stability_finance_channel
 from tools.logger import logger
 
 
@@ -46,6 +47,15 @@ class CryptoYieldMonitor:
         self.reports_dir = os.path.join(current_dir, '..', 'trade', 'reports')
         os.makedirs(self.reports_dir, exist_ok=True)
         self.combined_file = os.path.join(self.reports_dir, 'products')
+        
+        # 初始化Telegram Bot
+        self.telegram_bot = None
+        try:
+            self.telegram_bot = TelegramBot(telegram_stability_finance_bot)
+            logger.info("Telegram Bot初始化成功")
+        except Exception as e:
+            logger.error(f"初始化Telegram Bot失败: {str(e)}")
+            self.telegram_bot = None
 
     def get_futures_trading(self, token):
         """检查Token是否在任意交易所上线了合约交易，且交易费率为正"""
@@ -144,6 +154,8 @@ class CryptoYieldMonitor:
             logger.error("unknown product type")
             return
 
+
+
         limit = 3
         for p in range(int(len(notifications) / limit) + 1):
             message = ''
@@ -175,6 +187,18 @@ class CryptoYieldMonitor:
                 # 发送到企业微信
                 wechat_message = f"📊交易所{product_type}活期理财产品监控 ({now_str})\n\n" + message
                 wechat_bot.send_message(wechat_message)
+
+                # 发送到Telegram（仅针对stable和fixedterm类型）
+                if self.telegram_bot and product_type in ['stable', 'fixedterm']:
+                    try:
+                        # 构建telegram消息，使用Markdown格式
+                        telegram_message = f"📊*交易所{product_type}活期理财产品监控* ({now_str})\n\n" + message
+                        # 将企业微信格式转换为telegram markdown格式
+                        telegram_message = telegram_message.replace('**', '*').replace('   • ', '• ')
+                        self.telegram_bot.send_message(telegram_stability_finance_channel, telegram_message, parse_mode='Markdown')
+                        logger.info(f"Telegram消息发送成功: {product_type}")
+                    except Exception as e:
+                        logger.error(f"发送Telegram消息失败: {str(e)}")
 
                 # 写入单独的日志文件
                 with open(log_file, 'a', encoding='utf-8') as f:
