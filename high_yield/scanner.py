@@ -142,13 +142,13 @@ class CryptoYieldMonitor:
         timestamp = now.strftime("%Y%m%d%H%M")
         log_file = os.path.join(self.reports_dir, f'{product_type}_products_{timestamp}.log')
 
-        if product_type == 'stable':
+        if product_type == '活期':
             wechat_bot = WeChatWorkBot(stability_buy_webhook_url)
         elif product_type == 'highyield':
             wechat_bot = WeChatWorkBot(highyield_buy_webhook_url)
         elif product_type == 'subscribed':
             wechat_bot = WeChatWorkBot(subscribed_webhook_url)
-        elif product_type == 'fixedterm':
+        elif product_type == '定期':
             wechat_bot = WeChatWorkBot(fixedterm_webhook_url)
         else:
             logger.error("unknown product type")
@@ -185,14 +185,14 @@ class CryptoYieldMonitor:
                 )
             if message:
                 # 发送到企业微信
-                wechat_message = f"📊交易所{product_type}活期理财产品监控 ({now_str})\n\n" + message
+                wechat_message = f"📊交易所{product_type}理财产品监控 ({now_str})\n\n" + message
                 wechat_bot.send_message(wechat_message)
 
                 # 发送到Telegram（仅针对stable和fixedterm类型）
-                if self.telegram_bot and product_type in ['stable', 'fixedterm']:
+                if self.telegram_bot and product_type in ['活期', '定期']:
                     try:
                         # 构建telegram消息，使用Markdown格式
-                        telegram_message = f"📊*交易所{product_type}活期理财产品监控* ({now_str})\n\n" + message
+                        telegram_message = f"📊*交易所{product_type}理财产品监控* ({now_str})\n\n" + message
                         # 将企业微信格式转换为telegram markdown格式
                         telegram_message = telegram_message.replace('**', '*').replace('   • ', '• ')
                         self.telegram_bot.send_message(telegram_stability_finance_channel, telegram_message, parse_mode='Markdown')
@@ -350,10 +350,10 @@ class CryptoYieldMonitor:
             self._send_product_notifications(highyield_product_notifications, product_type='highyield')
         if stability_product_notifications:
             logger.info(f"已添加{len(stability_product_notifications)}个稳定理财Token到通知列表")
-            self._send_product_notifications(stability_product_notifications, product_type='stable')
+            self._send_product_notifications(stability_product_notifications, product_type='活期')
         if fixedterm_product_notifications:
             logger.info(f"已添加{len(fixedterm_product_notifications)}个定期理财Token到通知列表")
-            self._send_product_notifications(fixedterm_product_notifications, product_type='fixedterm')
+            self._send_product_notifications(fixedterm_product_notifications, product_type='定期')
 
     def check_tokens(self, all_products):
         subscribed_tokens = [i['asset'] for i in self.exchange_api.get_gateio_subscribed_products() if
