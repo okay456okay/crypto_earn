@@ -692,12 +692,16 @@ class BinancePriceHighScanner:
             
             conn = pymysql.connect(**self.mysql_config)
             cursor = conn.cursor()
-            
+
+            """
+                WHERE open_time >= %s AND open_time < %s
+            """
+            # 清除昨天以前的, 这样最少可以保持1天的数据
             cursor.execute('''
                 DELETE FROM kline_data_1min 
-                WHERE open_time >= %s AND open_time < %s
-            ''', (start_ms, end_ms))
-            
+                WHERE open_time < %s
+            ''', (start_ms, ))
+
             deleted_count = cursor.rowcount
             conn.commit()
             conn.close()
