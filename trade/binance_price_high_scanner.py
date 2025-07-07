@@ -706,11 +706,11 @@ class BinancePriceHighScanner:
             conn.commit()
             conn.close()
             
-            logger.info(f"✅ 清理{target_date.strftime('%Y-%m-%d')}的1分钟K线数据，删除{deleted_count}条记录")
+            logger.info(f"✅ 清理{target_date.strftime('%Y-%m-%d')}之前的1分钟K线数据，删除{deleted_count}条记录")
             return True
             
         except Exception as e:
-            logger.error(f"清理{target_date.strftime('%Y-%m-%d')}的1分钟数据失败: {str(e)}")
+            logger.error(f"清理{target_date.strftime('%Y-%m-%d')}之前的的1分钟数据失败: {str(e)}")
             return False
 
     async def check_and_handle_day_change(self) -> bool:
