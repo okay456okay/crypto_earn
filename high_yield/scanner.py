@@ -264,7 +264,9 @@ class CryptoYieldMonitor:
                 continue
 
             apy_percentile = 0.0
-            if product['apy_day']:
+            if product['duration'] > 0:
+                apy_percentile = product['apy']
+            elif product['apy_day'] and product['duration'] == 0:
                 apy_percentile = get_percentile([i['apy'] for i in product['apy_day']], yield_percentile)
             future_info_str = '\n'.join([
                 f"   • {i['exchange']}: {i['volume_24h'] / 10000:.2f}万USDT, {i['fundingRate']:.4f}%, {get_percentile([i['fundingRate'] for i in i['d7history']], future_percentile):.4f}%, {i['markPrice']:.5f}, {self.get_estimate_apy(product['apy'], i['fundingRate'], i['fundingIntervalHours']):.2f}%, {self.get_estimate_apy(apy_percentile, i['fundingRate'], i['fundingIntervalHours']):.2f}%, {i['fundingIntervalHoursText']}, {datetime.fromtimestamp(i['fundingTime'] / 1000)}"

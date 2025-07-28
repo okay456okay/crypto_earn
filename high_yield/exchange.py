@@ -227,6 +227,9 @@ class ExchangeAPI:
                     # apy = float(item.get("highestApy", 0)) * 100
                     # apy_percentile = -1
                     for item_sub in item.get('productDetailList', []):
+                        # 如果已售完，则跳过
+                        if item_sub.get('sellOut'):
+                            continue
                         apy = float(item_sub.get("apy", 0)) * 100
                         prouct_id = item_sub.get('productId')
                         duration = int(item_sub.get("duration", 0))
@@ -238,6 +241,7 @@ class ExchangeAPI:
                                 if apy > stability_buy_apy_threshold:
                                     url = f'https://www.binance.com/bapi/earn/v1/friendly/lending/daily/product/position-market-apr?productId={prouct_id}&startTime={startTime}'
                                     response = requests.get(url, proxies=proxies)
+                                    sleep(0.1)
                                     if response.status_code == 200:
                                         apy_month = [{'timestamp': int(i['calcTime']), 'apy': float(i['marketApr']) * 100}
                                                      for i in response.json().get('data', {}).get('marketAprList', [])]
@@ -259,8 +263,7 @@ class ExchangeAPI:
                             "max_purchase": float(item_sub.get("maxPurchaseAmountPerUser", 0)),
                             "volume_24h": self.binance_volumes.get(token, 0)
                         }
-                    products.append(product)
-                    sleep(0.1)
+                        products.append(product)
                     # for item_sub in item.get('productDetailList', []):
                     #     if item_sub.get('productType') == 'POS_FIXED':
                     #         apy = float(item_sub.get("apy", 0)) * 100
@@ -1169,8 +1172,8 @@ class ExchangeAPI:
 
 if __name__ == "__main__":
     api = ExchangeAPI()
-    # print(api.get_binance_flexible_products())
-    print(json.dumps(api.get_bybit_flexible_products(), indent=2))
+    print(json.dumps(api.get_binance_flexible_products(), indent=2))
+    # print(json.dumps(api.get_bybit_flexible_products(), indent=2))
     # print(json.dumps(api.get_okx_flexible_products(), indent=2))
     # print(api.get_bitget_futures_funding_rate('ETHUSDT'))
     # print(api.get_bitget_futures_funding_rate('GMUSDT'))
