@@ -490,7 +490,8 @@ class ExchangeAPI:
                         'duration': 0,
                         "min_purchase": float(item.get('minStakeAmount', 0)),
                         "max_purchase": float(item.get('maxStakeAmount', 0)),
-                        "volume_24h": self.bybit_volumes.get(item["coin"], 0)
+                        "volume_24h": self.bybit_volumes.get(item["coin"], 0),
+                        'price': self.get_bybit_spot_price(f"{item['coin']}USDT")
                     }
                     products.append(product)
             else:
