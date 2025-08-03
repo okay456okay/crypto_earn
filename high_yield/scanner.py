@@ -289,6 +289,10 @@ class CryptoYieldMonitor:
                 continue
 
             # 生成通知内容
+            try:
+                print(product['price'])
+            except Exception as e:
+                print(product)
             notification = {
                 "exchange": product["exchange"],
                 "token": token,
