@@ -390,6 +390,7 @@ class CryptoYieldMonitor:
                 'duration': product['duration'],
                 "min_purchase": product["min_purchase"],
                 "max_purchase": product["max_purchase"],
+                "price": product["price"],
             }
             notifications.append(notification)
         # 发送通知
