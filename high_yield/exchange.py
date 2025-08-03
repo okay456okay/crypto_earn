@@ -1,5 +1,6 @@
 import time
 from datetime import datetime
+from pydoc_data.topics import topics
 from time import sleep
 
 import ccxt
@@ -9,6 +10,7 @@ import sys
 import argparse
 import json
 
+from pycparser.ply.yacc import token
 
 # 获取当前脚本的目录
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -314,7 +316,7 @@ class ExchangeAPI:
                             "min_purchase": float(item_sub.get("minPurchaseAmount", 0)),
                             "max_purchase": float(item_sub.get("maxPurchaseAmountPerUser", 0)),
                             "volume_24h": self.binance_volumes.get(token, 0),
-                            'price': self.get_binance_spot_price(token)
+                            'price': self.get_binance_spot_price(f"{token}USDT")
                         }
                         products.append(product)
                     # for item_sub in item.get('productDetailList', []):
@@ -377,7 +379,7 @@ class ExchangeAPI:
                             "min_purchase": int(float(item['apyList'][0]['minStepVal'])),
                             "max_purchase": int(float(item['apyList'][0]['maxStepVal'])),
                             "volume_24h": self.bitget_volumes.get(token, 0),
-                            'price': self.get_bitget_spot_price(token)
+                            'price': self.get_bitget_spot_price(f"{token}USDT")
                         }
                         products.append(product)
             else:
@@ -434,7 +436,7 @@ class ExchangeAPI:
                         "min_purchase": min_purchase,
                         "max_purchase": max_purchase,
                         "volume_24h": self.bybit_volumes.get(token, 0),
-                        'price': self.get_bybit_spot_price(token)
+                        'price': self.get_bybit_spot_price(f"{token}USDT")
                     }
                     products.append(product)
                     sleep(0.1)
@@ -548,7 +550,7 @@ class ExchangeAPI:
             "min_purchase": 0,
             "max_purchase": 0,
             "volume_24h": self.gateio_volumes.get(token, 0),
-            'price': self.get_gateio_spot_price(token),
+            'price': self.get_gateio_spot_price(f"{token}USDT"),
         }
         return product
 
@@ -641,7 +643,7 @@ class ExchangeAPI:
                         "min_purchase": float(item.get('total_lend_available', 0)),
                         "max_purchase": float(item.get('total_lend_all_amount', 0)),
                         "volume_24h": self.gateio_volumes.get(token, 0),
-                        'price': self.get_gateio_spot_price(token),
+                        'price': self.get_gateio_spot_price(f"{token}USDT"),
                     }
                     products.append(product)
             else:
@@ -724,7 +726,7 @@ class ExchangeAPI:
                         "min_purchase": 0,
                         "max_purchase": 0,
                         "volume_24h": self.okx_volumes.get(token, 0),
-                        'price': self.get_okx_spot_price(token),
+                        'price': self.get_okx_spot_price(f"{token}USDT"),
                     }
                     products.append(product)
                     sleep(0.1)
