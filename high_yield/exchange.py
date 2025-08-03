@@ -47,6 +47,58 @@ class ExchangeAPI:
         self.gateio_subscribed_products = []
         self.get_gateio_subscribed_products()
 
+    def get_binance_spot_price(self, symbol):
+        try:
+            r = requests.get('https://api.binance.com/api/v3/ticker/price', params={"symbol": symbol}, proxies=proxies)
+            return float(r.json().get('price', 0))
+        except Exception as e:
+            logger.error(f"get {symbol} binance spot price failed: {e}")
+            return 0
+
+    def get_bitget_spot_price(self, symbol):
+        market_url = "https://api.bitget.com/api/v2/spot/market/tickers"
+        try:
+            response = requests.get(market_url, proxies=proxies, params={'symbol': symbol})
+            data = response.json().get('data', [])
+            if data:
+                return float(data[0].get('lastPr', 0))
+            else:
+                return 0
+        except Exception as e:
+            logger.error(f"get {symbol} bitget spot price failed: {e}")
+            return 0
+
+    def get_bybit_spot_price(self, symbol):
+        url = "https://api.bybit.com/v5/market/tickers"
+        try:
+            response = requests.get(url, proxies=proxies, params={'category': 'spot', 'symbol': symbol})
+            data = response.json().get('result', {}).get('list', [])
+            return float(data[0].get('lastPrice', 0))
+        except Exception as e:
+            logger.error(f"get {symbol} bybit spot price failed: {e}")
+            return 0
+
+    def get_gateio_spot_price(self, symbol):
+        new_symbol = symbol.replace('USDT', '_USDT')
+        url = f"https://api.gateio.ws/api/v4/spot/tickers"
+        try:
+            response = requests.get(url, proxies=proxies, params={'currency_pair': new_symbol})
+            data = response.json()
+            return float(data[0].get('last', 0))
+        except Exception as e:
+            logger.error(f"get {symbol} gateio spot price failed: {e}")
+            return 0
+
+    def get_okx_spot_price(self, symbol):
+        new_symbol = symbol.replace('USDT', '-USDT')
+        url = f"https://www.okx.com/api/v5/market/ticker"
+        try:
+            response = requests.get(url, proxies=proxies, params={'instId': new_symbol})
+            data = response.json().get('data', [])
+            return float(data[0].get('last', 0))
+        except Exception as e:
+            logger.error(f"get {symbol} okx spot price failed: {e}")
+            return 0
 
     def get_gateio_subscribed_products(self):
         if not self.gateio_subscribed_products:
@@ -185,7 +237,7 @@ class ExchangeAPI:
         except Exception as e:
             logger.error(f"获取OKX合约交易量数据失败: {str(e)}")
 
-    def get_binance_flexible_products(self):
+    def get_binance_earn_products(self):
         """
         获取币安活期理财产品 - 使用更新的API
         https://www.binance.com/zh-CN/earn/simple-earn
@@ -261,7 +313,8 @@ class ExchangeAPI:
                             "duration": duration,
                             "min_purchase": float(item_sub.get("minPurchaseAmount", 0)),
                             "max_purchase": float(item_sub.get("maxPurchaseAmountPerUser", 0)),
-                            "volume_24h": self.binance_volumes.get(token, 0)
+                            "volume_24h": self.binance_volumes.get(token, 0),
+                            'price': self.get_binance_spot_price(token)
                         }
                         products.append(product)
                     # for item_sub in item.get('productDetailList', []):
@@ -288,7 +341,7 @@ class ExchangeAPI:
             # 尝试备用API接口
             return []
 
-    def get_bitget_flexible_products(self):
+    def get_bitget_earn_products(self):
         """
         获取Bitget活期理财产品
         [{'exchange': 'Binance', 'token': 'AUCTION', 'apy': 25.573329, 'min_purchase': 0.01, 'max_purchase': 50280.0}
@@ -312,17 +365,19 @@ class ExchangeAPI:
                 products = []
                 for item in data["data"]:
                     duration = item.get('period') if item.get('period') else 0
+                    token = item['coin']
                     if item['status'] == 'in_progress':
                         product = {
                             "exchange": "Bitget",
-                            "token": item["coin"],
+                            "token": token,
                             "apy": float(item['apyList'][0]["currentApy"]),
                             'apy_month': [],
                             'apy_day': [],
                             'duration': int(duration),
                             "min_purchase": int(float(item['apyList'][0]['minStepVal'])),
                             "max_purchase": int(float(item['apyList'][0]['maxStepVal'])),
-                            "volume_24h": self.bitget_volumes.get(item["coin"], 0)
+                            "volume_24h": self.bitget_volumes.get(token, 0),
+                            'price': self.get_bitget_spot_price(token)
                         }
                         products.append(product)
             else:
@@ -331,7 +386,7 @@ class ExchangeAPI:
             logger.error(f"获取Bitget活期理财产品时出错: {str(e)}")
         return products
 
-    def get_bybit_flexible_products(self):
+    def get_bybit_earn_products(self):
         """
         获取Bybit活期理财产品
         https://bybit-exchange.github.io/docs/zh-TW/v5/earn/product-info
@@ -378,7 +433,8 @@ class ExchangeAPI:
                         'duration': int(item_sub.get('staking_term')),
                         "min_purchase": min_purchase,
                         "max_purchase": max_purchase,
-                        "volume_24h": self.bybit_volumes.get(token, 0)
+                        "volume_24h": self.bybit_volumes.get(token, 0),
+                        'price': self.get_bybit_spot_price(token)
                     }
                     products.append(product)
                     sleep(0.1)
@@ -441,7 +497,7 @@ class ExchangeAPI:
             logger.error(f"获取Bybit活期理财产品时出错: {str(e)}")
         return products
 
-    def get_gateio_flexible_product(self, token):
+    def get_gateio_earn_product(self, token):
         """
         获取GateIO活期理财产品
         https://www.gate.io/zh/simple-earn
@@ -491,11 +547,12 @@ class ExchangeAPI:
             'duration': 0,
             "min_purchase": 0,
             "max_purchase": 0,
-            "volume_24h": self.gateio_volumes.get(token, 0)
+            "volume_24h": self.gateio_volumes.get(token, 0),
+            'price': self.get_gateio_spot_price(token),
         }
         return product
 
-    def get_gateio_flexible_products(self):
+    def get_gateio_earn_products(self):
         """
         获取GateIO活期理财产品
         https://www.gate.io/zh/simple-earn
@@ -583,7 +640,8 @@ class ExchangeAPI:
                         'duration': 0,
                         "min_purchase": float(item.get('total_lend_available', 0)),
                         "max_purchase": float(item.get('total_lend_all_amount', 0)),
-                        "volume_24h": self.gateio_volumes.get(token, 0)
+                        "volume_24h": self.gateio_volumes.get(token, 0),
+                        'price': self.get_gateio_spot_price(token),
                     }
                     products.append(product)
             else:
@@ -592,7 +650,7 @@ class ExchangeAPI:
             logger.error(f"获取GateIO活期理财产品时出错: {str(e)}")
         return products
 
-    def get_okx_flexible_products(self):
+    def get_okx_earn_products(self):
         """
         获取OKX活期理财产品
         https://www.okx.com/zh-hans/earn/simple-earn
@@ -665,7 +723,8 @@ class ExchangeAPI:
                         'duration': 0,
                         "min_purchase": 0,
                         "max_purchase": 0,
-                        "volume_24h": self.okx_volumes.get(token, 0)
+                        "volume_24h": self.okx_volumes.get(token, 0),
+                        'price': self.get_okx_spot_price(token),
                     }
                     products.append(product)
                     sleep(0.1)
@@ -1172,7 +1231,12 @@ class ExchangeAPI:
 
 if __name__ == "__main__":
     api = ExchangeAPI()
-    print(json.dumps(api.get_binance_flexible_products(), indent=2))
+    print(api.get_binance_spot_price('ETHUSDT'))
+    print(api.get_bitget_spot_price('ETHUSDT'))
+    print(api.get_bybit_spot_price('ETHUSDT'))
+    print(api.get_gateio_spot_price('ETHUSDT'))
+    print(api.get_okx_spot_price('ETHUSDT'))
+    print(json.dumps(api.get_binance_earn_products(), indent=2))
     # print(json.dumps(api.get_bybit_flexible_products(), indent=2))
     # print(json.dumps(api.get_okx_flexible_products(), indent=2))
     # print(api.get_bitget_futures_funding_rate('ETHUSDT'))

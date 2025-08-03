@@ -51,7 +51,7 @@ def print_earn_info():
 
     for p in positions:
         if float(p['curr_amount_usdt']) >= 1:
-            earn_info = api.get_gateio_flexible_product(p['asset'])
+            earn_info = api.get_gateio_earn_product(p['asset'])
             earn_infos[p['asset']] = earn_info
 
             # 计算汇总数据

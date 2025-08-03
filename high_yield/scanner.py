@@ -180,8 +180,8 @@ class CryptoYieldMonitor:
                     f"   • 各交易所合约信息: \n"
                     f"   • 近24小时合约交易量|最新资金费率|近7天P{yield_percentile}资金费率|标记价格|预估收益率|近24小时P{yield_percentile}预估收益率|结算周期|下次结算时间\n"
                     f"{notif['future_info']}\n"
-                    f"   • 最低购买量: {notif['min_purchase']}\n"
-                    f"   • 最大购买量: {notif['max_purchase']}\n"
+                    f"   • 最低购买量: {notif['min_purchase']}({notif['price']*notif['min_purchase']})\n"
+                    f"   • 最大购买量: {notif['max_purchase']}({notif['price']*notif['max_purchase']})\n"
                 )
             if message:
                 # 发送到企业微信
@@ -300,6 +300,7 @@ class CryptoYieldMonitor:
                 "future_info": future_info_str,
                 "min_purchase": product["min_purchase"],
                 "max_purchase": product["max_purchase"],
+                'price': product['price'],
             }
             # 定期理财产品
             if product['apy'] > stability_buy_apy_threshold and product['duration'] > 0:
@@ -416,27 +417,27 @@ class CryptoYieldMonitor:
 
             products = []
             # 获取所有交易所的活期理财产品
-            binance_products = self.exchange_api.get_binance_flexible_products()
+            binance_products = self.exchange_api.get_binance_earn_products()
             if binance_products:
                 self.print_products_count(binance_products)
                 products += binance_products
 
-            gateio_products = self.exchange_api.get_gateio_flexible_products()
+            gateio_products = self.exchange_api.get_gateio_earn_products()
             if gateio_products:
                 self.print_products_count(gateio_products)
                 products += gateio_products
 
-            bitget_products = self.exchange_api.get_bitget_flexible_products()
+            bitget_products = self.exchange_api.get_bitget_earn_products()
             if bitget_products:
                 self.print_products_count(bitget_products)
                 products += bitget_products
 
-            bybit_products = self.exchange_api.get_bybit_flexible_products()
+            bybit_products = self.exchange_api.get_bybit_earn_products()
             if bybit_products:
                 self.print_products_count(bybit_products)
                 products += bybit_products
 
-            okx_products = self.exchange_api.get_okx_flexible_products()
+            okx_products = self.exchange_api.get_okx_earn_products()
             if okx_products:
                 self.print_products_count(okx_products)
                 products += okx_products
