@@ -305,6 +305,7 @@ class ExchangeAPI:
                                             f"binance get asset charts, url: {url}, status: {response.status_code}, response: {response.text}")
                             except Exception as e:
                                 logger.error(f"binance get asset charts, url: {url}, error: {str(e)}")
+                        price = self.get_binance_spot_price(f"{token}USDT") if token not in ['USDC', 'USDT'] else 1.00
                         product = {
                             "exchange": "Binance",
                             "token": token,
@@ -316,7 +317,7 @@ class ExchangeAPI:
                             "min_purchase": float(item_sub.get("minPurchaseAmount", 0)),
                             "max_purchase": float(item_sub.get("maxPurchaseAmountPerUser", 0)),
                             "volume_24h": self.binance_volumes.get(token, 0),
-                            'price': self.get_binance_spot_price(f"{token}USDT")
+                            'price': price
                         }
                         products.append(product)
                     # for item_sub in item.get('productDetailList', []):
@@ -369,6 +370,7 @@ class ExchangeAPI:
                     duration = item.get('period') if item.get('period') else 0
                     token = item['coin']
                     if item['status'] == 'in_progress':
+                        price = self.get_bitget_spot_price(f"{token}USDT") if token not in ['USDC', 'USDT'] else 1.00
                         product = {
                             "exchange": "Bitget",
                             "token": token,
@@ -379,7 +381,7 @@ class ExchangeAPI:
                             "min_purchase": int(float(item['apyList'][0]['minStepVal'])),
                             "max_purchase": int(float(item['apyList'][0]['maxStepVal'])),
                             "volume_24h": self.bitget_volumes.get(token, 0),
-                            'price': self.get_bitget_spot_price(f"{token}USDT")
+                            'price': price
                         }
                         products.append(product)
             else:
@@ -426,6 +428,7 @@ class ExchangeAPI:
                         product_detail = r.json().get('result', {}).get('fixed_term_saving_product_detail')
                         min_purchase = float(product_detail.get('individual_min_share'))/100000000
                         max_purchase = float(product_detail.get('individual_max_share')) / 100000000
+                    price = self.get_bybit_spot_price(f"{token}USDT") if token not in ['USDC', 'USDT'] else 1.00
                     product = {
                         "exchange": "Bybit",
                         "token": token,
@@ -436,7 +439,7 @@ class ExchangeAPI:
                         "min_purchase": min_purchase,
                         "max_purchase": max_purchase,
                         "volume_24h": self.bybit_volumes.get(token, 0),
-                        'price': self.get_bybit_spot_price(f"{token}USDT")
+                        'price': price
                     }
                     products.append(product)
                     sleep(0.1)
@@ -480,9 +483,11 @@ class ExchangeAPI:
                             logger.debug(f"获取bybit {token}近24小时收益率曲线, 数据：{data}")
                     except Exception as e:
                         logger.error(f"获取 {token}的收益曲线失败： {str(e)}")
+                    token = item["coin"]
+                    price = self.get_bybit_spot_price(f"{token}USDT") if token not in ['USDC', 'USDT'] else 1.00
                     product = {
                         "exchange": "Bybit",
-                        "token": item["coin"],
+                        "token": token,
                         "apy": float(item["estimateApr"].replace("%", "")),
                         # 'apy_percentile': apy_percentile,
                         'apy_month': [],
@@ -490,8 +495,8 @@ class ExchangeAPI:
                         'duration': 0,
                         "min_purchase": float(item.get('minStakeAmount', 0)),
                         "max_purchase": float(item.get('maxStakeAmount', 0)),
-                        "volume_24h": self.bybit_volumes.get(item["coin"], 0),
-                        'price': self.get_bybit_spot_price(f"{item['coin']}USDT")
+                        "volume_24h": self.bybit_volumes.get(token, 0),
+                        'price': price
                     }
                     products.append(product)
             else:
@@ -541,6 +546,7 @@ class ExchangeAPI:
             sleep(2)
         except Exception as e:
             logger.error(f"get asset chart {token} error: {str(e)}")
+        price = self.get_gateio_spot_price(f"{token}USDT") if token not in ['USDC', 'USDT'] else 1.00
         product = {
             "exchange": "GateIO",
             "token": token,
@@ -551,7 +557,7 @@ class ExchangeAPI:
             "min_purchase": 0,
             "max_purchase": 0,
             "volume_24h": self.gateio_volumes.get(token, 0),
-            'price': self.get_gateio_spot_price(f"{token}USDT"),
+            'price': price
         }
         return product
 
@@ -633,6 +639,7 @@ class ExchangeAPI:
                         except Exception as e:
                             logger.error(f"get asset chart {item['asset']} error: {str(e)}")
                         sleep(2)
+                    price = self.get_gateio_spot_price(f"{token}USDT") if token not in ['USDC', 'USDT'] else 1.00
                     product = {
                         "exchange": "GateIO",
                         "token": token,
@@ -644,7 +651,7 @@ class ExchangeAPI:
                         "min_purchase": float(item.get('total_lend_available', 0)),
                         "max_purchase": float(item.get('total_lend_all_amount', 0)),
                         "volume_24h": self.gateio_volumes.get(token, 0),
-                        'price': self.get_gateio_spot_price(f"{token}USDT"),
+                        'price': price
                     }
                     products.append(product)
             else:
@@ -716,6 +723,7 @@ class ExchangeAPI:
                                          data.get('lastOneMonthRates', {}).get('rates', [])]
                         except Exception as e:
                             logger.error(f"get asset chart {item['asset']} error: {str(e)}")
+                    price = self.get_okx_spot_price(f"{token}USDT") if token not in ['USDC', 'USDT'] else 1.00
                     product = {
                         "exchange": "OKX",
                         "token": token,
@@ -727,7 +735,7 @@ class ExchangeAPI:
                         "min_purchase": 0,
                         "max_purchase": 0,
                         "volume_24h": self.okx_volumes.get(token, 0),
-                        'price': self.get_okx_spot_price(f"{token}USDT"),
+                        'price': price
                     }
                     products.append(product)
                     sleep(0.1)
