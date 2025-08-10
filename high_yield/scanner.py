@@ -95,7 +95,6 @@ class CryptoYieldMonitor:
                     max_purchase DECIMAL(20,8) NOT NULL COMMENT '最大购买量',
                     price DECIMAL(20,8) NOT NULL COMMENT '价格',
                     future_info TEXT COMMENT '合约信息',
-                    apy_month_data TEXT COMMENT '月度收益率数据JSON',
                     message TEXT COMMENT '通知消息内容',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
                     INDEX idx_product_type (product_type),
@@ -124,8 +123,8 @@ class CryptoYieldMonitor:
                 INSERT INTO product_notifications (
                     product_type, exchange_name, token, apy, apy_percentile, 
                     volume_24h, duration, min_purchase, max_purchase, price,
-                    future_info, apy_month_data, message, created_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    future_info, message, created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """
                 
                 # 处理apy_month数据，转换为JSON字符串
