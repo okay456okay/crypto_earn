@@ -128,7 +128,7 @@ class CryptoYieldMonitor:
                 """
                 
                 # 处理apy_month数据，转换为JSON字符串
-                apy_month_json = json.dumps(notif.get('apy_month', []), ensure_ascii=False) if notif.get('apy_month') else None
+                # apy_month_json = json.dumps(notif.get('apy_month', []), ensure_ascii=False) if notif.get('apy_month') else None
                 
                 cursor.execute(insert_sql, (
                     product_type,
@@ -142,7 +142,6 @@ class CryptoYieldMonitor:
                     notif['max_purchase'],
                     notif['price'],
                     notif['future_info'],
-                    apy_month_json,
                     message,
                     created_at
                 ))
