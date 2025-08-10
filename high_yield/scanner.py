@@ -13,6 +13,8 @@ from datetime import datetime
 import sys
 import os
 import subprocess
+import pymysql
+import json
 
 # import traceback
 
@@ -30,7 +32,8 @@ from tools.proxy import get_proxy_ip
 from config import leverage_ratio, yield_percentile, stability_buy_apy_threshold, sell_apy_threshold, \
     future_percentile, highyield_buy_apy_threshold, stability_buy_webhook_url, highyield_buy_webhook_url, \
     highyield_checkpoints, volume_24h_threshold, subscribed_webhook_url, project_root, earn_auto_buy, \
-    illegal_funding_rate, fixedterm_webhook_url, telegram_stability_finance_bot, telegram_stability_finance_channel
+    illegal_funding_rate, fixedterm_webhook_url, telegram_stability_finance_bot, telegram_stability_finance_channel, \
+    mysql_config
 from tools.logger import logger
 
 
@@ -56,6 +59,100 @@ class CryptoYieldMonitor:
         except Exception as e:
             logger.error(f"初始化Telegram Bot失败: {str(e)}")
             self.telegram_bot = None
+            
+        # 初始化数据库
+        self._init_database()
+    
+    def _get_db_connection(self):
+        """获取数据库连接"""
+        try:
+            connection = pymysql.connect(**mysql_config)
+            return connection
+        except Exception as e:
+            logger.error(f"数据库连接失败: {str(e)}")
+            return None
+    
+    def _init_database(self):
+        """初始化数据库表"""
+        connection = self._get_db_connection()
+        if not connection:
+            return
+            
+        try:
+            with connection.cursor() as cursor:
+                # 创建通知记录表
+                create_table_sql = """
+                CREATE TABLE IF NOT EXISTS product_notifications (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    product_type VARCHAR(50) NOT NULL COMMENT '产品类型',
+                    exchange_name VARCHAR(50) NOT NULL COMMENT '交易所名称',
+                    token VARCHAR(50) NOT NULL COMMENT '代币名称',
+                    apy DECIMAL(10,4) NOT NULL COMMENT '年化收益率',
+                    apy_percentile DECIMAL(10,4) NOT NULL COMMENT '收益率百分位',
+                    volume_24h DECIMAL(20,2) NOT NULL COMMENT '24小时交易量',
+                    duration INT NOT NULL COMMENT '期限天数',
+                    min_purchase DECIMAL(20,8) NOT NULL COMMENT '最低购买量',
+                    max_purchase DECIMAL(20,8) NOT NULL COMMENT '最大购买量',
+                    price DECIMAL(20,8) NOT NULL COMMENT '价格',
+                    future_info TEXT COMMENT '合约信息',
+                    apy_month_data TEXT COMMENT '月度收益率数据JSON',
+                    message TEXT COMMENT '通知消息内容',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                    INDEX idx_product_type (product_type),
+                    INDEX idx_exchange_token (exchange_name, token),
+                    INDEX idx_created_at (created_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='产品通知记录表';
+                """
+                cursor.execute(create_table_sql)
+                connection.commit()
+                logger.info("数据库表初始化成功")
+        except Exception as e:
+            logger.error(f"数据库表初始化失败: {str(e)}")
+        finally:
+            connection.close()
+    
+    def _save_notification_to_db(self, notif, product_type, message, created_at):
+        """保存通知信息到数据库"""
+        connection = self._get_db_connection()
+        if not connection:
+            return
+            
+        try:
+            with connection.cursor() as cursor:
+                # 准备插入数据
+                insert_sql = """
+                INSERT INTO product_notifications (
+                    product_type, exchange_name, token, apy, apy_percentile, 
+                    volume_24h, duration, min_purchase, max_purchase, price,
+                    future_info, apy_month_data, message, created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """
+                
+                # 处理apy_month数据，转换为JSON字符串
+                apy_month_json = json.dumps(notif.get('apy_month', []), ensure_ascii=False) if notif.get('apy_month') else None
+                
+                cursor.execute(insert_sql, (
+                    product_type,
+                    notif['exchange'],
+                    notif['token'],
+                    notif['apy'],
+                    notif['apy_percentile'],
+                    notif['volume_24h'],
+                    notif['duration'],
+                    notif['min_purchase'],
+                    notif['max_purchase'],
+                    notif['price'],
+                    notif['future_info'],
+                    apy_month_json,
+                    message,
+                    created_at
+                ))
+                connection.commit()
+                logger.debug(f"通知信息已保存到数据库: {notif['exchange']} {notif['token']}")
+        except Exception as e:
+            logger.error(f"保存通知信息到数据库失败: {str(e)}")
+        finally:
+            connection.close()
 
     def get_futures_trading(self, token):
         """检查Token是否在任意交易所上线了合约交易，且交易费率为正"""
@@ -169,7 +266,9 @@ class CryptoYieldMonitor:
                     d30apy = get_percentile([i['apy'] for i in notif['apy_month'] if d30start <= i['timestamp'] <= end],
                                             yield_percentile)
                     d30apy_str = f"{d30apy:.2f}%"
-                message += (
+                
+                # 构建单个通知的消息内容
+                single_message = (
                     f"**{idx + p * limit}. {notif['token']} ({notif['exchange']})** 💰\n"
                     f"   • 近24小时现货交易量: {notif['volume_24h'] / 10000:.2f}万USDT\n"
                     f"   • 最新收益率: {notif['apy']:.2f}%\n"
@@ -183,6 +282,14 @@ class CryptoYieldMonitor:
                     f"   • 最低购买量: {notif['min_purchase']}({notif['price']*notif['min_purchase']})\n"
                     f"   • 最大购买量: {notif['max_purchase']}({notif['price']*notif['max_purchase']})\n"
                 )
+                
+                message += single_message
+                
+                # 保存每个通知到数据库
+                try:
+                    self._save_notification_to_db(notif, product_type, single_message, now)
+                except Exception as e:
+                    logger.error(f"保存通知到数据库失败: {str(e)}")
             if message:
                 # 发送到企业微信
                 wechat_message = f"📊交易所{product_type}理财产品监控 ({now_str})\n\n" + message
