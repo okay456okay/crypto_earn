@@ -277,8 +277,8 @@ class CryptoYieldMonitor:
                     f"   • 各交易所合约信息: \n"
                     f"   • 近24小时合约交易量|最新资金费率|近7天P{yield_percentile}资金费率|标记价格|预估收益率|近24小时P{yield_percentile}预估收益率|结算周期|下次结算时间\n"
                     f"{notif['future_info']}\n"
-                    f"   • 最低购买量: {notif['min_purchase']}({notif['price']*notif['min_purchase']})\n"
-                    f"   • 最大购买量: {notif['max_purchase']}({notif['price']*notif['max_purchase']})\n"
+                    f"   • 最小购买: {notif['min_purchase']}({notif['price']*notif['min_purchase']} USDT)\n"
+                    f"   • 最大购买: {notif['max_purchase']}({notif['price']*notif['max_purchase']} USDT)\n"
                 )
                 
                 message += single_message
