@@ -412,7 +412,7 @@ class CryptoYieldMonitor:
                 logger.info(f"add token {product['exchange']} {token} to fixedterm_product_notifications")
                 fixedterm_product_notifications.append(notification)
             # 稳定收益理财产品： 24小时Pxx收益率达到最低k
-            if apy_percentile > stability_buy_apy_threshold:
+            if apy_percentile > stability_buy_apy_threshold and product['duration'] == 0:
                 logger.info(f"add token {product['exchange']} {token} to stability_product_notifications")
                 stability_product_notifications.append(notification)
             # 高收益产品
